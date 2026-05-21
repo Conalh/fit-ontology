@@ -1,0 +1,4 @@
+id,name,sex,age,height_cm,weight_kg,goal,injury_history,created_at
+c_alice,Alice Romero,F,34,168,62,Half-marathon under 1:50,L knee meniscus 2022,2025-01-12 10:00:00
+c_ben,Ben Okafor,M,41,183,88,"General strength, lose 5kg",,2025-03-04 09:30:00
+c_carla,Carla Mendes,F,28,171,68,First powerlifting meet Q4,Lower-back strain 2024,2025-06-18 17:15:00

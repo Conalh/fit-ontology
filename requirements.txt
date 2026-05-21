@@ -1,0 +1,5 @@
+duckdb>=1.0.0
+pandas>=2.2.0
+streamlit>=1.30.0
+pydantic>=2.5.0
+python-dateutil>=2.8.2
