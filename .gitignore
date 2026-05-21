@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.envrc
+
+# Data artifacts (synthetic is regenerable; real client data must never commit)
+data/*.duckdb
+data/clients/
+data/wearables/
+!data/synthetic/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
