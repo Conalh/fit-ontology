@@ -79,21 +79,32 @@ Four entities, in [`src/fit_ontology/ontology.py`](src/fit_ontology/ontology.py)
 
 ## The reasoning layer
 
-Rules-based, not ML. For a one-person practice, **explainable beats clever**.
+Rules-based, not ML. For a one-person practice, **explainable beats clever**. Five literature-backed signals graded mild / moderate / severe, then weighted into a single recommendation.
 
 ```
-HRV last week vs prior week         ── drop >10% ────► flag: autonomic stress
-Mean sleep last week                ── below 7h ─────► flag: recovery deficit
-Mean RPE last week vs prior week    ── +1 or more ──► flag: undertrained recovery
+HRV vs 28d baseline   ── ≥1 SD below baseline ───────► autonomic stress
+                          (Plews & Laursen 2017)
+ACWR (acute:chronic)  ── >1.3 / >1.5 / >1.8 from sRPE → high training load
+                          (Gabbett 2016, "training-injury paradox")
+Resting HR drift      ── 5+ bpm above 28d baseline ──► autonomic stress
+                          (Buchheit 2014)
+Sleep deficit         ── <7h mean / <6h floor / score <70 → recovery deficit
+                          (ACSM 11e general adult guideline)
+Session RPE drift     ── rising mean RPE at constant load → undertrained
 
-2+ flags  → deload (-15% load)
-1 flag    → conservative progression (~5%)
-0 flags   → standard progression (5-10%) per ACSM guidance
+1 severe   OR  2+ moderate    → deload (-20% load)
+1 moderate OR  2+ mild        → conservative progression (~5%)
+0 signals                     → standard progression (5–10% per ACSM 11e)
 ```
 
-Thresholds in [`src/fit_ontology/reasoning.py`](src/fit_ontology/reasoning.py). References:
-- ACSM Guidelines for Exercise Testing and Prescription, 11th ed.
-- Buchheit M. (2014), "Monitoring training status with HR measures."
+Every signal includes its summary, severity, and the source-metric IDs that fed it; every recommendation traces back to those IDs so a trainer can audit and override.
+
+Thresholds and references live in [`src/fit_ontology/reasoning.py`](src/fit_ontology/reasoning.py):
+- ACSM Guidelines for Exercise Testing and Prescription, 11th ed. (progression magnitudes; sleep floor)
+- Plews & Laursen (2017), *International Journal of Sports Physiology and Performance* — HRV vs rolling baseline in SD units
+- Gabbett (2016), *British Journal of Sports Medicine* — ACWR sweet spot and danger zones from session-RPE × duration
+- Buchheit (2014), *Frontiers in Physiology* — HR-based training-status monitoring
+- Foster et al. (2001) — session-RPE method for internal training load quantification
 
 ## Adding a new data source
 
