@@ -49,6 +49,26 @@ handles 2FA via a one-time prompt and caches the session token in
 `~/.garminconnect/`. Uses the unofficial `python-garminconnect` library
 — personal-use only, not for a hosted product.
 
+### Ask FitOntology (conversational layer)
+
+```bash
+echo "ANTHROPIC_API_KEY=sk-ant-..." >> .env
+streamlit run app.py
+# Open the "Ask FitOntology" page in the sidebar.
+```
+
+Natural-language questions answered by Claude with structured tool use
+against the same ontology the dashboard reads from. Ask things like
+*"what should I do with Ben this week?"* or *"who needs a deload?"* —
+the assistant calls `list_clients`, `get_recent_metrics`,
+`compute_recommendation`, etc., and every tool invocation is shown
+inline so the trainer can see what data drove the answer.
+
+Defaults to `claude-haiku-4-5-20251001` for speed and cost; the
+sidebar lets you swap to `claude-opus-4-7` for harder questions. The
+system prompt is cached via `cache_control: ephemeral`, so repeat
+questions in a session hit the prompt cache.
+
 ### As a packaged desktop app
 
 ```bash
@@ -57,8 +77,7 @@ python build.py
 ```
 
 PyInstaller wraps the launcher + Streamlit dashboard + Python runtime
-into a double-clickable Windows executable for trainers who don't have
-Python installed.
+into a Windows executable for trainers without Python installed.
 
 ## The ontology
 
