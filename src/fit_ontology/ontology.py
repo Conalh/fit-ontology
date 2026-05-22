@@ -43,9 +43,17 @@ class MetricKind(str, Enum):
     HRV_RMSSD = "hrv_rmssd"
     SLEEP_HOURS = "sleep_hours"
     SLEEP_QUALITY = "sleep_quality"
+    SLEEP_SCORE = "sleep_score"
     BODY_WEIGHT_KG = "body_weight_kg"
     BODY_FAT_PCT = "body_fat_pct"
     RESTING_HR = "resting_hr"
+    # Garmin-derived composite signals. We persist them in the same long
+    # table because they're real per-day measurements the reasoning layer
+    # can join against — even if no other wearable surfaces them today.
+    BODY_BATTERY_HIGH = "body_battery_high"   # peak Body Battery in the day (0-100)
+    BODY_BATTERY_LOW = "body_battery_low"     # trough Body Battery in the day (0-100)
+    STRESS_AVG = "stress_avg"                 # mean Garmin stress score (0-100)
+    TRAINING_READINESS = "training_readiness" # Garmin daily readiness (0-100)
 
 
 class MetricSource(str, Enum):

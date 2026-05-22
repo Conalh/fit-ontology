@@ -3,10 +3,13 @@
 **A client intelligence layer for personal trainers.** Three messy data sources — wearables, trainer intake, and exercise-science guidelines — unified into one queryable ontology, with an explainable rules-based reasoning layer that produces a weekly training recommendation and the full data trail behind it.
 
 ```
-wearables (Strava, Whoop)  ─┐
-trainer intake (CSV)        ├──► ontology (DuckDB) ──► reasoning ──► dashboard
-ACSM reference guidelines  ─┘
+wearables (Garmin, Strava, Whoop)  ─┐
+trainer intake (CSV)                 ├──► ontology (DuckDB) ──► reasoning ──► dashboard
+ACSM reference guidelines           ─┘
 ```
+
+Ships as a Streamlit dashboard for development and a packaged Windows
+executable (`FitOntology.exe`) for trainers who don't run Python.
 
 ## Why this exists
 
@@ -15,6 +18,8 @@ A working personal trainer has three sources of information about a client and n
 FitOntology models the integration explicitly. Every recommendation traces back to the exact metric rows that produced it. No black boxes.
 
 ## Run it
+
+### With synthetic data (no account needed)
 
 ```bash
 pip install -r requirements.txt
@@ -27,6 +32,33 @@ Three synthetic clients are seeded to exercise different reasoning branches:
 - **Alice** — clean recovery → standard progression
 - **Ben** — HRV dropping + low sleep → deload
 - **Carla** — rising RPE only → conservative progression
+
+### With your real Garmin Connect data
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env with your GARMIN_EMAIL and GARMIN_PASSWORD
+python scripts/sync_garmin.py
+streamlit run app.py
+```
+
+Pulls 14 days of HRV Status, sleep, resting HR, Body Battery, stress, and
+Training Readiness from Garmin Connect into the ontology. The script
+handles 2FA via a one-time prompt and caches the session token in
+`~/.garminconnect/`. Uses the unofficial `python-garminconnect` library
+— personal-use only, not for a hosted product.
+
+### As a packaged desktop app
+
+```bash
+python build.py
+# dist/FitOntology/FitOntology.exe
+```
+
+PyInstaller wraps the launcher + Streamlit dashboard + Python runtime
+into a double-clickable Windows executable for trainers who don't have
+Python installed.
 
 ## The ontology
 

@@ -12,15 +12,44 @@ from .ontology import SCHEMA_DDL
 DEFAULT_DB_PATH = Path("data/fit_ontology.duckdb")
 
 
-def connect(db_path: Path = DEFAULT_DB_PATH) -> duckdb.DuckDBPyConnection:
+def connect(db_path: Path = DEFAULT_DB_PATH, *, read_only: bool = False) -> duckdb.DuckDBPyConnection:
+    """Open a DuckDB connection. DuckDB allows only one writer per file
+    across processes, so the dashboard should pass ``read_only=True`` to
+    coexist with a concurrent sync script. The schema DDL is skipped in
+    read-only mode (the file must already exist, which is fine for a
+    dashboard that only renders existing data)."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    con = duckdb.connect(str(db_path))
-    con.execute(SCHEMA_DDL)
+    if read_only and not db_path.exists():
+        # Read-only against a missing file would be misleading; let the
+        # caller create+seed the DB first via a normal connect.
+        raise FileNotFoundError(f"DuckDB file not found for read-only open: {db_path}")
+    con = duckdb.connect(str(db_path), read_only=read_only)
+    if not read_only:
+        con.execute(SCHEMA_DDL)
     return con
 
 
 def insert_clients(con, df: pd.DataFrame) -> None:
     con.execute("INSERT OR REPLACE INTO clients SELECT * FROM df")
+
+
+def ensure_client(con, client_id: str, name: str = "Self", sex: str = "other") -> None:
+    """
+    Idempotently create a stub client row so foreign-key constraints on
+    metrics/sessions don't reject a fresh sync against a brand-new client_id.
+    The trainer can edit the row later via SQL or a future Streamlit form;
+    we just need a valid parent here.
+    """
+    existing = con.execute("SELECT 1 FROM clients WHERE id = ?", [client_id]).fetchone()
+    if existing:
+        return
+    con.execute(
+        """
+        INSERT INTO clients (id, name, sex, age, height_cm, weight_kg, goal, injury_history, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """,
+        [client_id, name, sex, 30, 170.0, 70.0, "(self)", None],
+    )
 
 
 def insert_sessions(con, df: pd.DataFrame) -> None:
