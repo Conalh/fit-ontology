@@ -32,14 +32,24 @@ def _rid() -> str:
     return f"r_{uuid.uuid4().hex[:12]}"
 
 
+def _as_dates(series: pd.Series) -> pd.Series:
+    """Coerce a date-shaped column to a Series of Python ``date`` objects.
+    DuckDB returns DATE columns as ``datetime64[ns]`` Timestamps; pandas 2.x
+    refuses to compare those directly to Python ``date`` literals. This
+    normalizes both code paths (synthetic CSV, real Garmin sync) to the
+    same dtype before any window comparisons run."""
+    if series.empty:
+        return series
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return series.dt.date
+    return series
+
+
 def _weekly_mean(metrics: pd.DataFrame, kind: str, week_start: date) -> tuple[float | None, list[str]]:
     """Return (mean value, list of metric ids) for the 7-day window starting `week_start`."""
     week_end = week_start + timedelta(days=7)
-    sub = metrics[
-        (metrics["kind"] == kind)
-        & (metrics["date"] >= week_start)
-        & (metrics["date"] < week_end)
-    ]
+    dates = _as_dates(metrics["date"])
+    sub = metrics[(metrics["kind"] == kind) & (dates >= week_start) & (dates < week_end)]
     if sub.empty:
         return None, []
     return float(sub["value"].mean()), sub["id"].tolist()
@@ -48,7 +58,8 @@ def _weekly_mean(metrics: pd.DataFrame, kind: str, week_start: date) -> tuple[fl
 def _rpe_trend(sessions: pd.DataFrame, week_start: date) -> float | None:
     """Mean RPE for the 7-day window starting `week_start`."""
     week_end = week_start + timedelta(days=7)
-    sub = sessions[(sessions["date"] >= week_start) & (sessions["date"] < week_end)]
+    dates = _as_dates(sessions["date"])
+    sub = sessions[(dates >= week_start) & (dates < week_end)]
     if sub.empty:
         return None
     return float(sub["rpe"].mean())

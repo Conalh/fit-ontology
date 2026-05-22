@@ -8,9 +8,18 @@ venv/
 
 # Data artifacts (synthetic is regenerable; real client data must never commit)
 data/*.duckdb
+data/*.duckdb.wal
 data/clients/
 data/wearables/
 !data/synthetic/
+
+# Credentials / private keys — never commit anything that looks like a key
+developer_key
+*.pem
+*.key
+*.p12
+*.pfx
+.qodo/
 
 # IDE
 .vscode/
@@ -23,3 +32,8 @@ Thumbs.db
 
 # Streamlit
 .streamlit/secrets.toml
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
