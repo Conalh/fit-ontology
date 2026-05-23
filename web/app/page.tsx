@@ -75,14 +75,65 @@ export default function RosterPage() {
             </p>
           )}
 
-          {data && data.length === 0 && (
-            <p style={{ fontSize: 12.5, color: "var(--text-muted)" }}>No clients in the database yet.</p>
-          )}
+          {data && data.length === 0 && <EmptyRoster />}
 
           {data && data.length > 0 && <RosterTable rows={data} />}
         </div>
       </div>
     </div>
+  );
+}
+
+function EmptyRoster() {
+  return (
+    <section
+      style={{
+        border: "1px dashed var(--border)",
+        borderRadius: 12,
+        background: "var(--surface)",
+        padding: "44px 32px",
+        textAlign: "center",
+        maxWidth: 560,
+        marginInline: "auto",
+      }}
+    >
+      <div
+        style={{
+          width: 44,
+          height: 44,
+          margin: "0 auto 16px",
+          borderRadius: 10,
+          background: "var(--accent-bg)",
+          color: "var(--accent)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <svg width="22" height="22" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="10" cy="7" r="3" />
+          <path d="M4 17c0-3.3 2.7-6 6-6s6 2.7 6 6" />
+        </svg>
+      </div>
+      <h2 style={{ margin: 0, fontSize: 17, fontWeight: 600, letterSpacing: "-0.01em", color: "var(--text)" }}>
+        Add your first client
+      </h2>
+      <p
+        style={{
+          margin: "8px auto 18px",
+          fontSize: 13,
+          color: "var(--text-muted)",
+          maxWidth: 420,
+          lineHeight: 1.5,
+        }}
+      >
+        Capture intake (name, goal, injury history). Wearable data and sessions plug in afterwards via{" "}
+        <strong style={{ color: "var(--text)" }}>Upload</strong> on the client page or the Garmin sync script.
+      </p>
+      <Link href="/clients/new" className="btn-primary" style={{ display: "inline-block" }}>
+        + Add a client
+      </Link>
+    </section>
   );
 }
 

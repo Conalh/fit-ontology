@@ -154,7 +154,7 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
           onAccentChange={setAccentHex}
         />
 
-        <div style={{ padding: "8px 28px 36px", display: "flex", flexDirection: "column", gap: 22 }}>
+        <div className="fit-page-body" style={{ padding: "8px 28px 36px", display: "flex", flexDirection: "column", gap: 22 }}>
           <RecommendationCard
             rec={recQ.data}
             isLoading={recQ.isLoading}
@@ -258,7 +258,7 @@ function RecommendationCard({
         overflow: "hidden",
       }}
     >
-      <div style={{ padding: "22px 24px 20px", display: "flex", gap: 28, alignItems: "flex-start" }}>
+      <div className="fit-rec-card" style={{ padding: "22px 24px 20px", display: "flex", gap: 28, alignItems: "flex-start" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
             style={{
@@ -323,6 +323,7 @@ function RecommendationCard({
 
         {rec && (
           <div
+            className="fit-rec-card-divider"
             style={{
               display: "flex",
               gap: 24,
@@ -664,6 +665,7 @@ function TrendsGrid({
       </div>
 
       <div
+        className="fit-trends-grid"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(3, 1fr)",
@@ -815,7 +817,7 @@ function SessionsAndHistoryRow({
   currentRec: Recommendation | undefined;
 }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 22 }}>
+    <div className="fit-sessions-row" style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 22 }}>
       <SessionsTable sessions={sessions} />
       <DecisionHistory overrides={overrides} history={history} currentRec={currentRec} />
     </div>

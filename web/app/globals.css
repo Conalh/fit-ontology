@@ -157,3 +157,59 @@ button {
   background: var(--accent-bg);
   color: var(--text);
 }
+
+/* Responsive overrides — the layout's inline styles handle the desktop
+   shape; these media queries selectively override the layout-only bits
+   (display, grid columns, flex direction) at narrower viewports. */
+
+@media (max-width: 1023px) {
+  /* Sidebar hides on mobile/tablet — the breadcrumb in the top bar plus
+     the home button get the user back to the roster. Per-client roster
+     strip isn't actionable on a phone anyway. */
+  .fit-sidebar {
+    display: none !important;
+  }
+  /* Home button appears in the top bar on the same breakpoint. */
+  .fit-mobile-home {
+    display: inline-flex !important;
+  }
+  /* Trends grid two-up on tablet — three is too cramped. */
+  .fit-trends-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  /* Recommendation card: donuts wrap under the text once viewport is
+     too narrow for the side-by-side flex layout. */
+  .fit-rec-card {
+    flex-direction: column !important;
+    gap: 20px !important;
+  }
+  .fit-rec-card-divider {
+    padding-left: 0 !important;
+    border-left: 0 !important;
+    border-top: 1px solid var(--border) !important;
+    padding-top: 18px !important;
+  }
+  /* Sessions + decision history side-by-side on tablet still works at
+     2-col, but stack at narrow tablet so individual rows can breathe. */
+  .fit-sessions-row {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 640px) {
+  /* Single column trends on phone. The 28d ribbon is still legible at
+     one chart per row. */
+  .fit-trends-grid {
+    grid-template-columns: 1fr !important;
+  }
+  /* Tighten the page gutter on phones so cards don't lose width to
+     padding. */
+  .fit-page-body {
+    padding: 18px 14px 28px !important;
+  }
+  .fit-topbar {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+    gap: 8px !important;
+  }
+}
