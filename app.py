@@ -32,6 +32,7 @@ from fit_ontology.db import (
 )
 from fit_ontology.ontology import MetricKind, OverrideAction, RecommendationOverride
 from fit_ontology.reasoning import generate_recommendation
+from fit_ontology.report import build_weekly_pdf
 
 
 st.set_page_config(
@@ -166,6 +167,29 @@ st.markdown(
     </div>
     """,
     unsafe_allow_html=True,
+)
+
+
+# ─── Client-facing PDF export ─────────────────────────────────────────
+#
+# Trainer-to-client artifact. Friendly language, no SD/ACWR jargon — the
+# detailed view stays here in the dashboard. PDF is built on every render
+# (~50ms for a one-page report) so the download is a single click.
+
+client_row = clients.iloc[options.index(selected)]
+pdf_bytes = build_weekly_pdf(
+    client_name=client_row["name"],
+    client_goal=client_row["goal"],
+    rec=rec,
+    metrics=metrics,
+)
+pdf_filename = f"{client_row['name'].replace(' ', '_')}_week_{rec.week_of:%Y%m%d}.pdf"
+st.download_button(
+    "Download weekly PDF for client",
+    data=pdf_bytes,
+    file_name=pdf_filename,
+    mime="application/pdf",
+    help="One-page summary in client-friendly language. No SD baselines, no ACWR jargon.",
 )
 
 
