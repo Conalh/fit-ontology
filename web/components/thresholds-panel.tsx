@@ -106,6 +106,7 @@ export function ThresholdsPanel({ clientId }: { clientId: string }) {
 
         {data && (
           <>
+            <BaselineSuggestionBanner data={data} edits={edits} setEdits={setEdits} />
             {groups.map((g) => (
               <Group
                 key={g.title}
@@ -181,6 +182,14 @@ interface Section {
 }
 
 const GROUPS: Section[] = [
+  {
+    title: "Baseline window",
+    description:
+      "Days of history the reasoning engine uses as this client's baseline. 28d follows Plews & Laursen — shorten for highly-variable athletes, lengthen for stable elites.",
+    rows: [
+      { name: "baseline_window_days", label: "Baseline window", unit: "days", step: 14 },
+    ],
+  },
   {
     title: "HRV (RMSSD)",
     description: "SD units below the client's 28-day baseline.",
@@ -408,4 +417,73 @@ function formatVal(v: number, step: number = 0.1): string {
   if (step >= 1) return `${Math.round(v)}`;
   if (step >= 0.05) return v.toFixed(2);
   return v.toFixed(1);
+}
+
+function BaselineSuggestionBanner({
+  data,
+  edits,
+  setEdits,
+}: {
+  data: import("@/lib/api").ThresholdsResponse;
+  edits: Record<string, number | null>;
+  setEdits: React.Dispatch<React.SetStateAction<Record<string, number | null>>>;
+}) {
+  const suggestion = data.baseline_window_suggestion;
+  if (!suggestion) return null;
+
+  const stored = data.overrides.baseline_window_days;
+  const pending = "baseline_window_days" in edits ? edits.baseline_window_days : undefined;
+  const current = pending === null ? data.defaults.baseline_window_days : (pending ?? stored ?? data.defaults.baseline_window_days);
+
+  // Only surface the chip when the auto-fit picks something different
+  // from the active value. If they match, the trainer doesn't need a
+  // banner — the data is already on the right window.
+  if (Math.round(current) === suggestion.days) return null;
+
+  // Unstable suggestion = the fit fell back to the default. Don't push
+  // the user to apply a fallback as if it were a positive recommendation.
+  if (!suggestion.stable) return null;
+
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        padding: "10px 12px",
+        background: "var(--accent-bg)",
+        border: "1px solid var(--accent)",
+        borderRadius: 6,
+        fontSize: 12.5,
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 10,
+      }}
+    >
+      <span
+        style={{
+          fontSize: 9.5,
+          color: "var(--accent)",
+          background: "var(--surface)",
+          padding: "2px 6px",
+          borderRadius: 3,
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          fontWeight: 600,
+          flexShrink: 0,
+          marginTop: 2,
+        }}
+      >
+        suggest
+      </span>
+      <span style={{ flex: 1, color: "var(--text)", lineHeight: 1.5 }}>
+        Auto-fit suggests a <strong>{suggestion.days}-day baseline window</strong> for this client — {suggestion.reason}.
+      </span>
+      <button
+        className="btn-ghost"
+        onClick={() => setEdits((prev) => ({ ...prev, baseline_window_days: suggestion.days }))}
+        style={{ fontSize: 11.5, flexShrink: 0 }}
+      >
+        Apply {suggestion.days}d
+      </button>
+    </div>
+  );
 }

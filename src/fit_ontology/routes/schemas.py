@@ -221,12 +221,23 @@ class CalibrationResponse(BaseModel):
 
 # ─── Thresholds ─────────────────────────────────────────────────────
 
+class BaselineWindowSuggestionResponse(BaseModel):
+    """Auto-fit's pick for this client's baseline window length. The
+    trainer can apply with one click on the thresholds panel.
+    ``stable=False`` means the fit fell back to the literature default
+    because no candidate window settled — worth telling the trainer."""
+    days: int
+    stable: bool
+    reason: str
+
+
 class ThresholdsResponse(BaseModel):
     """Defaults + overrides shape so the front-end can show each
     threshold with both its baseline and the trainer's per-client tweak
     (when one exists)."""
     defaults: dict[str, float]
     overrides: dict[str, float]
+    baseline_window_suggestion: BaselineWindowSuggestionResponse | None = None
 
 
 class ThresholdsPatch(BaseModel):

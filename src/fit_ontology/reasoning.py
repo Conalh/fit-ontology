@@ -48,7 +48,8 @@ from .ontology import MetricKind, Recommendation
 
 # --- Thresholds (literature-anchored; centralized for trainer override) ---
 
-HRV_BASELINE_DAYS = 28              # Plews & Laursen recommend 21–28d windows
+HRV_BASELINE_DAYS = 28              # Plews & Laursen recommend 21–28d windows; per-client
+                                    # tunable via ``baseline_window_days`` threshold
 HRV_ACUTE_DAYS = 7
 HRV_MILD_SD = 0.5                   # > 0.5 SD below baseline = early stress
 HRV_MODERATE_SD = 1.0               # > 1 SD below baseline = clear stress
@@ -140,7 +141,15 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "slope_mild_sd_per_day":     SLOPE_MILD_SD_PER_DAY,
     "slope_moderate_sd_per_day": SLOPE_MODERATE_SD_PER_DAY,
     "slope_severe_sd_per_day":   SLOPE_SEVERE_SD_PER_DAY,
+    # Per-client tunable baseline window. 28 days follows Plews & Laursen
+    # 2017; some highly-variable athletes benefit from a tighter 14-day
+    # window (more responsive to recent state) while very stable elite
+    # athletes settle better at 56 days. ``recommend_baseline_window``
+    # picks one of {14, 28, 56} from the data; trainers can override.
+    "baseline_window_days":      float(HRV_BASELINE_DAYS),
 }
+
+BASELINE_WINDOW_CHOICES: tuple[int, ...] = (14, 28, 56)
 
 
 def _merge_thresholds(overrides: Mapping[str, float] | None) -> dict[str, float]:
@@ -273,9 +282,10 @@ def detect_hrv_signal(
     ):
         hrv_kind = MetricKind.HRV_SDNN.value
 
+    baseline_days = int(th["baseline_window_days"])
     acute, acute_ids = _recent_mean(metrics, hrv_kind, today, HRV_ACUTE_DAYS)
     baseline_mean, baseline_sd, baseline_ids = _baseline(
-        metrics, hrv_kind, today, HRV_BASELINE_DAYS
+        metrics, hrv_kind, today, baseline_days
     )
     if acute is None or baseline_mean is None or not baseline_sd:
         return None
@@ -294,7 +304,7 @@ def detect_hrv_signal(
         severity=severity,
         summary=(
             f"HRV averaged {acute:.0f} ms over the last {HRV_ACUTE_DAYS} days "
-            f"vs. a {HRV_BASELINE_DAYS}-day baseline of {baseline_mean:.0f} ms "
+            f"vs. a {baseline_days}-day baseline of {baseline_mean:.0f} ms "
             f"(-{drop_sd:.1f} SD; {CITATIONS['hrv']})."
         ),
         source_metric_ids=list({*acute_ids, *baseline_ids}),
@@ -310,9 +320,10 @@ def detect_rhr_signal(
     sustained 5+ bpm elevation indicates autonomic stress, particularly
     when paired with depressed HRV."""
     th = _merge_thresholds(thresholds)
+    baseline_days = int(th["baseline_window_days"])
     acute, acute_ids = _recent_mean(metrics, MetricKind.RESTING_HR.value, today, HRV_ACUTE_DAYS)
     baseline_mean, _baseline_sd, baseline_ids = _baseline(
-        metrics, MetricKind.RESTING_HR.value, today, RHR_BASELINE_DAYS
+        metrics, MetricKind.RESTING_HR.value, today, baseline_days
     )
     if acute is None or baseline_mean is None:
         return None
@@ -331,7 +342,7 @@ def detect_rhr_signal(
         severity=severity,
         summary=(
             f"Resting HR averaged {acute:.0f} bpm over the last {HRV_ACUTE_DAYS} days "
-            f"vs. a {RHR_BASELINE_DAYS}-day baseline of {baseline_mean:.0f} bpm "
+            f"vs. a {baseline_days}-day baseline of {baseline_mean:.0f} bpm "
             f"(+{rise:.0f} bpm; {CITATIONS['rhr']})."
         ),
         source_metric_ids=list({*acute_ids, *baseline_ids}),
@@ -554,7 +565,7 @@ def detect_hrv_trend_signal(
     th = _merge_thresholds(thresholds)
     kind = _hrv_kind(metrics)
     slope, ids = _slope_per_day(metrics, kind, today, HRV_ACUTE_DAYS)
-    _, baseline_sd, _ = _baseline(metrics, kind, today, HRV_BASELINE_DAYS)
+    _, baseline_sd, _ = _baseline(metrics, kind, today, int(th["baseline_window_days"]))
     if slope is None or not baseline_sd:
         return None
     # Only flag a *downward* trend — rising HRV is a good thing.
@@ -587,7 +598,7 @@ def detect_rhr_trend_signal(
     th = _merge_thresholds(thresholds)
     kind = MetricKind.RESTING_HR.value
     slope, ids = _slope_per_day(metrics, kind, today, HRV_ACUTE_DAYS)
-    _, baseline_sd, _ = _baseline(metrics, kind, today, RHR_BASELINE_DAYS)
+    _, baseline_sd, _ = _baseline(metrics, kind, today, int(th["baseline_window_days"]))
     if slope is None or not baseline_sd:
         return None
     # Rising RHR is the concerning direction.
@@ -620,7 +631,7 @@ def detect_sleep_trend_signal(
     th = _merge_thresholds(thresholds)
     kind = MetricKind.SLEEP_HOURS.value
     slope, ids = _slope_per_day(metrics, kind, today, HRV_ACUTE_DAYS)
-    _, baseline_sd, _ = _baseline(metrics, kind, today, HRV_BASELINE_DAYS)
+    _, baseline_sd, _ = _baseline(metrics, kind, today, int(th["baseline_window_days"]))
     if slope is None or not baseline_sd:
         return None
     if slope >= 0:
@@ -637,6 +648,88 @@ def detect_sleep_trend_signal(
             f"({sd_per_day:.2f} SD/day; {CITATIONS['sleep']})."
         ),
         source_metric_ids=ids,
+    )
+
+
+# --- Auto-fit baseline window -------------------------------------------
+#
+# Pick the per-client baseline window length from the data. The trick:
+# split each candidate window into a newer half and older half, compute
+# the mean of each, and ask "did the mean drift across this window?"
+# Drift in baseline-SD units < 0.5 → the window is internally
+# consistent. We pick the shortest stable window so the baseline is as
+# responsive as possible without admitting noise.
+#
+# Falls back to the 28-day default if no window settles (insufficient
+# data, or the athlete's signal is genuinely non-stationary across all
+# candidates — which is itself a signal worth raising on the calibration
+# page later).
+
+@dataclass
+class BaselineWindowSuggestion:
+    """The auto-fit's pick + why. ``stable`` flags whether the chosen
+    window actually meets the drift criterion — when False, the caller
+    can mention that the recommendation is the literature default rather
+    than a data-driven choice."""
+    days: int
+    stable: bool
+    reason: str
+
+
+def recommend_baseline_window(
+    metrics: pd.DataFrame,
+    today: date | None = None,
+    *,
+    candidates: tuple[int, ...] = BASELINE_WINDOW_CHOICES,
+    drift_threshold_sd: float = 0.5,
+) -> BaselineWindowSuggestion:
+    """Pick the shortest baseline window whose mean is stable across its
+    newer/older halves. Looks at HRV (preferring RMSSD over SDNN — same
+    rule as _hrv_kind). Returns the 28-day default if no candidate
+    settles."""
+    today = today or date.today()
+    kind = _hrv_kind(metrics)
+    if metrics.empty:
+        return BaselineWindowSuggestion(
+            days=HRV_BASELINE_DAYS, stable=False,
+            reason="no metrics yet — using literature default (28d)",
+        )
+
+    for days in sorted(candidates):
+        window = _window(metrics, kind, today - timedelta(days=days), today)
+        if len(window) < max(10, days // 2):
+            # Not enough data inside this window to judge stability;
+            # don't pick it, try the next.
+            continue
+        # Halve the window and check drift across the two halves.
+        sorted_w = window.sort_values("date")
+        mid = len(sorted_w) // 2
+        older = sorted_w.iloc[:mid]
+        newer = sorted_w.iloc[mid:]
+        if older.empty or newer.empty:
+            continue
+        within_sd = float(sorted_w["value"].std(ddof=0))
+        if within_sd == 0:
+            # Pathologically flat — treat as stable (no drift to measure).
+            return BaselineWindowSuggestion(
+                days=days, stable=True,
+                reason=f"signal flat across {days}d window — picking shortest stable window",
+            )
+        drift = abs(float(newer["value"].mean()) - float(older["value"].mean())) / within_sd
+        if drift < drift_threshold_sd:
+            return BaselineWindowSuggestion(
+                days=days, stable=True,
+                reason=(
+                    f"{days}d window settled: drift between older and newer halves "
+                    f"is {drift:.2f} SD (< {drift_threshold_sd:.1f})"
+                ),
+            )
+    return BaselineWindowSuggestion(
+        days=HRV_BASELINE_DAYS, stable=False,
+        reason=(
+            "No candidate window settled — signal is non-stationary across "
+            "14, 28, and 56 days. Falling back to the literature default."
+        ),
     )
 
 
@@ -739,9 +832,10 @@ def compute_recovery_score(
     th = _merge_thresholds(thresholds)
 
     # HRV component — drop_sd in baseline-SD units below baseline.
+    baseline_days = int(th["baseline_window_days"])
     hrv_kind = _hrv_kind(metrics)
     hrv_acute, _ = _recent_mean(metrics, hrv_kind, today, HRV_ACUTE_DAYS)
-    hrv_base, hrv_sd, _ = _baseline(metrics, hrv_kind, today, HRV_BASELINE_DAYS)
+    hrv_base, hrv_sd, _ = _baseline(metrics, hrv_kind, today, baseline_days)
     hrv_score: float | None = None
     if hrv_acute is not None and hrv_base is not None and hrv_sd:
         drop_sd = max(0.0, (hrv_base - hrv_acute) / hrv_sd)
@@ -755,7 +849,7 @@ def compute_recovery_score(
 
     # RHR component — bpm rise above baseline.
     rhr_acute, _ = _recent_mean(metrics, MetricKind.RESTING_HR.value, today, HRV_ACUTE_DAYS)
-    rhr_base, _, _ = _baseline(metrics, MetricKind.RESTING_HR.value, today, RHR_BASELINE_DAYS)
+    rhr_base, _, _ = _baseline(metrics, MetricKind.RESTING_HR.value, today, baseline_days)
     rhr_score: float | None = None
     if rhr_acute is not None and rhr_base is not None:
         rise = max(0.0, rhr_acute - rhr_base)

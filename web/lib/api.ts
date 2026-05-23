@@ -181,9 +181,16 @@ export interface ClientFormPayload {
   injury_history?: string | null;
 }
 
+export interface BaselineWindowSuggestion {
+  days: number;
+  stable: boolean;
+  reason: string;
+}
+
 export interface ThresholdsResponse {
   defaults: Record<string, number>;
   overrides: Record<string, number>;
+  baseline_window_suggestion?: BaselineWindowSuggestion | null;
 }
 
 export interface AskResponse {

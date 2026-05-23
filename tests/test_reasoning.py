@@ -15,6 +15,7 @@ import pandas as pd
 
 from fit_ontology.ontology import MetricKind
 from fit_ontology.reasoning import (
+    BASELINE_WINDOW_CHOICES,
     CITATIONS,
     compute_recovery_score,
     detect_acwr_signal,
@@ -25,6 +26,7 @@ from fit_ontology.reasoning import (
     detect_sleep_trend_signal,
     detect_training_readiness_signal,
     generate_recommendation,
+    recommend_baseline_window,
 )
 
 # ---- Fixture builders ---------------------------------------------------
@@ -397,6 +399,67 @@ def test_recovery_score_components_clamp_into_severe_band():
     s = _sessions("c1", today=today, rpe_baseline=6)
     score = compute_recovery_score(m, s, today=today)
     assert score.hrv is not None and score.hrv < 25
+
+
+# --- Personalized baseline window --------------------------------------
+
+def test_recommend_baseline_window_picks_short_when_stable_short():
+    """A stable 14-day window with low drift should be preferred over 28d.
+    Picking the shortest stable window keeps the baseline as responsive
+    as possible without admitting noise."""
+    today = date.today()
+    # 56 days of stable HRV with low jitter.
+    rows = _stable_metric("c1", MetricKind.HRV_RMSSD.value, 55, today,
+                          days=56, jitter=2)
+    m = pd.DataFrame(rows)
+    suggestion = recommend_baseline_window(m, today=today)
+    assert suggestion.days == 14
+    assert suggestion.stable is True
+
+
+def test_recommend_baseline_window_falls_back_to_default_when_nonstationary():
+    """If the HRV is drifting hard across every candidate window the
+    auto-fit can't settle — it should fall back to the literature
+    default (28d) and say so."""
+    today = date.today()
+    # Linearly drifting baseline (40 -> 60 across 56 days) — no window
+    # will be internally stable.
+    rows = []
+    for offset in range(56, 0, -1):
+        d = today - timedelta(days=offset)
+        t = (56 - offset) / 55
+        rows.append(dict(
+            id=f"hrv-{offset}",
+            client_id="c1", date=d,
+            source="garmin", kind=MetricKind.HRV_RMSSD.value,
+            value=40 + 20 * t, unit="ms",
+        ))
+    suggestion = recommend_baseline_window(pd.DataFrame(rows), today=today)
+    assert suggestion.days == 28  # fallback
+    assert suggestion.stable is False
+
+
+def test_recommend_baseline_window_returns_default_on_empty_data():
+    today = date.today()
+    m = pd.DataFrame(columns=["id", "client_id", "date", "source", "kind", "value", "unit"])
+    suggestion = recommend_baseline_window(m, today=today)
+    assert suggestion.days == 28
+    assert suggestion.stable is False
+
+
+def test_baseline_window_threshold_overrides_engine_default():
+    """Setting the per-client threshold to 14 should be visible in the
+    rationale text — it cites the actual window length used."""
+    today = date.today()
+    m = _metrics("c1", today=today, hrv_baseline=55, hrv_acute=40, sleep_acute=7.8)
+    s = _sessions("c1", today=today, rpe_baseline=6)
+    rec = generate_recommendation("c1", m, s, today=today,
+                                  thresholds={"baseline_window_days": 14})
+    assert "14-day baseline" in rec.rationale
+
+
+def test_baseline_window_candidates_are_the_three_we_advertise():
+    assert BASELINE_WINDOW_CHOICES == (14, 28, 56)
 
 
 def test_sleep_signal_counts_nights_below_floor():
