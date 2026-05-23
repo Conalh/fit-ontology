@@ -66,6 +66,11 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
     queryFn: () => api.overrides(clientId, 20),
     enabled: !missing,
   });
+  const historyQ = useQuery({
+    queryKey: ["rec-history", clientId],
+    queryFn: () => api.recommendationHistory(clientId, 12),
+    enabled: !missing,
+  });
 
   if (missing) {
     return (
@@ -176,6 +181,7 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
           <SessionsAndHistoryRow
             sessions={sessionsQ.data ?? []}
             overrides={overridesQ.data ?? []}
+            history={historyQ.data ?? []}
             currentRec={recQ.data}
           />
 
@@ -800,16 +806,18 @@ function TrendCell({
 function SessionsAndHistoryRow({
   sessions,
   overrides,
+  history,
   currentRec,
 }: {
   sessions: import("@/lib/api").SessionRow[];
   overrides: OverrideRow[];
+  history: Recommendation[];
   currentRec: Recommendation | undefined;
 }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 22 }}>
       <SessionsTable sessions={sessions} />
-      <DecisionHistory overrides={overrides} currentRec={currentRec} />
+      <DecisionHistory overrides={overrides} history={history} currentRec={currentRec} />
     </div>
   );
 }
@@ -900,9 +908,11 @@ function SessionsTable({ sessions }: { sessions: import("@/lib/api").SessionRow[
 
 function DecisionHistory({
   overrides,
+  history,
   currentRec,
 }: {
   overrides: OverrideRow[];
+  history: Recommendation[];
   currentRec: Recommendation | undefined;
 }) {
   const rows = useMemo(() => {
@@ -914,9 +924,55 @@ function DecisionHistory({
       confidence: number;
       isCurrent: boolean;
     };
+
+    // Index overrides by week_of for O(1) lookup; if multiple overrides
+    // exist for the same week, the most recent one wins.
+    const overrideByWeek = new Map<string, OverrideRow>();
+    for (const o of [...overrides].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))) {
+      if (!overrideByWeek.has(o.week_of)) overrideByWeek.set(o.week_of, o);
+    }
+
+    // Persisted history is the engine column for every week we've ever
+    // computed. Merge in the trainer's override (if any) per week.
+    const seen = new Set<string>();
     const out: Row[] = [];
-    if (currentRec) {
+    const currentWeek = currentRec?.week_of;
+
+    for (const h of history) {
+      if (seen.has(h.week_of)) continue;
+      seen.add(h.week_of);
+      const o = overrideByWeek.get(h.week_of);
       out.push({
+        key: h.id,
+        weekOf: h.week_of,
+        engine: textToVerdict(h.recommendation),
+        trainer: o ? trainerVerdictFromOverride(o) : null,
+        confidence: h.confidence,
+        isCurrent: h.week_of === currentWeek,
+      });
+    }
+
+    // Override-only weeks (override exists but no persisted history row,
+    // e.g. from before lazy-persist landed) still surface so the trainer
+    // doesn't lose visibility on old decisions.
+    for (const [weekOf, o] of overrideByWeek.entries()) {
+      if (seen.has(weekOf)) continue;
+      seen.add(weekOf);
+      out.push({
+        key: o.id,
+        weekOf,
+        engine: textToVerdict(o.system_recommendation),
+        trainer: trainerVerdictFromOverride(o),
+        confidence: o.system_confidence,
+        isCurrent: weekOf === currentWeek,
+      });
+    }
+
+    // If the current week isn't in either list yet (no override + not
+    // persisted), append it from currentRec so the "Now" badge always
+    // has a row to attach to.
+    if (currentRec && !seen.has(currentRec.week_of)) {
+      out.unshift({
         key: `current-${currentRec.week_of}`,
         weekOf: currentRec.week_of,
         engine: textToVerdict(currentRec.recommendation),
@@ -925,25 +981,10 @@ function DecisionHistory({
         isCurrent: true,
       });
     }
-    for (const o of overrides) {
-      // Skip the current-week row if the current rec covers it (we already added it).
-      if (currentRec && o.week_of === currentRec.week_of) continue;
-      out.push({
-        key: o.id,
-        weekOf: o.week_of,
-        engine: textToVerdict(o.system_recommendation),
-        trainer:
-          o.trainer_action === "accept"
-            ? textToVerdict(o.system_recommendation)
-            : o.trainer_action === "reject"
-              ? oppositeVerdict(textToVerdict(o.system_recommendation))
-              : textToVerdict(o.system_recommendation),
-        confidence: o.system_confidence,
-        isCurrent: false,
-      });
-    }
+
+    out.sort((a, b) => Date.parse(b.weekOf) - Date.parse(a.weekOf));
     return out.slice(0, 8);
-  }, [overrides, currentRec]);
+  }, [overrides, history, currentRec]);
 
   return (
     <section style={{ border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface)", overflow: "hidden" }}>
@@ -1056,6 +1097,13 @@ function oppositeVerdict(v: "DELOAD" | "CONSERVATIVE" | "STANDARD"): "DELOAD" | 
   if (v === "DELOAD") return "STANDARD";
   if (v === "STANDARD") return "DELOAD";
   return "STANDARD";
+}
+
+function trainerVerdictFromOverride(o: OverrideRow): "DELOAD" | "CONSERVATIVE" | "STANDARD" {
+  const engine = textToVerdict(o.system_recommendation);
+  if (o.trainer_action === "accept") return engine;
+  if (o.trainer_action === "reject") return oppositeVerdict(engine);
+  return engine; // 'edit' keeps the same direction; load_change_pct captures the magnitude
 }
 
 // ─── Override drawer ─────────────────────────────────────────────────

@@ -166,6 +166,8 @@ export const api = {
   roster: () => request<RosterRow[]>("/api/roster"),
   recommendation: (clientId: string) =>
     request<Recommendation>(`/api/clients/${clientId}/recommendation`),
+  recommendationHistory: (clientId: string, limit = 12) =>
+    request<Recommendation[]>(`/api/clients/${clientId}/recommendations?limit=${limit}`),
   metrics: (clientId: string, days = 35) =>
     request<MetricRow[]>(`/api/clients/${clientId}/metrics?days=${days}`),
   sessions: (clientId: string, days = 35) =>
