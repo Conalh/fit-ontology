@@ -42,7 +42,11 @@ export default function RosterPage() {
       <Sidebar roster={data ?? []} activeNav="roster" accentHex={accentHex} />
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        <TopBar breadcrumb={<span style={{ color: "var(--text)", fontWeight: 500 }}>Roster</span>} />
+        <TopBar breadcrumb={<span style={{ color: "var(--text)", fontWeight: 500 }}>Roster</span>}>
+          <Link href="/clients/new" className="btn-primary">
+            + Add client
+          </Link>
+        </TopBar>
 
         <div style={{ padding: "28px 28px 36px" }}>
           <header style={{ marginBottom: 18 }}>

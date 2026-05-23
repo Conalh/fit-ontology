@@ -107,6 +107,27 @@ export interface AskTrace {
   result_summary: string;
 }
 
+export interface ClientFull {
+  id: string;
+  name: string;
+  sex: "M" | "F" | "other";
+  age: number;
+  height_cm: number;
+  weight_kg: number;
+  goal: string;
+  injury_history: string | null;
+}
+
+export interface ClientFormPayload {
+  name: string;
+  sex: "M" | "F" | "other";
+  age: number;
+  height_cm: number;
+  weight_kg: number;
+  goal: string;
+  injury_history?: string | null;
+}
+
 export interface AskResponse {
   answer: string;
   traces: AskTrace[];
@@ -118,7 +139,17 @@ export interface AskResponse {
 export const api = {
   health: () => request<{ ok: boolean }>("/api/health"),
   clients: () => request<ClientSummary[]>("/api/clients"),
-  client: (clientId: string) => request<Record<string, unknown>>(`/api/clients/${clientId}`),
+  client: (clientId: string) => request<ClientFull>(`/api/clients/${clientId}`),
+  createClient: (payload: ClientFormPayload) =>
+    request<{ id: string }>("/api/clients", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateClient: (clientId: string, payload: Partial<ClientFormPayload>) =>
+    request<{ ok: boolean; updated: string[] }>(`/api/clients/${clientId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
   roster: () => request<RosterRow[]>("/api/roster"),
   recommendation: (clientId: string) =>
     request<Recommendation>(`/api/clients/${clientId}/recommendation`),

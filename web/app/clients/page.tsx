@@ -131,6 +131,9 @@ function ClientDetailInner() {
           <Link href={`/clients/upload?id=${clientId}`} className="btn-ghost">
             Upload
           </Link>
+          <Link href={`/clients/edit?id=${clientId}`} className="btn-ghost">
+            Edit
+          </Link>
           <button className="btn-primary" onClick={() => setOverrideOpen((s) => !s)}>
             Override
           </button>
