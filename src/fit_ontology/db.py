@@ -208,6 +208,42 @@ def latest_override_for_week(con, client_id: str, week_of) -> pd.DataFrame:
         return _empty_overrides_df()
 
 
+# ─── Per-client thresholds ────────────────────────────────────────────
+#
+# Sparse-table model: a stored row means the trainer explicitly
+# overrode that threshold for this client; absence means use the
+# population default from reasoning.DEFAULT_THRESHOLDS. Reads tolerate
+# a missing table for pre-migration DBs.
+
+def thresholds_for_client(con, client_id: str) -> dict[str, float]:
+    try:
+        rows = con.execute(
+            "SELECT name, value FROM client_thresholds WHERE client_id = ?",
+            [client_id],
+        ).fetchall()
+        return {name: float(value) for name, value in rows}
+    except duckdb.CatalogException:
+        return {}
+
+
+def upsert_threshold(con, client_id: str, name: str, value: float) -> None:
+    con.execute(
+        """
+        INSERT INTO client_thresholds (client_id, name, value)
+        VALUES (?, ?, ?)
+        ON CONFLICT (client_id, name) DO UPDATE SET value = EXCLUDED.value
+        """,
+        [client_id, name, value],
+    )
+
+
+def delete_threshold(con, client_id: str, name: str) -> None:
+    con.execute(
+        "DELETE FROM client_thresholds WHERE client_id = ? AND name = ?",
+        [client_id, name],
+    )
+
+
 def all_overrides(con, limit: int = 1000) -> pd.DataFrame:
     """All overrides across clients — for the calibration page."""
     try:

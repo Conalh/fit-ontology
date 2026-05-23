@@ -210,4 +210,16 @@ CREATE TABLE IF NOT EXISTS recommendation_overrides (
 
 CREATE INDEX IF NOT EXISTS idx_overrides_client_week
     ON recommendation_overrides(client_id, week_of);
+
+CREATE TABLE IF NOT EXISTS client_thresholds (
+    -- Sparse per-client overrides on the reasoning module's severity
+    -- thresholds. Only stored rows exist; everything else falls back to
+    -- DEFAULT_THRESHOLDS in reasoning.py. Adding a row = the trainer
+    -- saying "this client's HRV is more reactive than the population
+    -- default" or similar.
+    client_id   VARCHAR NOT NULL REFERENCES clients(id),
+    name        VARCHAR NOT NULL,
+    value       DOUBLE NOT NULL,
+    PRIMARY KEY (client_id, name)
+);
 """
