@@ -1,11 +1,7 @@
 """Weekly PDF — round-trip the bytes and spot-check the content."""
 from __future__ import annotations
 
-import sys
 from datetime import date, datetime, timedelta
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import pandas as pd
 

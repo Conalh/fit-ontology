@@ -12,22 +12,16 @@ a new wearable signal means one ingest adapter and no dashboard work.
 from __future__ import annotations
 
 import contextlib
-import sys
 import tempfile
 import uuid
 from datetime import date, datetime
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 import altair as alt
 import pandas as pd
 import streamlit as st
 
 from fit_ontology.config import load_env
-
-load_env()
-
 from fit_ontology.db import (
     connect,
     insert_metrics,
@@ -46,6 +40,8 @@ from fit_ontology.ingest import (
 from fit_ontology.ontology import MetricKind, OverrideAction, RecommendationOverride
 from fit_ontology.reasoning import generate_recommendation
 from fit_ontology.report import build_weekly_pdf
+
+load_env()
 
 st.set_page_config(
     page_title="FitOntology",

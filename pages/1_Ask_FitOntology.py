@@ -7,19 +7,13 @@ can see what data the assistant pulled before they trust the answer.
 from __future__ import annotations
 
 import os
-import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
+import streamlit as st
 
-from fit_ontology.config import load_env  # noqa: E402
+from fit_ontology.assistant import DEFAULT_MODEL, ask
+from fit_ontology.config import load_env
 
-load_env(ROOT)
-
-import streamlit as st  # noqa: E402
-
-from fit_ontology.assistant import DEFAULT_MODEL, ask  # noqa: E402
+load_env()
 
 st.set_page_config(page_title="Ask FitOntology", page_icon="💬", layout="wide")
 st.title("Ask FitOntology")

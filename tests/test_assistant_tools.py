@@ -9,14 +9,11 @@ from __future__ import annotations
 
 import json
 import sys
-import tempfile
 from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from fit_ontology.assistant import TOOLS, AssistantTurn, _execute_tool, ask
 from fit_ontology.db import connect, ensure_client, insert_metrics, insert_sessions
