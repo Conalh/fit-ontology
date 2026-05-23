@@ -10,6 +10,7 @@ import { DecisionHistory } from "@/components/client-detail/decision-history";
 import { NoDataBanner } from "@/components/client-detail/no-data-banner";
 import { OverrideDrawer } from "@/components/client-detail/override-drawer";
 import { RecommendationCard } from "@/components/client-detail/recommendation-card";
+import { RecoveryGauge } from "@/components/client-detail/recovery-gauge";
 import { SendToClient } from "@/components/client-detail/send-to-client";
 import { SessionsTable } from "@/components/client-detail/sessions-table";
 import { TrendsGrid } from "@/components/client-detail/trends-grid";
@@ -164,6 +165,8 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
             (metricsQ.data ?? []).length === 0 && (sessionsQ.data ?? []).length === 0 && (
               <NoDataBanner clientId={clientId} />
             )}
+
+          <RecoveryGauge score={recQ.data?.recovery_score ?? null} />
 
           <RecommendationCard
             rec={recQ.data}

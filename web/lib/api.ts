@@ -57,6 +57,14 @@ export interface Contraindication {
   source_phrase: string;
 }
 
+export interface RecoveryScore {
+  composite: number | null;
+  hrv: number | null;
+  sleep: number | null;
+  rhr: number | null;
+  acwr: number | null;
+}
+
 export interface Recommendation {
   id: string;
   client_id: string;
@@ -67,6 +75,7 @@ export interface Recommendation {
   confidence: number;
   generated_at: string;
   contraindications: Contraindication[];
+  recovery_score?: RecoveryScore | null;
 }
 
 export interface MetricRow {

@@ -16,6 +16,7 @@ import pandas as pd
 from fit_ontology.ontology import MetricKind
 from fit_ontology.reasoning import (
     CITATIONS,
+    compute_recovery_score,
     detect_acwr_signal,
     detect_hrv_trend_signal,
     detect_rhr_trend_signal,
@@ -342,6 +343,60 @@ def test_sleep_trend_signal_fires_when_eroding():
     sig = detect_sleep_trend_signal(pd.DataFrame(rows), today)
     assert sig is not None
     assert sig.kind == "sleep_trend_down"
+
+
+# --- Composite recovery score ------------------------------------------
+
+def test_recovery_score_perfect_when_everything_clean():
+    """At-baseline HRV, normal sleep, normal RHR, ACWR in the sweet spot
+    → composite should be at or near 100."""
+    today = date.today()
+    m = _metrics("c1", today=today, hrv_baseline=55, hrv_acute=None,
+                 rhr_baseline=58, rhr_acute=None, sleep_acute=7.8)
+    s = _sessions("c1", today=today, rpe_baseline=6)
+    score = compute_recovery_score(m, s, today=today)
+    assert score.composite is not None
+    assert score.composite >= 90, f"expected near-perfect, got {score.composite}"
+
+
+def test_recovery_score_low_when_stressed():
+    """HRV crashed, sleep deficit — composite should sit in the low half."""
+    today = date.today()
+    m = _metrics("c1", today=today, hrv_baseline=55, hrv_acute=40,
+                 rhr_baseline=58, rhr_acute=65, sleep_acute=5.5)
+    s = _sessions("c1", today=today, rpe_baseline=6)
+    score = compute_recovery_score(m, s, today=today)
+    assert score.composite is not None
+    assert score.composite <= 50, f"expected stressed score, got {score.composite}"
+
+
+def test_recovery_score_handles_missing_components():
+    """If a component has no data, the remaining weights re-normalize.
+    Composite should reflect available components, not crash or return 0."""
+    today = date.today()
+    # No sleep data, no sessions — only HRV + RHR feed the composite.
+    m = _metrics("c1", today=today, hrv_baseline=55, hrv_acute=None,
+                 rhr_baseline=58, rhr_acute=None, sleep_acute=None)
+    s = pd.DataFrame(columns=["id", "client_id", "date", "type", "duration_min", "rpe", "notes"])
+    score = compute_recovery_score(m, s, today=today)
+    assert score.sleep is None
+    assert score.acwr is None
+    assert score.hrv is not None and score.rhr is not None
+    assert score.composite is not None  # measurable from HRV + RHR alone
+
+
+def test_recovery_score_components_clamp_into_severe_band():
+    """An HRV crash drives the HRV sub-score into the past-severe band.
+    We assert <25 rather than ==0 because the 28-day baseline window
+    overlaps the 7-day acute window — the crash dilutes the baseline
+    mean and inflates its SD, so drop-SD reads smaller than the bare
+    delta would suggest. Engine behavior is unchanged; the test just
+    accounts for it."""
+    today = date.today()
+    m = _metrics("c1", today=today, hrv_baseline=55, hrv_acute=33, sleep_acute=7.8)
+    s = _sessions("c1", today=today, rpe_baseline=6)
+    score = compute_recovery_score(m, s, today=today)
+    assert score.hrv is not None and score.hrv < 25
 
 
 def test_sleep_signal_counts_nights_below_floor():

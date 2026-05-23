@@ -640,6 +640,165 @@ def detect_sleep_trend_signal(
     )
 
 
+# --- Composite recovery score ---------------------------------------------
+#
+# A single 0–100 number combining the four primary recovery markers, with
+# every component (and the formula that produced the composite) visible
+# alongside it so the trainer can audit how the gauge moved. Same rules
+# the verdict engine uses — anchored at the severity bands — so the
+# gauge and the verdict can never disagree about what's driving the call.
+
+# Component weights. HRV and sleep are the two most-cited recovery
+# markers in the literature (Plews & Laursen, ACSM 11e), so they carry
+# more weight than the corroborators.
+RECOVERY_WEIGHTS = {"hrv": 0.30, "sleep": 0.30, "rhr": 0.20, "acwr": 0.20}
+
+
+@dataclass
+class RecoveryScore:
+    """Snapshot of current recovery state. The composite is a weighted
+    mean of whichever components are measurable — if a client has no
+    sleep data, the remaining components' weights re-normalize to 1.
+
+    None values mean "no data" — display as a dash, not as zero. A zero
+    component score is real ("at or past the severe threshold"); ``None``
+    means we couldn't compute it.
+    """
+    composite: int | None
+    hrv: int | None
+    sleep: int | None
+    rhr: int | None
+    acwr: int | None
+
+
+def _band_score(value: float, mild: float, moderate: float, severe: float) -> float:
+    """Map an absolute deviation value to a 0–100 score, with anchored
+    stops at the severity boundaries: clean (0 deviation) = 100, mild
+    boundary = 75, moderate boundary = 50, severe boundary = 25, and
+    1.5x severe or worse = 0. Piecewise linear in between."""
+    if value <= 0:
+        return 100.0
+    if value < mild:
+        return 100 - 25 * (value / mild)
+    if value < moderate:
+        return 75 - 25 * ((value - mild) / (moderate - mild))
+    if value < severe:
+        return 50 - 25 * ((value - moderate) / (severe - moderate))
+    if value < severe * 1.5:
+        return 25 - 25 * ((value - severe) / (severe * 0.5))
+    return 0.0
+
+
+def _sleep_component_score(mean_hours: float, floor: float, deficit: float) -> float:
+    """Sleep score anchored at the ACSM floor (= 75) and deficit threshold
+    (= 25). 8 h+ caps the score at 100; well-below-deficit clamps to 0."""
+    upper = 8.0  # ACSM general adult target ceiling
+    if mean_hours >= upper:
+        return 100.0
+    if mean_hours >= floor:
+        return 75 + 25 * (mean_hours - floor) / max(1e-9, upper - floor)
+    if mean_hours >= deficit:
+        return 25 + 50 * (mean_hours - deficit) / max(1e-9, floor - deficit)
+    # Below deficit — linear ramp from 25 down to 0 across the next 2 h.
+    if mean_hours >= deficit - 2:
+        return 25 * (mean_hours - (deficit - 2)) / 2
+    return 0.0
+
+
+def _acwr_component_score(ratio: float, safe_low: float, safe_high: float,
+                          moderate_high: float, severe_high: float) -> float:
+    """ACWR score: 100 across the Gabbett sweet spot, decaying to 50 at
+    the moderate boundary, 25 at the severe boundary, 0 well past that.
+    Under-load (ACWR below safe_low) returns 75 — detraining is a soft
+    flag, not a recovery problem worth tanking the composite for."""
+    if safe_low <= ratio <= safe_high:
+        return 100.0
+    if ratio < safe_low:
+        return 75.0  # under-load — not a recovery deficit
+    # ratio > safe_high
+    if ratio < moderate_high:
+        return 100 - 50 * (ratio - safe_high) / max(1e-9, moderate_high - safe_high)
+    if ratio < severe_high:
+        return 50 - 25 * (ratio - moderate_high) / max(1e-9, severe_high - moderate_high)
+    upper_zero = severe_high + 0.4  # ratio 2.2 → 0 with default thresholds
+    if ratio < upper_zero:
+        return 25 - 25 * (ratio - severe_high) / max(1e-9, upper_zero - severe_high)
+    return 0.0
+
+
+def compute_recovery_score(
+    metrics: pd.DataFrame,
+    sessions: pd.DataFrame,
+    today: date | None = None,
+    thresholds: Mapping[str, float] | None = None,
+) -> RecoveryScore:
+    """Build the 0–100 composite recovery score plus its four
+    sub-components. Same windows, same baselines, same thresholds as
+    the verdict engine — so the gauge can never contradict the verdict."""
+    today = today or date.today()
+    th = _merge_thresholds(thresholds)
+
+    # HRV component — drop_sd in baseline-SD units below baseline.
+    hrv_kind = _hrv_kind(metrics)
+    hrv_acute, _ = _recent_mean(metrics, hrv_kind, today, HRV_ACUTE_DAYS)
+    hrv_base, hrv_sd, _ = _baseline(metrics, hrv_kind, today, HRV_BASELINE_DAYS)
+    hrv_score: float | None = None
+    if hrv_acute is not None and hrv_base is not None and hrv_sd:
+        drop_sd = max(0.0, (hrv_base - hrv_acute) / hrv_sd)
+        hrv_score = _band_score(drop_sd, th["hrv_mild_sd"], th["hrv_moderate_sd"], th["hrv_severe_sd"])
+
+    # Sleep component — mean hours over the last 7 days.
+    sleep_acute, _ = _recent_mean(metrics, MetricKind.SLEEP_HOURS.value, today, HRV_ACUTE_DAYS)
+    sleep_score: float | None = None
+    if sleep_acute is not None:
+        sleep_score = _sleep_component_score(sleep_acute, th["sleep_floor_hours"], th["sleep_deficit_hours"])
+
+    # RHR component — bpm rise above baseline.
+    rhr_acute, _ = _recent_mean(metrics, MetricKind.RESTING_HR.value, today, HRV_ACUTE_DAYS)
+    rhr_base, _, _ = _baseline(metrics, MetricKind.RESTING_HR.value, today, RHR_BASELINE_DAYS)
+    rhr_score: float | None = None
+    if rhr_acute is not None and rhr_base is not None:
+        rise = max(0.0, rhr_acute - rhr_base)
+        rhr_score = _band_score(rise, th["rhr_mild_bpm"], th["rhr_moderate_bpm"], th["rhr_severe_bpm"])
+
+    # ACWR component — acute/chronic load ratio.
+    acwr_score: float | None = None
+    loads, _ = _session_load(sessions)
+    if not loads.empty:
+        acute_window = [d for d in loads.index if 0 <= (today - d).days <= HRV_ACUTE_DAYS]
+        chronic_window = [d for d in loads.index if 0 <= (today - d).days <= ACWR_CHRONIC_WEEKS * 7]
+        if acute_window and chronic_window:
+            acute_total = float(loads.loc[acute_window].sum())
+            weekly_chronic = float(loads.loc[chronic_window].sum()) / ACWR_CHRONIC_WEEKS
+            if weekly_chronic > 0:
+                ratio = acute_total / weekly_chronic
+                acwr_score = _acwr_component_score(
+                    ratio, th["acwr_safe_low"], th["acwr_safe_high"],
+                    th["acwr_moderate_high"], th["acwr_severe_high"],
+                )
+
+    # Composite — weights re-normalize over whichever components are
+    # measurable. Missing components don't drag the score down to zero;
+    # they just don't contribute.
+    components = {"hrv": hrv_score, "sleep": sleep_score, "rhr": rhr_score, "acwr": acwr_score}
+    total_weight = sum(RECOVERY_WEIGHTS[k] for k, v in components.items() if v is not None)
+    composite: int | None
+    if total_weight == 0:
+        composite = None
+    else:
+        composite = round(
+            sum(RECOVERY_WEIGHTS[k] * v for k, v in components.items() if v is not None) / total_weight
+        )
+
+    return RecoveryScore(
+        composite=composite,
+        hrv=round(hrv_score) if hrv_score is not None else None,
+        sleep=round(sleep_score) if sleep_score is not None else None,
+        rhr=round(rhr_score) if rhr_score is not None else None,
+        acwr=round(acwr_score) if acwr_score is not None else None,
+    )
+
+
 def detect_training_readiness_signal(
     metrics: pd.DataFrame,
     today: date,

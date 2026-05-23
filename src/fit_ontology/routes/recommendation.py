@@ -5,6 +5,7 @@ import json
 from datetime import date, timedelta
 
 import duckdb
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..contraindications import match_contraindications
@@ -18,9 +19,9 @@ from ..db import (
     sessions_for_client,
     thresholds_for_client,
 )
-from ..reasoning import generate_recommendation
+from ..reasoning import compute_recovery_score, generate_recommendation
 from .deps import read_only_conn
-from .schemas import ContraindicationItem, RecommendationResponse
+from .schemas import ContraindicationItem, RecommendationResponse, RecoveryScoreResponse
 
 router = APIRouter()
 
@@ -50,6 +51,11 @@ def get_recommendation(client_id: str) -> RecommendationResponse:
     needs_persist = False
     rec = None
     injury: str | None = None
+    # We always need the current metrics + sessions for the live recovery
+    # gauge, whether or not the verdict itself was already persisted.
+    metrics: pd.DataFrame | None = None
+    sessions: pd.DataFrame | None = None
+    overrides: dict | None = None
 
     with connect(DEFAULT_DB_PATH, read_only=True) as rcon:
         stored = recommendation_for_week(rcon, client_id, week_of)
@@ -58,12 +64,13 @@ def get_recommendation(client_id: str) -> RecommendationResponse:
         ).fetchone()
         injury = injury_row[0] if injury_row else None
 
+        metrics = metrics_for_client(rcon, client_id, days=35)
+        sessions = sessions_for_client(rcon, client_id, days=35)
+        overrides = thresholds_for_client(rcon, client_id)
+
         if stored is not None:
             rec = stored
         else:
-            metrics = metrics_for_client(rcon, client_id, days=35)
-            sessions = sessions_for_client(rcon, client_id, days=35)
-            overrides = thresholds_for_client(rcon, client_id)
             rec = generate_recommendation(client_id, metrics, sessions, thresholds=overrides)
             needs_persist = True
 
@@ -79,6 +86,17 @@ def get_recommendation(client_id: str) -> RecommendationResponse:
         for c in match_contraindications(injury)
     ]
 
+    # Recovery gauge — fresh on every call, not persisted. The verdict
+    # carries the Monday-morning decision; this carries today's snapshot.
+    score = compute_recovery_score(metrics, sessions, today=today, thresholds=overrides)
+    recovery = RecoveryScoreResponse(
+        composite=score.composite,
+        hrv=score.hrv,
+        sleep=score.sleep,
+        rhr=score.rhr,
+        acwr=score.acwr,
+    )
+
     assert rec is not None  # for type-checkers; the branches above both set it
     return RecommendationResponse(
         id=rec.id, client_id=rec.client_id, week_of=rec.week_of,
@@ -86,6 +104,7 @@ def get_recommendation(client_id: str) -> RecommendationResponse:
         source_metric_ids=rec.source_metric_ids, confidence=rec.confidence,
         generated_at=rec.generated_at,
         contraindications=contras,
+        recovery_score=recovery,
     )
 
 

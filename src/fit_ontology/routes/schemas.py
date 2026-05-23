@@ -80,6 +80,21 @@ class ContraindicationItem(BaseModel):
     source_phrase: str
 
 
+class RecoveryScoreResponse(BaseModel):
+    """Composite 0–100 recovery state + its four sub-components.
+
+    Computed fresh on every recommendation fetch (unlike the verdict
+    itself, which is lazy-persisted weekly). The verdict answers "what
+    decision did the system make on Monday?"; the gauge answers "what
+    does the current data look like right now?". The two read together.
+    """
+    composite: int | None
+    hrv: int | None
+    sleep: int | None
+    rhr: int | None
+    acwr: int | None
+
+
 class RecommendationResponse(BaseModel):
     id: str
     client_id: str
@@ -93,6 +108,8 @@ class RecommendationResponse(BaseModel):
     # Independent of the weekly verdict — a deload still respects
     # "cap plyometrics" on a knee-history client.
     contraindications: list[ContraindicationItem] = []
+    # Live recovery gauge (None on history rows — see RecoveryScoreResponse).
+    recovery_score: RecoveryScoreResponse | None = None
 
 
 # ─── Overrides ──────────────────────────────────────────────────────
