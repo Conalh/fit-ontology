@@ -50,6 +50,13 @@ export interface RosterRow {
   stale: boolean;
 }
 
+export interface Contraindication {
+  kind: string;
+  title: string;
+  advice: string;
+  source_phrase: string;
+}
+
 export interface Recommendation {
   id: string;
   client_id: string;
@@ -59,6 +66,7 @@ export interface Recommendation {
   source_metric_ids: string[];
   confidence: number;
   generated_at: string;
+  contraindications: Contraindication[];
 }
 
 export interface MetricRow {

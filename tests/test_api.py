@@ -104,6 +104,22 @@ def test_get_recommendation_returns_structured_payload(app_with_db):
     assert "recommendation" in data and "rationale" in data
     assert 0 <= data["confidence"] <= 1
     assert isinstance(data["source_metric_ids"], list)
+    assert "contraindications" in data
+
+
+def test_recommendation_surfaces_contraindications_from_injury(app_with_db):
+    """Editing the client's injury_history should make matching
+    contraindications appear in the next recommendation response."""
+    app_with_db.patch(
+        "/api/clients/c_test",
+        json={"injury_history": "ACL reconstruction 2022; lumbar stiffness on heavy days"},
+    )
+    r = app_with_db.get("/api/clients/c_test/recommendation")
+    data = r.json()
+    kinds = {c["kind"] for c in data["contraindications"]}
+    assert "acl" in kinds
+    assert "knee" in kinds
+    assert "lumbar" in kinds
 
 
 def test_get_roster_includes_seeded_client(app_with_db):
