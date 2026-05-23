@@ -7,6 +7,7 @@ import { Suspense, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { Donut, LoadBars, TrendChart } from "@/components/charts";
 import { Chevron, ClientHeader, Sidebar, TopBar, VerdictBadge } from "@/components/chrome";
+import { ThresholdsPanel } from "@/components/thresholds-panel";
 import type { OverrideRow, Recommendation } from "@/lib/api";
 import { api } from "@/lib/api";
 import { withAlpha } from "@/lib/accent";
@@ -176,6 +177,8 @@ function ClientDetailInner() {
             overrides={overridesQ.data ?? []}
             currentRec={recQ.data}
           />
+
+          <ThresholdsPanel clientId={clientId} />
         </div>
       </div>
 
