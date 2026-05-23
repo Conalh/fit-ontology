@@ -18,7 +18,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from fit_ontology.assistant import _execute_tool, TOOLS
+from fit_ontology.assistant import AssistantTurn, _execute_tool, ask, TOOLS
 from fit_ontology.db import connect, ensure_client, insert_metrics, insert_sessions
 from fit_ontology.ontology import MetricKind
 
@@ -110,3 +110,78 @@ def test_compute_recommendation_returns_structured_json(seeded_db: Path):
 def test_unknown_tool_name_returns_friendly_error(seeded_db: Path):
     out = _execute_tool("definitely_not_a_tool", {}, seeded_db)
     assert "unknown tool" in out.lower()
+
+
+# --- Multi-turn chat: ask() must return the full Anthropic message stream
+#     so the Streamlit page can pass it back as `history=` on the next
+#     turn. Without that the second turn has no idea what tool_use /
+#     tool_result blocks the first turn produced.
+
+
+class _FakeBlock:
+    """Minimal stand-in for an Anthropic content block — enough for the
+    parts of ask() that read .type / .text / .name / .input / .id."""
+
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+    def model_dump(self):
+        return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
+
+
+class _FakeResponse:
+    def __init__(self, content):
+        self.content = content
+
+
+class _FakeMessages:
+    def __init__(self, responses):
+        self._responses = list(responses)
+
+    def create(self, **kwargs):
+        return self._responses.pop(0)
+
+
+class _FakeAnthropic:
+    def __init__(self, responses):
+        self.messages = _FakeMessages(responses)
+
+
+def test_ask_returns_full_message_stream(monkeypatch, seeded_db: Path):
+    """A single Q&A with no tool use should return a 2-message stream
+    (user + assistant) so the next turn has context."""
+    response = _FakeResponse(content=[_FakeBlock(type="text", text="Hello.")])
+    fake_module = type("M", (), {"Anthropic": lambda self=None, **kw: _FakeAnthropic([response])})()
+    monkeypatch.setitem(sys.modules, "anthropic", fake_module)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+
+    turn = ask("hi", db_path=seeded_db)
+
+    assert isinstance(turn, AssistantTurn)
+    assert turn.answer == "Hello."
+    assert len(turn.messages) == 2
+    assert turn.messages[0] == {"role": "user", "content": "hi"}
+    assert turn.messages[1]["role"] == "assistant"
+
+
+def test_ask_preserves_tool_use_blocks_for_next_turn(monkeypatch, seeded_db: Path):
+    """When the model uses a tool, the returned messages must include the
+    assistant's tool_use block AND the user tool_result block — that's
+    what makes the second turn's context coherent."""
+    tool_use_response = _FakeResponse(content=[
+        _FakeBlock(type="tool_use", id="toolu_1", name="list_clients", input={}),
+    ])
+    final_response = _FakeResponse(content=[_FakeBlock(type="text", text="Just one client.")])
+    fake_module = type("M", (), {"Anthropic": lambda self=None, **kw: _FakeAnthropic([tool_use_response, final_response])})()
+    monkeypatch.setitem(sys.modules, "anthropic", fake_module)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+
+    turn = ask("how many clients?", db_path=seeded_db)
+
+    # user → assistant(tool_use) → user(tool_result) → assistant(text)
+    assert len(turn.messages) == 4
+    assert turn.messages[1]["role"] == "assistant"
+    assert any(b.get("type") == "tool_use" for b in turn.messages[1]["content"])
+    assert turn.messages[2]["role"] == "user"
+    assert any(b.get("type") == "tool_result" for b in turn.messages[2]["content"])
+    assert turn.messages[3]["role"] == "assistant"
