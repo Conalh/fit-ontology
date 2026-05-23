@@ -1,0 +1,404 @@
+"use client";
+
+import { useId } from "react";
+
+/**
+ * Chart primitives ported from design/ui/charts.jsx. SVG-based, no
+ * dependencies. All charts share a 28-day window, a daily line, and
+ * (optionally) a baseline mean ± SD ribbon. Colors come from CSS
+ * custom properties so light/dark and per-client accent tweaks flow
+ * through without re-rendering.
+ */
+
+export interface SeriesPoint {
+  day: number;
+  value: number;
+}
+
+export interface Baseline {
+  mean: number;
+  sd: number;
+}
+
+function smoothPath(pts: [number, number][]): string {
+  if (pts.length < 2) return "";
+  const d: string[] = [`M ${pts[0][0].toFixed(2)} ${pts[0][1].toFixed(2)}`];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] || p2;
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6;
+    const c1y = p1[1] + (p2[1] - p0[1]) / 6;
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6;
+    const c2y = p2[1] - (p3[1] - p1[1]) / 6;
+    d.push(
+      `C ${c1x.toFixed(2)} ${c1y.toFixed(2)}, ${c2x.toFixed(2)} ${c2y.toFixed(2)}, ${p2[0].toFixed(
+        2,
+      )} ${p2[1].toFixed(2)}`,
+    );
+  }
+  return d.join(" ");
+}
+
+interface TrendChartProps {
+  data: SeriesPoint[];
+  baseline: Baseline;
+  unit?: string;
+  height?: number;
+  width?: number;
+  /** Invert sense — for RHR / ACWR where lower is better. */
+  invert?: boolean;
+  accent?: string;
+  showAxis?: boolean;
+  showRibbon?: boolean;
+  showLastValue?: boolean;
+  /** Fixed-threshold band (e.g. ACWR danger > 1.5). */
+  threshold?: { value: number; label: string };
+}
+
+export function TrendChart({
+  data,
+  baseline,
+  unit = "",
+  height = 180,
+  width = 600,
+  invert = false,
+  accent = "var(--accent)",
+  showAxis = true,
+  showRibbon = true,
+  showLastValue = true,
+  threshold,
+}: TrendChartProps) {
+  const uid = useId().replace(/:/g, "");
+  const gradId = `grad-${uid}`;
+
+  if (!data || data.length === 0) {
+    return (
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%" style={{ display: "block" }}>
+        <text x={width / 2} y={height / 2} fontSize="11" textAnchor="middle" fill="var(--text-muted)">
+          no data
+        </text>
+      </svg>
+    );
+  }
+
+  const padL = showAxis ? 36 : 8;
+  const padR = 12;
+  const padT = 14;
+  const padB = showAxis ? 22 : 8;
+  const innerW = width - padL - padR;
+  const innerH = height - padT - padB;
+
+  const values = data.map((d) => d.value);
+  const dataMin = Math.min(...values);
+  const dataMax = Math.max(...values);
+  const ribLo = baseline.mean - baseline.sd;
+  const ribHi = baseline.mean + baseline.sd;
+  const yMin = Math.min(dataMin, ribLo) - (dataMax - dataMin) * 0.15;
+  const yMax = Math.max(dataMax, ribHi) + (dataMax - dataMin) * 0.15;
+
+  const x = (i: number) => padL + (i / (data.length - 1)) * innerW;
+  const y = (v: number) => padT + (1 - (v - yMin) / (yMax - yMin || 1)) * innerH;
+
+  const pts: [number, number][] = data.map((d, i) => [x(i), y(d.value)]);
+  const linePath = smoothPath(pts);
+  const areaPath = `${linePath} L ${pts[pts.length - 1][0]} ${padT + innerH} L ${pts[0][0]} ${padT + innerH} Z`;
+
+  const ticks = [yMin + (yMax - yMin) * 0.15, baseline.mean, yMax - (yMax - yMin) * 0.15];
+  const xLabels = [-27, -21, -14, -7, 0];
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" style={{ display: "block", overflow: "visible" }}>
+      {/* Grid */}
+      {showAxis &&
+        ticks.map((t, i) => (
+          <line
+            key={i}
+            x1={padL}
+            x2={padL + innerW}
+            y1={y(t)}
+            y2={y(t)}
+            stroke="var(--grid)"
+            strokeWidth="1"
+            strokeDasharray={i === 1 ? "0" : "2 3"}
+          />
+        ))}
+
+      {/* Baseline ribbon */}
+      {showRibbon && (
+        <g>
+          <rect x={padL} y={y(ribHi)} width={innerW} height={y(ribLo) - y(ribHi)} fill={accent} opacity="0.08" />
+          <line
+            x1={padL}
+            x2={padL + innerW}
+            y1={y(baseline.mean)}
+            y2={y(baseline.mean)}
+            stroke={accent}
+            strokeWidth="1"
+            strokeDasharray="3 3"
+            opacity="0.5"
+          />
+        </g>
+      )}
+
+      {/* Threshold band */}
+      {threshold && (
+        <g>
+          <line
+            x1={padL}
+            x2={padL + innerW}
+            y1={y(threshold.value)}
+            y2={y(threshold.value)}
+            stroke="var(--danger)"
+            strokeWidth="1"
+            strokeDasharray="4 3"
+            opacity="0.7"
+          />
+          <text
+            x={padL + innerW - 4}
+            y={y(threshold.value) - 4}
+            fontSize="9"
+            textAnchor="end"
+            fill="var(--danger)"
+            fontWeight="500"
+            letterSpacing="0.04em"
+          >
+            {threshold.label}
+          </text>
+        </g>
+      )}
+
+      {/* Area gradient */}
+      <defs>
+        <linearGradient id={gradId} x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor={accent} stopOpacity="0.18" />
+          <stop offset="100%" stopColor={accent} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={areaPath} fill={`url(#${gradId})`} />
+
+      {/* Line */}
+      <path
+        d={linePath}
+        fill="none"
+        stroke={accent}
+        strokeWidth="1.75"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+
+      {/* Last point */}
+      <circle
+        cx={pts[pts.length - 1][0]}
+        cy={pts[pts.length - 1][1]}
+        r="3.5"
+        fill="var(--surface)"
+        stroke={accent}
+        strokeWidth="1.75"
+      />
+
+      {/* Y axis labels */}
+      {showAxis &&
+        ticks.map((t, i) => (
+          <text
+            key={i}
+            x={padL - 6}
+            y={y(t) + 3}
+            fontSize="9.5"
+            textAnchor="end"
+            fill="var(--text-muted)"
+            style={{ fontVariantNumeric: "tabular-nums" }}
+          >
+            {t.toFixed(t < 10 ? 1 : 0)}
+          </text>
+        ))}
+
+      {/* X axis labels */}
+      {showAxis &&
+        xLabels.map((d) => {
+          const idx = data.findIndex((p) => p.day === d);
+          if (idx < 0) return null;
+          return (
+            <text
+              key={d}
+              x={x(idx)}
+              y={padT + innerH + 14}
+              fontSize="9.5"
+              textAnchor="middle"
+              fill="var(--text-muted)"
+              style={{ fontVariantNumeric: "tabular-nums" }}
+            >
+              {d === 0 ? "today" : `${d}d`}
+            </text>
+          );
+        })}
+
+      {/* Last-value badge */}
+      {showLastValue && (
+        <g transform={`translate(${pts[pts.length - 1][0] + 8}, ${pts[pts.length - 1][1] - 12})`}>
+          <text
+            fontSize="10.5"
+            fontWeight="600"
+            fill="var(--text)"
+            style={{ fontVariantNumeric: "tabular-nums" }}
+          >
+            {data[data.length - 1].value.toFixed(data[data.length - 1].value < 10 ? 1 : 0)}
+            {unit}
+          </text>
+        </g>
+      )}
+
+      {/* Reference so the invert prop is touched (intentional) */}
+      {invert ? null : null}
+    </svg>
+  );
+}
+
+export function LoadBars({
+  data,
+  height = 100,
+  width = 600,
+  accent = "var(--accent)",
+  showAxis = true,
+}: {
+  data: { day: number; load: number }[];
+  height?: number;
+  width?: number;
+  accent?: string;
+  showAxis?: boolean;
+}) {
+  if (!data || data.length === 0) {
+    return (
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%" style={{ display: "block" }}>
+        <text x={width / 2} y={height / 2} fontSize="11" textAnchor="middle" fill="var(--text-muted)">
+          no sessions
+        </text>
+      </svg>
+    );
+  }
+  const padL = showAxis ? 36 : 8;
+  const padR = 12;
+  const padT = 10;
+  const padB = showAxis ? 22 : 8;
+  const innerW = width - padL - padR;
+  const innerH = height - padT - padB;
+
+  const maxLoad = Math.max(...data.map((d) => d.load), 100);
+  const barW = (innerW / data.length) * 0.65;
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" style={{ display: "block" }}>
+      <line x1={padL} x2={padL + innerW} y1={padT + innerH} y2={padT + innerH} stroke="var(--grid)" strokeWidth="1" />
+      {data.map((d, i) => {
+        const h = (d.load / maxLoad) * innerH;
+        const cx = padL + (i + 0.5) * (innerW / data.length);
+        const isHot = d.load > 800;
+        return (
+          <rect
+            key={d.day}
+            x={cx - barW / 2}
+            y={padT + innerH - h}
+            width={barW}
+            height={h}
+            fill={isHot ? "var(--danger)" : accent}
+            opacity={d.load === 0 ? 0 : 0.85}
+            rx="1"
+          />
+        );
+      })}
+      {showAxis &&
+        [-27, -21, -14, -7, 0].map((d) => {
+          const idx = data.findIndex((p) => p.day === d);
+          if (idx < 0) return null;
+          const cx = padL + (idx + 0.5) * (innerW / data.length);
+          return (
+            <text
+              key={d}
+              x={cx}
+              y={padT + innerH + 14}
+              fontSize="9.5"
+              textAnchor="middle"
+              fill="var(--text-muted)"
+              style={{ fontVariantNumeric: "tabular-nums" }}
+            >
+              {d === 0 ? "today" : `${d}d`}
+            </text>
+          );
+        })}
+    </svg>
+  );
+}
+
+export function Donut({
+  value,
+  size = 80,
+  stroke = 8,
+  color = "var(--accent)",
+  label,
+  sublabel,
+}: {
+  value: number;
+  size?: number;
+  stroke?: number;
+  color?: string;
+  label: string;
+  sublabel?: string;
+}) {
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const offset = c * (1 - Math.max(0, Math.min(1, value)));
+  return (
+    <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+      <svg width={size} height={size} style={{ display: "block", transform: "rotate(-90deg)" }}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--grid)" strokeWidth={stroke} />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth={stroke}
+          strokeDasharray={c}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+        />
+      </svg>
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div
+          style={{
+            fontSize: 16,
+            fontWeight: 600,
+            fontVariantNumeric: "tabular-nums",
+            color: "var(--text)",
+            lineHeight: 1,
+          }}
+        >
+          {label}
+        </div>
+        {sublabel && (
+          <div
+            style={{
+              fontSize: 9,
+              color: "var(--text-muted)",
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              marginTop: 2,
+            }}
+          >
+            {sublabel}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

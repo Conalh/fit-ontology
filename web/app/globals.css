@@ -1,26 +1,159 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* Design tokens ported from design/ui/Client Detail.html. Light theme by
+   default; dark applied when html[data-theme="dark"] is set by the
+   theme toggle. */
+
+:root,
+[data-theme="light"] {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --surface: #ffffff;
+  --surface-2: #fafafa;
+  --surface-3: #f4f4f5;
+  --text: #0a0a0a;
+  --text-muted: #71717a;
+  --border: #e9e9ec;
+  --grid: #ececef;
+  --shadow-sm: rgba(10, 10, 10, 0.04);
+  --shadow-md: rgba(10, 10, 10, 0.08);
+
+  /* --accent / --accent-bg are set per-client at the page wrapper. */
+  --accent: #4f46e5;
+  --accent-bg: rgba(79, 70, 229, 0.08);
+
+  --ok: #16a34a;
+  --ok-bg: rgba(22, 163, 74, 0.10);
+  --warn: #b45309;
+  --warn-bg: rgba(245, 158, 11, 0.10);
+  --warn-border: rgba(245, 158, 11, 0.30);
+  --danger: #dc2626;
+  --danger-bg: rgba(220, 38, 38, 0.10);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+[data-theme="dark"] {
+  --surface: #0a0a0b;
+  --surface-2: #131316;
+  --surface-3: #1c1c20;
+  --text: #fafafa;
+  --text-muted: #a1a1aa;
+  --border: #27272a;
+  --grid: #2d2d31;
+  --shadow-sm: rgba(0, 0, 0, 0.3);
+  --shadow-md: rgba(0, 0, 0, 0.5);
+
+  --accent: #818cf8;
+  --accent-bg: rgba(129, 140, 248, 0.12);
+
+  --ok: #4ade80;
+  --ok-bg: rgba(74, 222, 128, 0.12);
+  --warn: #fbbf24;
+  --warn-bg: rgba(251, 191, 36, 0.12);
+  --warn-border: rgba(251, 191, 36, 0.30);
+  --danger: #f87171;
+  --danger-bg: rgba(248, 113, 113, 0.12);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+html,
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--surface);
+  color: var(--text);
+}
+
+#__next,
+body > div {
+  min-height: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* Reusable button classes — kept as classes (not Tailwind utilities)
+   because the design uses them across many components and the visual
+   contract should stay centralized. */
+
+.btn-ghost {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  padding: 5px 9px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 500;
+  transition: background 0.1s, color 0.1s;
+}
+.btn-ghost:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.btn-primary {
+  background: var(--text);
+  border: 1px solid var(--text);
+  color: var(--surface);
+  padding: 5px 11px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.btn-primary:hover {
+  opacity: 0.85;
+}
+
+.btn-chip {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.btn-chip-on {
+  background: var(--surface);
+  border: 1px solid var(--text);
+  color: var(--text);
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.btn-icon {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-icon:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+::selection {
+  background: var(--accent-bg);
+  color: var(--text);
 }

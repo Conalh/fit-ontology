@@ -1,16 +1,23 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+/**
+ * Inter + JetBrains Mono match the design's --font-sans / --font-mono
+ * tokens declared in globals.css. We load via next/font (no external
+ * <link>) and bind the CSS variables so var(--font-sans) resolves to
+ * Inter throughout every component.
+ */
+const inter = Inter({
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-sans-inter",
 });
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-mono-jetbrains",
 });
 
 export const metadata: Metadata = {
@@ -27,9 +34,16 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      data-theme="dark"
+      className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
+      style={
+        {
+          "--font-sans": `var(--font-sans-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`,
+          "--font-mono": `var(--font-mono-jetbrains), ui-monospace, SFMono-Regular, Menlo, monospace`,
+        } as React.CSSProperties
+      }
     >
-      <body className="min-h-full flex flex-col bg-slate-50 text-slate-900">
+      <body className="min-h-full" style={{ background: "var(--surface)", color: "var(--text)" }}>
         <Providers>{children}</Providers>
       </body>
     </html>
