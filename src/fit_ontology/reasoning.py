@@ -71,6 +71,17 @@ SLEEP_SCORE_POOR = 70               # Garmin sleep score < 70 = poor night
 RPE_RISE_MILD = 0.7                 # session RPE upward drift session-over-session
 RPE_RISE_MODERATE = 1.5
 
+# Garmin Training Readiness (0–100) is Garmin's own composite of recent
+# HRV, stress, sleep, recovery time, and acute load. The thresholds
+# below collapse Garmin's published color bands — Excellent ≥ 75, High
+# 50–74, Moderate 25–49, Low < 25 — into our severity scale. Because
+# TR is itself a composite, we treat it as a corroborator: it can
+# escalate a borderline call (one mild signal + TR mild → conservative)
+# without firing solo as a deload trigger.
+TR_MILD = 60                        # below this is "moderate" zone — recovery deficit forming
+TR_MODERATE = 45                    # mid-Low Garmin band
+TR_SEVERE = 30                      # well into Low band — multi-day under-recovery
+
 # Progression magnitudes from ACSM 11e Ch. 6 (cardiorespiratory) and
 # Ch. 7 (resistance). Conservative end picked when any signal is present.
 ACSM_STANDARD_RANGE = (0.05, 0.10)
@@ -239,16 +250,26 @@ def detect_sleep_signal(metrics: pd.DataFrame, today: date) -> Signal | None:
     )
 
 
-def _session_load(sessions: pd.DataFrame) -> pd.Series:
-    """Session load = RPE × duration (Foster's sRPE method). Returns a
-    Series indexed by date with one value per day (sum if multiple
-    sessions). Empty Series if no sessions."""
+def _session_load(sessions: pd.DataFrame) -> tuple[pd.Series, dict[date, list[str]]]:
+    """Session load = RPE × duration (Foster's sRPE method). Returns
+    a tuple of:
+      - a Series indexed by date with the daily summed load
+      - a dict mapping each date to the session IDs that fed that load
+
+    The dict closes the audit trail for ACWR / RPE signals — without
+    it, those signals couldn't cite which sessions drove them.
+    """
     if sessions.empty:
-        return pd.Series(dtype=float)
+        return pd.Series(dtype=float), {}
     s = sessions.copy()
     s["date"] = _as_dates(s["date"])
     s["load"] = s["rpe"].astype(float) * s["duration_min"].astype(float)
-    return s.groupby("date")["load"].sum()
+    loads = s.groupby("date")["load"].sum()
+    if "id" in s.columns:
+        ids_by_date = s.groupby("date")["id"].apply(list).to_dict()
+    else:
+        ids_by_date = {}
+    return loads, ids_by_date
 
 
 def detect_acwr_signal(sessions: pd.DataFrame, today: date) -> Signal | None:
@@ -262,7 +283,7 @@ def detect_acwr_signal(sessions: pd.DataFrame, today: date) -> Signal | None:
     Ratios < 0.8 flag detraining (mild signal — under-load is not a
     deload trigger but is worth surfacing to a trainer).
     """
-    loads = _session_load(sessions)
+    loads, ids_by_date = _session_load(sessions)
     if loads.empty:
         return None
 
@@ -276,6 +297,11 @@ def detect_acwr_signal(sessions: pd.DataFrame, today: date) -> Signal | None:
     weekly_chronic = float(loads.loc[chronic_window].sum()) / ACWR_CHRONIC_WEEKS
     if weekly_chronic <= 0:
         return None
+
+    # All session IDs in the chronic window — that's the data the
+    # detector reasoned over. Sufficient for audit; the trainer can
+    # filter by date in the dashboard if they want to drill in further.
+    contributing_ids = [sid for d in chronic_window for sid in ids_by_date.get(d, [])]
 
     ratio = acute_total / weekly_chronic
     severity: Severity | None = None
@@ -293,7 +319,7 @@ def detect_acwr_signal(sessions: pd.DataFrame, today: date) -> Signal | None:
             kind="acwr_low",
             severity="mild",
             summary=f"ACWR {ratio:.2f} (acute {acute_total:.0f} AU / weekly chronic {weekly_chronic:.0f} AU). Below sweet spot — possible detraining.",
-            source_metric_ids=[],
+            source_metric_ids=contributing_ids,
         )
 
     if severity is None:
@@ -303,7 +329,7 @@ def detect_acwr_signal(sessions: pd.DataFrame, today: date) -> Signal | None:
         kind="acwr_high",
         severity=severity,
         summary=f"ACWR {ratio:.2f} (acute {acute_total:.0f} AU / weekly chronic {weekly_chronic:.0f} AU). Above safe zone (Gabbett 0.8–1.3).",
-        source_metric_ids=[],
+        source_metric_ids=contributing_ids,
     )
 
 
@@ -327,11 +353,46 @@ def detect_rpe_signal(sessions: pd.DataFrame, today: date) -> Signal | None:
         return None
 
     severity: Severity = "moderate" if rise >= RPE_RISE_MODERATE else "mild"
+    # All sessions from both compared weeks form the audit set.
+    contributing_ids: list[str] = []
+    if "id" in s.columns:
+        contributing_ids = list(last_week["id"]) + list(prior_week["id"])
     return Signal(
         kind="rpe_rising",
         severity=severity,
         summary=f"Session RPE rose {rise:+.1f} ({prior_mean:.1f} → {last_mean:.1f}) across the last two weeks.",
-        source_metric_ids=[],
+        source_metric_ids=contributing_ids,
+    )
+
+
+def detect_training_readiness_signal(metrics: pd.DataFrame, today: date) -> Signal | None:
+    """Garmin Training Readiness (0–100) — Garmin's composite of recent
+    HRV, stress, sleep, recovery time, and acute load.
+
+    Used as a corroborator: it can escalate a borderline call but
+    doesn't trigger a deload solo (we already have HRV / sleep / RHR
+    looking at the same underlying signals). When Garmin's own
+    composite says "Low" for a sustained period, that's worth surfacing
+    even if the individual signals each fell just short of mild.
+
+    Bands: Excellent ≥75, High 50–74, Moderate 25–49, Low <25 per
+    Garmin's published documentation; we collapse to mild / moderate /
+    severe over a 7-day mean to smooth daily noise.
+    """
+    acute, acute_ids = _recent_mean(metrics, MetricKind.TRAINING_READINESS.value, today, HRV_ACUTE_DAYS)
+    if acute is None or acute >= TR_MILD:
+        return None
+
+    severity: Severity = (
+        "severe" if acute < TR_SEVERE
+        else "moderate" if acute < TR_MODERATE
+        else "mild"
+    )
+    return Signal(
+        kind="training_readiness_low",
+        severity=severity,
+        summary=f"Garmin Training Readiness 7d mean is {acute:.0f}/100 (Garmin's composite of HRV, sleep, stress, and acute load).",
+        source_metric_ids=acute_ids,
     )
 
 
@@ -353,7 +414,12 @@ def generate_recommendation(
     today = today or date.today()
     week_of = today - timedelta(days=today.weekday())  # Monday
 
-    detectors_metric = [detect_hrv_signal, detect_rhr_signal, detect_sleep_signal]
+    detectors_metric = [
+        detect_hrv_signal,
+        detect_rhr_signal,
+        detect_sleep_signal,
+        detect_training_readiness_signal,
+    ]
     detectors_session = [detect_acwr_signal, detect_rpe_signal]
 
     signals: list[Signal] = []

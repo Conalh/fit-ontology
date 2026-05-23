@@ -18,7 +18,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import pandas as pd
 
 from fit_ontology.ontology import MetricKind
-from fit_ontology.reasoning import generate_recommendation
+from fit_ontology.reasoning import (
+    detect_acwr_signal,
+    detect_rpe_signal,
+    detect_training_readiness_signal,
+    generate_recommendation,
+)
 
 
 # ---- Fixture builders ---------------------------------------------------
@@ -178,3 +183,58 @@ def test_no_data_returns_standard_progression():
     r = generate_recommendation("c1", m, s, today=today)
     assert "standard progression" in r.recommendation.lower()
     assert r.source_metric_ids == []
+
+
+# --- Training Readiness (Garmin composite) ----------------------------------
+
+def _tr_metrics(client_id: str, today: date, mean_tr: float) -> pd.DataFrame:
+    rows = _stable_metric(
+        client_id, MetricKind.TRAINING_READINESS.value, mean_tr, today,
+        jitter=2, days=21, acute_days=7, unit="",
+    )
+    return pd.DataFrame(rows)
+
+
+def test_training_readiness_high_does_not_fire():
+    today = date.today()
+    sig = detect_training_readiness_signal(_tr_metrics("c1", today, 75), today)
+    assert sig is None
+
+
+def test_training_readiness_low_fires_moderate_or_severe():
+    today = date.today()
+    sig = detect_training_readiness_signal(_tr_metrics("c1", today, 40), today)
+    assert sig is not None
+    assert sig.severity in ("moderate", "mild")
+    assert sig.kind == "training_readiness_low"
+    assert sig.source_metric_ids  # carries IDs of the 7-day acute window
+
+
+def test_training_readiness_very_low_is_severe():
+    today = date.today()
+    sig = detect_training_readiness_signal(_tr_metrics("c1", today, 22), today)
+    assert sig is not None
+    assert sig.severity == "severe"
+
+
+# --- Session source IDs on ACWR / RPE signals -------------------------------
+
+def test_acwr_signal_carries_session_source_ids():
+    """The ACWR detector should cite session IDs that fed the load math,
+    closing the same audit-trail loop the metric-based signals have."""
+    today = date.today()
+    # Spike acute week's RPE to drive ACWR high.
+    s = _sessions("c1", today=today, rpe_baseline=5, rpe_acute=10)
+    sig = detect_acwr_signal(s, today)
+    assert sig is not None
+    assert sig.source_metric_ids, "ACWR signal must cite contributing session IDs"
+    assert all(sid.startswith("s-") for sid in sig.source_metric_ids)
+
+
+def test_rpe_signal_carries_session_source_ids():
+    today = date.today()
+    s = _sessions("c1", today=today, rpe_baseline=5, rpe_acute=8)
+    sig = detect_rpe_signal(s, today)
+    assert sig is not None
+    assert sig.source_metric_ids
+    assert all(sid.startswith("s-") for sid in sig.source_metric_ids)

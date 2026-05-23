@@ -96,9 +96,13 @@ def metrics_for_client(con, client_id: str, days: int = 14) -> pd.DataFrame:
 
 
 def sessions_for_client(con, client_id: str, days: int = 14) -> pd.DataFrame:
+    """Include the session ``id`` in the result so reasoning signals that
+    derive from sessions (ACWR, RPE drift) can attach source IDs to
+    their output — closing the same audit-trail loop the metrics-based
+    signals already have."""
     return con.execute(
         f"""
-        SELECT date, type, duration_min, rpe, notes
+        SELECT id, date, type, duration_min, rpe, notes
         FROM sessions
         WHERE client_id = ?
           AND date >= CURRENT_DATE - INTERVAL '{days}' DAY
