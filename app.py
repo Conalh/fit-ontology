@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -118,9 +119,14 @@ with col_picker:
 
 
 # ─── Pull metrics ──────────────────────────────────────────────────────
+#
+# 35-day window: 28 days for the rolling baseline + 7-day acute window
+# the reasoning layer compares against. The dashboard charts also use
+# the full window so the baseline ribbon converges to its stable shape
+# instead of wobbling on a short tail.
 
-metrics = metrics_for_client(con, client_id, days=21)
-sessions = sessions_for_client(con, client_id, days=21)
+metrics = metrics_for_client(con, client_id, days=35)
+sessions = sessions_for_client(con, client_id, days=35)
 
 
 def _latest(kind: str) -> float | None:
@@ -149,6 +155,65 @@ def _trend(kind: str) -> pd.DataFrame:
         return pd.DataFrame(columns=["date", "value"])
     sub["date"] = pd.to_datetime(sub["date"])
     return sub.sort_values("date")[["date", "value"]].set_index("date")
+
+
+def _baseline_chart(
+    kind: str,
+    label: str,
+    unit: str,
+    *,
+    baseline_days: int = 28,
+    color: str = "#3b82f6",
+    threshold_lines: list[tuple[float, str, str]] | None = None,
+) -> alt.LayerChart | None:
+    """Daily-value line + 28d rolling-mean ± 1 SD shaded ribbon.
+
+    The ribbon makes the reasoning visible: a point dropping below the
+    band IS a flag the reasoning layer would fire on. Optional
+    horizontal threshold lines (e.g. ACSM sleep floors) draw a fixed
+    reference instead of a per-subject baseline.
+    """
+    sub = metrics[metrics["kind"] == kind].copy()
+    if sub.empty:
+        return None
+    sub["date"] = pd.to_datetime(sub["date"])
+    sub = sub.sort_values("date").reset_index(drop=True)
+
+    sub["baseline"] = sub["value"].rolling(baseline_days, min_periods=7).mean()
+    sub["sd"] = sub["value"].rolling(baseline_days, min_periods=7).std()
+    sub["lower"] = sub["baseline"] - sub["sd"]
+    sub["upper"] = sub["baseline"] + sub["sd"]
+
+    base = alt.Chart(sub).encode(x=alt.X("date:T", title=None))
+
+    layers = [
+        base.mark_area(opacity=0.16, color=color).encode(
+            y=alt.Y("lower:Q", title=f"{label} ({unit})" if unit else label),
+            y2="upper:Q",
+        ),
+        base.mark_line(color=color, strokeDash=[4, 4], strokeWidth=1.5).encode(
+            y="baseline:Q",
+        ),
+        base.mark_line(color="#1e293b", strokeWidth=2).encode(y="value:Q"),
+        base.mark_point(color="#1e293b", filled=True, size=42).encode(
+            y="value:Q",
+            tooltip=[
+                alt.Tooltip("date:T", title="Date"),
+                alt.Tooltip("value:Q", title=label, format=".1f"),
+                alt.Tooltip("baseline:Q", title="28d baseline", format=".1f"),
+                alt.Tooltip("sd:Q", title="SD", format=".2f"),
+            ],
+        ),
+    ]
+
+    if threshold_lines:
+        for value, color_t, label_t in threshold_lines:
+            rule_df = pd.DataFrame({"y": [value], "label": [label_t]})
+            layers.append(
+                alt.Chart(rule_df).mark_rule(color=color_t, strokeDash=[2, 4], strokeWidth=1).encode(y="y:Q"),
+            )
+
+    return alt.layer(*layers).properties(height=180).configure_axis(grid=True, gridOpacity=0.18)
 
 
 # ─── Recommendation card ──────────────────────────────────────────────
@@ -291,19 +356,35 @@ for col, (label, kind, unit) in zip(cards, STATUS_CARDS):
 left, right = st.columns([3, 2])
 
 with left:
-    st.subheader("14-day trends")
-    trend_panel = pd.concat(
-        {
-            "HRV (ms)": _trend(MetricKind.HRV_RMSSD.value)["value"] if not _trend(MetricKind.HRV_RMSSD.value).empty else pd.Series(dtype=float),
-            "Sleep (h)": _trend(MetricKind.SLEEP_HOURS.value)["value"] if not _trend(MetricKind.SLEEP_HOURS.value).empty else pd.Series(dtype=float),
-            "Resting HR": _trend(MetricKind.RESTING_HR.value)["value"] if not _trend(MetricKind.RESTING_HR.value).empty else pd.Series(dtype=float),
-        },
-        axis=1,
+    st.subheader("Trends with baseline")
+    st.caption("Solid: daily value. Dashed: 28-day rolling mean. Shaded: ±1 SD of that mean. Points landing outside the band are what the reasoning layer flags.")
+
+    hrv_chart = _baseline_chart(MetricKind.HRV_RMSSD.value, "HRV (RMSSD)", "ms", color="#3b82f6")
+    if hrv_chart is None:
+        hrv_chart = _baseline_chart(MetricKind.HRV_SDNN.value, "HRV (SDNN)", "ms", color="#3b82f6")
+    if hrv_chart is not None:
+        st.altair_chart(hrv_chart, use_container_width=True)
+
+    rhr_chart = _baseline_chart(MetricKind.RESTING_HR.value, "Resting HR", "bpm", color="#ef4444")
+    if rhr_chart is not None:
+        st.altair_chart(rhr_chart, use_container_width=True)
+
+    sleep_chart = _baseline_chart(
+        MetricKind.SLEEP_HOURS.value,
+        "Sleep",
+        "h",
+        color="#8b5cf6",
+        # ACSM 11e adult-general guidance: 7-9h target, 6h as severe-deficit floor.
+        threshold_lines=[
+            (7.0, "#f59e0b", "ACSM floor 7h"),
+            (6.0, "#dc2626", "Severe deficit 6h"),
+        ],
     )
-    if trend_panel.dropna(how="all").empty:
+    if sleep_chart is not None:
+        st.altair_chart(sleep_chart, use_container_width=True)
+
+    if hrv_chart is None and rhr_chart is None and sleep_chart is None:
         st.info("No daily trend data yet. Run a Garmin sync or load the synthetic fixtures.")
-    else:
-        st.line_chart(trend_panel)
 
     body_battery_trend = _trend(MetricKind.BODY_BATTERY_HIGH.value)
     if not body_battery_trend.empty:
