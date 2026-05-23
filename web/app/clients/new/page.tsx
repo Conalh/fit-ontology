@@ -7,6 +7,7 @@ import { useState } from "react";
 import type { CSSProperties } from "react";
 import { ClientForm } from "@/components/client-form";
 import { Chevron, Sidebar, TopBar } from "@/components/chrome";
+import { useToast } from "@/components/toast";
 import { withAlpha } from "@/lib/accent";
 import { api, type ClientFormPayload } from "@/lib/api";
 
@@ -22,14 +23,17 @@ export default function NewClientPage() {
     "--accent-bg": withAlpha(accentHex, 0.10),
   } as CSSProperties;
 
+  const toast = useToast();
   const create = useMutation({
     mutationFn: (payload: ClientFormPayload) => api.createClient(payload),
-    onSuccess: (result) => {
+    onSuccess: (result, payload) => {
       qc.invalidateQueries({ queryKey: ["roster"] });
+      toast.show(`Client added: ${payload.name}.`);
       router.push(`/clients/?id=${result.id}`);
     },
     onError: (e: Error) => {
       setServerError(e.message);
+      toast.show(`Could not create client: ${e.message}`, "error");
     },
   });
 

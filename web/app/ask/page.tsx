@@ -108,11 +108,7 @@ export default function AskPage() {
             {ask.isPending && (
               <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Thinking…</div>
             )}
-            {ask.error && (
-              <div style={{ fontSize: 12.5, color: "var(--danger)" }}>
-                {(ask.error as Error).message}
-              </div>
-            )}
+            {ask.error && <AskError error={ask.error as Error} />}
           </div>
         </div>
 
@@ -166,6 +162,45 @@ export default function AskPage() {
         </form>
       </div>
     </div>
+  );
+}
+
+function AskError({ error }: { error: Error }) {
+  const msg = error.message || "Unknown error.";
+  const noKey = /ANTHROPIC_API_KEY/i.test(msg);
+
+  if (noKey) {
+    return (
+      <div
+        style={{
+          padding: "12px 14px",
+          border: "1px solid var(--warn-border)",
+          background: "var(--warn-bg)",
+          borderRadius: 8,
+          fontSize: 12.5,
+          color: "var(--text)",
+          lineHeight: 1.5,
+        }}
+      >
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>Claude API key needed</div>
+        Ask FitOntology calls Anthropic&apos;s API. Add an{" "}
+        <code style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>ANTHROPIC_API_KEY</code> line to{" "}
+        <code style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>.env</code> in the project root, then
+        restart <code style={{ fontFamily: "var(--font-mono)", fontSize: 11.5 }}>fit-ontology-serve</code>.{" "}
+        <a
+          href="https://console.anthropic.com/settings/keys"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: "var(--accent)" }}
+        >
+          Get an API key →
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ fontSize: 12.5, color: "var(--danger)" }}>{msg}</div>
   );
 }
 

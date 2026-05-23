@@ -7,6 +7,7 @@ import { useState } from "react";
 import type { CSSProperties } from "react";
 import { ClientForm } from "@/components/client-form";
 import { Chevron, Sidebar, TopBar } from "@/components/chrome";
+import { useToast } from "@/components/toast";
 import { withAlpha } from "@/lib/accent";
 import { api, type ClientFormPayload } from "@/lib/api";
 import { useQueryParam } from "@/lib/use-query-param";
@@ -36,15 +37,18 @@ function EditInner({ clientId }: { clientId: string }) {
     "--accent-bg": withAlpha(accentHex, 0.10),
   } as CSSProperties;
 
+  const toast = useToast();
   const update = useMutation({
     mutationFn: (payload: ClientFormPayload) => api.updateClient(clientId, payload),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["roster"] });
       qc.invalidateQueries({ queryKey: ["client", clientId] });
+      toast.show("Changes saved.");
       router.push(`/clients/?id=${clientId}`);
     },
     onError: (e: Error) => {
       setServerError(e.message);
+      toast.show(`Could not save: ${e.message}`, "error");
     },
   });
 

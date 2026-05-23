@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import type { CSSProperties } from "react";
+import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
 
 /**
@@ -33,15 +34,21 @@ export function ThresholdsPanel({ clientId }: { clientId: string }) {
   const [edits, setEdits] = useState<Record<string, number | null>>({});
   const [serverError, setServerError] = useState<string | null>(null);
 
+  const toast = useToast();
   const save = useMutation({
     mutationFn: (overrides: Record<string, number | null>) =>
       api.saveThresholds(clientId, overrides),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ["thresholds", clientId] });
       qc.invalidateQueries({ queryKey: ["rec", clientId] });
+      const n = Object.keys(variables).length;
+      toast.show(`Thresholds saved — ${n} change${n === 1 ? "" : "s"}.`);
       setEdits({});
     },
-    onError: (e: Error) => setServerError(e.message),
+    onError: (e: Error) => {
+      setServerError(e.message);
+      toast.show(`Could not save thresholds: ${e.message}`, "error");
+    },
   });
 
   const groups = useMemo(() => GROUPS, []);

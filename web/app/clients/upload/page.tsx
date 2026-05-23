@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 import type { CSSProperties, DragEvent } from "react";
 import { Chevron, Sidebar, TopBar } from "@/components/chrome";
+import { useToast } from "@/components/toast";
 import { withAlpha } from "@/lib/accent";
 import { api } from "@/lib/api";
 import { useClientAccent } from "@/lib/use-client-accent";
@@ -44,14 +45,17 @@ function UploadInner({ clientId }: { clientId: string }) {
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const qc = useQueryClient();
+  const toast = useToast();
 
   const upload = useMutation({
     mutationFn: (file: File) => api.upload(clientId, file),
-    onSuccess: () => {
+    onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["metrics", clientId] });
       qc.invalidateQueries({ queryKey: ["sessions", clientId] });
       qc.invalidateQueries({ queryKey: ["roster"] });
+      toast.show(`Imported ${data.inserted} row${data.inserted === 1 ? "" : "s"}.`);
     },
+    onError: (e: Error) => toast.show(`Upload failed: ${e.message}`, "error"),
   });
 
   const handleFile = (file: File | undefined) => {

@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import type { CSSProperties } from "react";
 import { Sidebar, TopBar, VerdictBadge, labelToVerdict } from "@/components/chrome";
+import { Skeleton } from "@/components/skeleton";
 import { defaultAccentForClient, initialsFor, withAlpha } from "@/lib/accent";
 import { api, type RosterRow } from "@/lib/api";
 
@@ -66,7 +67,7 @@ export default function RosterPage() {
             </p>
           </header>
 
-          {isLoading && <p style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Loading roster…</p>}
+          {isLoading && <RosterSkeleton />}
           {error && (
             <p style={{ fontSize: 12.5, color: "var(--danger)" }}>
               Could not reach the API. Is{" "}
@@ -81,6 +82,40 @@ export default function RosterPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function RosterSkeleton() {
+  return (
+    <section
+      style={{
+        border: "1px solid var(--border)",
+        borderRadius: 10,
+        background: "var(--surface)",
+        overflow: "hidden",
+      }}
+    >
+      {[0, 1, 2, 3].map((i) => (
+        <div
+          key={i}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "32px 1fr 110px 1fr 80px 90px",
+            gap: 12,
+            alignItems: "center",
+            padding: "14px 16px",
+            borderTop: i === 0 ? "none" : "1px solid var(--border)",
+          }}
+        >
+          <Skeleton width={26} height={26} radius={6} />
+          <Skeleton width={140} />
+          <Skeleton width={80} height={18} radius={4} />
+          <Skeleton width="60%" />
+          <Skeleton width={40} />
+          <Skeleton width={60} />
+        </div>
+      ))}
+    </section>
   );
 }
 

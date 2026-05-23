@@ -6,7 +6,9 @@ import { useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { Donut, LoadBars, TrendChart } from "@/components/charts";
 import { Chevron, ClientHeader, Sidebar, TopBar, VerdictBadge } from "@/components/chrome";
+import { Skeleton } from "@/components/skeleton";
 import { ThresholdsPanel } from "@/components/thresholds-panel";
+import { useToast } from "@/components/toast";
 import type { OverrideRow, Recommendation } from "@/lib/api";
 import { api } from "@/lib/api";
 import { withAlpha } from "@/lib/accent";
@@ -155,6 +157,11 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
         />
 
         <div className="fit-page-body" style={{ padding: "8px 28px 36px", display: "flex", flexDirection: "column", gap: 22 }}>
+          {!metricsQ.isLoading && !sessionsQ.isLoading &&
+            (metricsQ.data ?? []).length === 0 && (sessionsQ.data ?? []).length === 0 && (
+              <NoDataBanner clientId={clientId} />
+            )}
+
           <RecommendationCard
             rec={recQ.data}
             isLoading={recQ.isLoading}
@@ -288,7 +295,14 @@ function RecommendationCard({
               letterSpacing: "-0.005em",
             }}
           >
-            {isLoading ? "Computing…" : summary || "Recovery markers look healthy. No flags."}
+            {isLoading ? (
+              <span style={{ display: "inline-flex", flexDirection: "column", gap: 6, width: "100%" }}>
+                <Skeleton width="80%" height={15} />
+                <Skeleton width="55%" height={15} />
+              </span>
+            ) : (
+              summary || "Recovery markers look healthy. No flags."
+            )}
           </p>
           {rec && (
             <div
@@ -498,6 +512,54 @@ function ContraindicationsCard({ items }: { items: import("@/lib/api").Contraind
   );
 }
 
+// ─── No-data banner (brand-new client) ──────────────────────────────
+
+function NoDataBanner({ clientId }: { clientId: string }) {
+  return (
+    <section
+      style={{
+        border: "1px dashed var(--border)",
+        borderRadius: 10,
+        background: "var(--surface-2)",
+        padding: "16px 20px",
+        display: "flex",
+        gap: 14,
+        alignItems: "flex-start",
+      }}
+    >
+      <div
+        style={{
+          width: 30,
+          height: 30,
+          borderRadius: 8,
+          background: "var(--accent-bg)",
+          color: "var(--accent)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexShrink: 0,
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+          <circle cx="10" cy="10" r="7" />
+          <line x1="10" y1="7" x2="10" y2="11" />
+          <line x1="10" y1="14" x2="10" y2="14" strokeWidth="2" />
+        </svg>
+      </div>
+      <div style={{ flex: 1, fontSize: 13, lineHeight: 1.55, color: "var(--text)" }}>
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>No wearable data or sessions yet</div>
+        <div style={{ color: "var(--text-muted)" }}>
+          The recommendation below is a default — it&apos;ll get meaningful once you{" "}
+          <Link href={`/clients/upload?id=${clientId}`} style={{ color: "var(--accent)", textDecoration: "none" }}>
+            upload an export
+          </Link>{" "}
+          or run a Garmin sync. HRV / sleep / RHR signals need at least 7 days of daily data to be useful.
+        </div>
+      </div>
+    </section>
+  );
+}
+
 // ─── Send to client (PDF export + coach's note) ──────────────────────
 
 function SendToClient({
@@ -512,11 +574,10 @@ function SendToClient({
   onCoachMessageChange: (next: string) => void;
 }) {
   const [downloading, setDownloading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
 
   const download = async () => {
     setDownloading(true);
-    setError(null);
     try {
       const blob = await api.downloadPdf(clientId, coachMessage.trim() || null);
       const url = URL.createObjectURL(blob);
@@ -525,8 +586,9 @@ function SendToClient({
       a.download = `${clientName.replace(/\s+/g, "_")}_week.pdf`;
       a.click();
       URL.revokeObjectURL(url);
+      toast.show(`PDF downloaded for ${clientName}.`);
     } catch (e) {
-      setError((e as Error).message);
+      toast.show(`Could not generate PDF: ${(e as Error).message}`, "error");
     } finally {
       setDownloading(false);
     }
@@ -586,9 +648,6 @@ function SendToClient({
           boxSizing: "border-box",
         }}
       />
-      {error && (
-        <p style={{ marginTop: 8, fontSize: 12, color: "var(--danger)" }}>{error}</p>
-      )}
     </section>
   );
 }
@@ -856,7 +915,13 @@ function SessionsTable({ sessions }: { sessions: import("@/lib/api").SessionRow[
         </div>
       </div>
       {recent.length === 0 ? (
-        <p style={{ padding: "16px", fontSize: 12.5, color: "var(--text-muted)" }}>No sessions logged.</p>
+        <div style={{ padding: "20px 16px", fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.55 }}>
+          <p style={{ margin: 0, color: "var(--text)", fontWeight: 500 }}>No sessions in the last 11 days.</p>
+          <p style={{ margin: "4px 0 0" }}>
+            Sessions appear here once they&apos;re logged — Garmin workouts auto-import via the sync script, or
+            upload a Strava CSV in <strong>Upload</strong> above.
+          </p>
+        </div>
       ) : (
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
           <thead>
@@ -1126,6 +1191,7 @@ function OverrideDrawer({
   const [rationale, setRationale] = useState("");
 
   const qc = useQueryClient();
+  const toast = useToast();
   const save = useMutation({
     mutationFn: async () => {
       const action = chosen === verdict ? "accept" : "reject";
@@ -1147,7 +1213,16 @@ function OverrideDrawer({
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["overrides", clientId] });
+      qc.invalidateQueries({ queryKey: ["calibration"] });
+      toast.show(
+        chosen === verdict
+          ? `Override saved — accepted ${chosen.toLowerCase()}.`
+          : `Override saved — overrode ${verdict.toLowerCase()} → ${chosen.toLowerCase()}.`,
+      );
       onClose();
+    },
+    onError: (e: Error) => {
+      toast.show(`Could not save: ${e.message}`, "error");
     },
   });
 

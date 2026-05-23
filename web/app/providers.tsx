@@ -2,12 +2,18 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
+import { ErrorBoundary } from "@/components/error-boundary";
+import { ToastProvider } from "@/components/toast";
 
 /**
- * TanStack Query provider, owned by a client component so server
- * components can stay server-rendered. One QueryClient per browser
- * session — kept in useState so HMR doesn't recreate it on every
- * render.
+ * Client-side providers stack:
+ *   ErrorBoundary  → catches render exceptions, shows recovery card
+ *   ToastProvider  → save-success / save-error notifications
+ *   QueryClient    → TanStack Query for all API calls
+ *
+ * Order matters — the ErrorBoundary needs to be outermost so it can
+ * catch errors thrown by the inner providers themselves. ToastProvider
+ * wraps the QueryClient so cache events (mutations) can fire toasts.
  */
 export function Providers({ children }: { children: React.ReactNode }) {
   const [client] = useState(
@@ -21,5 +27,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
         },
       }),
   );
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  return (
+    <ErrorBoundary>
+      <ToastProvider>
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      </ToastProvider>
+    </ErrorBoundary>
+  );
 }

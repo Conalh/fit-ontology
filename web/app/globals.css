@@ -158,6 +158,17 @@ button {
   color: var(--text);
 }
 
+/* Skeleton pulse — subtle. Tracks the active theme automatically
+   because surface-3 changes between light and dark. */
+.fit-skeleton {
+  animation: fit-skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes fit-skeleton-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
 /* Responsive overrides — the layout's inline styles handle the desktop
    shape; these media queries selectively override the layout-only bits
    (display, grid columns, flex direction) at narrower viewports. */
