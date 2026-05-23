@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fit-ontology"
-version = "0.3.0"
+version = "0.4.0"
 description = "Client intelligence layer for personal trainers — wearables, intake, and ACSM guidelines unified."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,14 +20,12 @@ classifiers = [
 dependencies = [
     "duckdb>=1.0.0",
     "pandas>=2.2.0",
-    "streamlit>=1.30.0",
     "pydantic>=2.5.0",
     "python-dateutil>=2.8.2",
     "garminconnect>=0.2.20",
     "python-dotenv>=1.0.0",
     "anthropic>=0.39.0",
     "reportlab>=4.0.0",
-    "altair>=5.0",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "python-multipart>=0.0.9",
