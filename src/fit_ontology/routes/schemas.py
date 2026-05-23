@@ -189,6 +189,22 @@ class CalibrationSuggestion(BaseModel):
     target: str | None = None  # client_id or threshold name when relevant
 
 
+class ConfidenceBucket(BaseModel):
+    """One row of the engine-confidence-vs-trainer-acceptance audit.
+
+    The engine claims a confidence on every recommendation. This bucket
+    aggregates persisted recs into 0.5-wide bands and reports the rate
+    at which the trainer accepted them. If 0.8-confidence recs and
+    0.6-confidence recs get accepted at the same rate, the engine's
+    confidence is theater — that's worth knowing.
+    """
+    low: float   # band low end, inclusive
+    high: float  # band high end, exclusive (the top bucket includes 1.0)
+    total: int
+    accepts: int
+    accept_rate: float
+
+
 class CalibrationResponse(BaseModel):
     total: int
     accept_rate: float
@@ -200,6 +216,7 @@ class CalibrationResponse(BaseModel):
     by_week: list[WeeklyAgreement]
     by_client: list[PerClientAgreement]
     suggestions: list[CalibrationSuggestion]
+    confidence_audit: list[ConfidenceBucket] = []
 
 
 # ─── Thresholds ─────────────────────────────────────────────────────

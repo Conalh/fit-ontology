@@ -132,6 +132,14 @@ export interface CalibrationSuggestion {
   target: string | null;
 }
 
+export interface ConfidenceBucket {
+  low: number;
+  high: number;
+  total: number;
+  accepts: number;
+  accept_rate: number;
+}
+
 export interface CalibrationResponse {
   total: number;
   accept_rate: number;
@@ -143,6 +151,7 @@ export interface CalibrationResponse {
   by_week: WeeklyAgreement[];
   by_client: PerClientAgreement[];
   suggestions: CalibrationSuggestion[];
+  confidence_audit: ConfidenceBucket[];
 }
 
 export interface AskTrace {

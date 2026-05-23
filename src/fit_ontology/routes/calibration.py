@@ -1,6 +1,7 @@
 """Override audit + rule-based tuning suggestions."""
 from __future__ import annotations
 
+import duckdb
 import pandas as pd
 from fastapi import APIRouter, Depends
 
@@ -10,6 +11,7 @@ from .helpers import classify_rec, override_response
 from .schemas import (
     CalibrationResponse,
     CalibrationSuggestion,
+    ConfidenceBucket,
     PerClientAgreement,
     WeeklyAgreement,
 )
@@ -44,6 +46,7 @@ def get_calibration(con=Depends(read_only_conn)) -> CalibrationResponse:
     by_week = _build_weekly_agreement(df)
     by_client = _build_per_client_agreement(con, df)
     suggestions = _build_suggestions(df)
+    confidence_audit = _build_confidence_audit(con)
 
     return CalibrationResponse(
         total=total,
@@ -55,7 +58,62 @@ def get_calibration(con=Depends(read_only_conn)) -> CalibrationResponse:
         by_week=by_week,
         by_client=by_client,
         suggestions=suggestions,
+        confidence_audit=confidence_audit,
     )
+
+
+def _build_confidence_audit(con) -> list[ConfidenceBucket]:
+    """Bucket persisted recommendations by their stated confidence and
+    compute the rate at which the trainer accepted them.
+
+    Inner-join semantics: we only count weeks where both a persisted
+    recommendation and a trainer decision exist. Weeks the trainer
+    hasn't ruled on yet are excluded — we don't know what they'll do.
+
+    Window-function pick on the override side: if a trainer edited the
+    same week twice we count their most recent action, not the first.
+    """
+    try:
+        df = con.execute(
+            """
+            SELECT r.confidence, o.trainer_action
+            FROM recommendations r
+            INNER JOIN (
+                SELECT client_id, week_of, trainer_action,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY client_id, week_of
+                           ORDER BY created_at DESC
+                       ) AS rn
+                FROM recommendation_overrides
+            ) o
+            ON r.client_id = o.client_id AND r.week_of = o.week_of
+            WHERE o.rn = 1
+            """,
+        ).df()
+    except duckdb.CatalogException:
+        # Pre-migration DB — recommendations / overrides table may not
+        # exist on a fresh install. Return empty buckets; the audit fills
+        # in as decisions are logged.
+        df = pd.DataFrame(columns=["confidence", "trainer_action"])
+
+    # Fixed bands so the chart shape is comparable week-over-week even as
+    # the data fills in. Top bucket includes 1.0 (otherwise a confidence
+    # of exactly 1.0 falls out of the audit).
+    bands = [(0.5, 0.6), (0.6, 0.7), (0.7, 0.8), (0.8, 0.9), (0.9, 1.001)]
+    buckets: list[ConfidenceBucket] = []
+    for lo, hi in bands:
+        mask = (df["confidence"] >= lo) & (df["confidence"] < hi) if not df.empty else None
+        rows = df[mask] if mask is not None else df
+        n = len(rows)
+        accepts = int((rows["trainer_action"] == "accept").sum()) if n else 0
+        buckets.append(ConfidenceBucket(
+            low=lo,
+            high=min(hi, 1.0),
+            total=n,
+            accepts=accepts,
+            accept_rate=accepts / n if n else 0.0,
+        ))
+    return buckets
 
 
 def _build_weekly_agreement(df: pd.DataFrame) -> list[WeeklyAgreement]:

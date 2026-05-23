@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { CSSProperties } from "react";
 import { Sidebar, TopBar } from "@/components/chrome";
+import { ConfidenceAudit } from "@/components/calibration/confidence-audit";
 import { EmptyState } from "@/components/calibration/empty-state";
 import { Headline } from "@/components/calibration/headline";
 import { Matrix } from "@/components/calibration/matrix";
@@ -73,6 +74,9 @@ export default function CalibrationPage() {
               <Headline data={calQ.data} />
               {calQ.data.by_week.length >= 2 && <WeeklyTrend rows={calQ.data.by_week} />}
               <Matrix data={calQ.data} />
+              {calQ.data.confidence_audit && calQ.data.confidence_audit.length > 0 && (
+                <ConfidenceAudit buckets={calQ.data.confidence_audit} />
+              )}
               {calQ.data.by_client.length > 0 && (
                 <PerClient rows={calQ.data.by_client} />
               )}
