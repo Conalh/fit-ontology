@@ -28,7 +28,13 @@ dependencies = [
     "anthropic>=0.39.0",
     "reportlab>=4.0.0",
     "altair>=5.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",
 ]
+
+[project.scripts]
+fit-ontology-serve = "fit_ontology.serve:main"
 
 [project.optional-dependencies]
 dev = [
