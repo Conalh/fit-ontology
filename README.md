@@ -136,10 +136,15 @@ streamlit run app.py
 ## Tests
 
 ```bash
-pytest tests/
+pip install -r requirements-dev.txt
+pytest -q
 ```
 
-Smoke tests cover the three reasoning branches against synthetic fixtures.
+Covers the reasoning branches against synthetic fixtures, the override
+log roundtrip, the assistant tool routing, the Apple Health parser,
+and the deterministic metric-ID dedup. CI runs the same suite on
+Python 3.11 and 3.12 for every push and PR
+([`.github/workflows/tests.yml`](.github/workflows/tests.yml)).
 
 ## Status
 
