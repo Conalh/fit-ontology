@@ -101,6 +101,20 @@ export interface CalibrationResponse {
   recent: OverrideRow[];
 }
 
+export interface AskTrace {
+  name: string;
+  arguments: Record<string, unknown>;
+  result_summary: string;
+}
+
+export interface AskResponse {
+  answer: string;
+  traces: AskTrace[];
+  turns_used: number;
+  /** Full Anthropic message stream — pass back as `history` next turn. */
+  messages: Record<string, unknown>[];
+}
+
 export const api = {
   health: () => request<{ ok: boolean }>("/api/health"),
   clients: () => request<ClientSummary[]>("/api/clients"),
@@ -140,6 +154,8 @@ export const api = {
     }
     return res.json();
   },
+  ask: (payload: { question: string; history: Record<string, unknown>[]; model?: string }) =>
+    request<AskResponse>("/api/ask", { method: "POST", body: JSON.stringify(payload) }),
   downloadPdf: async (clientId: string, coachMessage: string | null): Promise<Blob> => {
     const res = await fetch(
       `${process.env.NEXT_PUBLIC_API_URL ?? ""}/api/clients/${clientId}/pdf`,

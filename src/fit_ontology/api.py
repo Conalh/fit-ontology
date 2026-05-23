@@ -164,6 +164,28 @@ class CalibrationResponse(BaseModel):
     recent: list[OverrideResponse]
 
 
+class AskTrace(BaseModel):
+    name: str
+    arguments: dict[str, object]
+    result_summary: str
+
+
+class AskRequest(BaseModel):
+    question: str
+    # Anthropic-format message stream from a prior turn — pass back to
+    # keep multi-turn context (tool_use + tool_result blocks included,
+    # which is what makes the chat actually coherent past turn 1).
+    history: list[dict] = []
+    model: str | None = None
+
+
+class AskResponse(BaseModel):
+    answer: str
+    traces: list[AskTrace]
+    turns_used: int
+    messages: list[dict]
+
+
 # ─── App + CORS ──────────────────────────────────────────────────────
 
 app = FastAPI(title="FitOntology API", version="0.4.0")
@@ -341,6 +363,40 @@ def post_pdf(client_id: str, payload: PdfRequest, con=Depends(_read_only_conn)) 
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/ask", response_model=AskResponse)
+def post_ask(payload: AskRequest) -> AskResponse:
+    """Run one turn of the Ask FitOntology tool-use loop.
+
+    Wraps fit_ontology.assistant.ask(); the client passes back the
+    prior turn's ``messages`` as ``history`` to keep multi-turn context
+    (tool_use + tool_result blocks intact). Same model + system prompt
+    + tool set as the Streamlit page used.
+    """
+    from .assistant import DEFAULT_MODEL, ask  # local import keeps anthropic SDK optional at import time
+
+    try:
+        turn = ask(
+            payload.question,
+            history=payload.history or None,
+            model=payload.model or DEFAULT_MODEL,
+        )
+    except RuntimeError as e:
+        # ANTHROPIC_API_KEY missing — surface as 412 so the front-end
+        # can show a meaningful "set your API key" message instead of
+        # a generic 500.
+        raise HTTPException(status_code=412, detail=str(e)) from e
+
+    return AskResponse(
+        answer=turn.answer,
+        traces=[
+            AskTrace(name=t.name, arguments=dict(t.arguments), result_summary=t.result_summary)
+            for t in turn.traces
+        ],
+        turns_used=turn.turns_used,
+        messages=turn.messages,
     )
 
 
