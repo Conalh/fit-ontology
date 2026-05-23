@@ -16,6 +16,13 @@ from fastapi.testclient import TestClient
 import fit_ontology.api as api_mod
 from fit_ontology.db import connect, ensure_client, insert_metrics, insert_sessions
 from fit_ontology.ontology import MetricKind
+from fit_ontology.routes import (
+    clients as clients_routes,
+    metrics as metrics_routes,
+    overrides as overrides_routes,
+    recommendation as recommendation_routes,
+    thresholds as thresholds_routes,
+)
 
 
 @pytest.fixture()
@@ -55,7 +62,11 @@ def app_with_db(tmp_path: Path, monkeypatch):
     insert_sessions(con, pd.DataFrame(session_rows))
     con.close()
 
-    monkeypatch.setattr(api_mod, "DEFAULT_DB_PATH", db_path)
+    # Each route module did ``from ..db import DEFAULT_DB_PATH`` at load
+    # time, so the constant is bound separately in each module's namespace.
+    # Patch every module that opens its own write connection.
+    for mod in (clients_routes, metrics_routes, overrides_routes, recommendation_routes, thresholds_routes):
+        monkeypatch.setattr(mod, "DEFAULT_DB_PATH", db_path)
 
     def _ro():
         c = connect(db_path, read_only=True)
