@@ -99,6 +99,30 @@ export interface OverrideRow {
   created_at: string;
 }
 
+export interface WeeklyAgreement {
+  week_of: string;
+  total: number;
+  accepts: number;
+  accept_rate: number;
+}
+
+export interface PerClientAgreement {
+  client_id: string;
+  name: string;
+  total: number;
+  accepts: number;
+  edits: number;
+  rejects: number;
+  accept_rate: number;
+}
+
+export interface CalibrationSuggestion {
+  kind: "threshold_tune" | "per_client_drift";
+  severity: "info" | "warn";
+  message: string;
+  target: string | null;
+}
+
 export interface CalibrationResponse {
   total: number;
   accept_rate: number;
@@ -107,6 +131,9 @@ export interface CalibrationResponse {
   /** matrix[system_type][action] -> count */
   matrix: Record<string, Record<string, number>>;
   recent: OverrideRow[];
+  by_week: WeeklyAgreement[];
+  by_client: PerClientAgreement[];
+  suggestions: CalibrationSuggestion[];
 }
 
 export interface AskTrace {

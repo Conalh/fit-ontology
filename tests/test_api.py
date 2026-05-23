@@ -196,6 +196,51 @@ def test_calibration_with_one_override(app_with_db):
     assert data["total"] >= 1
     assert data["rejects"] >= 1
     assert "Deload" in data["matrix"]
+    # Upgrade fields all present even with one override.
+    assert "by_week" in data and len(data["by_week"]) >= 1
+    assert "by_client" in data and len(data["by_client"]) >= 1
+    assert "suggestions" in data  # may be empty when sample size is small
+
+
+def test_calibration_suggests_threshold_tune_after_repeat_deload_pushback(app_with_db):
+    """Seed 4 deload calls that the trainer rejected. The suggestions
+    engine should pick up the pattern and recommend raising the HRV
+    severity thresholds."""
+    base_week = date.today() - timedelta(weeks=4)
+    for i in range(4):
+        app_with_db.post("/api/clients/c_test/overrides", json={
+            "week_of": str(base_week + timedelta(weeks=i)),
+            "system_recommendation": "Deload week: reduce training load by 20%.",
+            "system_confidence": 0.85,
+            "trainer_action": "reject",
+            "applied_load_change_pct": None,
+            "trainer_note": f"week {i} reject",
+        })
+
+    data = app_with_db.get("/api/calibration").json()
+    kinds = {s["kind"] for s in data["suggestions"]}
+    assert "threshold_tune" in kinds
+    msg = " ".join(s["message"] for s in data["suggestions"] if s["kind"] == "threshold_tune")
+    assert "deload" in msg.lower() or "hrv" in msg.lower()
+
+
+def test_calibration_by_client_includes_names(app_with_db):
+    """Per-client rows surface the client's display name (from the
+    clients table) so the frontend doesn't have to do a second lookup."""
+    app_with_db.post("/api/clients/c_test/overrides", json={
+        "week_of": str(date.today()),
+        "system_recommendation": "Standard progression per ACSM 11e: increase load 5-10%.",
+        "system_confidence": 0.78,
+        "trainer_action": "accept",
+        "applied_load_change_pct": None,
+        "trainer_note": None,
+    })
+
+    by_client = app_with_db.get("/api/calibration").json()["by_client"]
+    me = next(c for c in by_client if c["client_id"] == "c_test")
+    assert me["name"] == "Test Client"
+    assert me["total"] >= 1
+    assert 0.0 <= me["accept_rate"] <= 1.0
 
 
 def test_pdf_endpoint_returns_pdf_bytes(app_with_db):
