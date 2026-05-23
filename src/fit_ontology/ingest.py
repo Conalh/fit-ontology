@@ -4,11 +4,17 @@ Ingestion adapters.
 Each adapter normalizes its source into the long-format `metrics` schema
 defined in ontology.py. Adding a new wearable means writing a new adapter
 function and nothing else — no schema migration, no downstream changes.
+
+Metric IDs are derived deterministically from the natural key
+``(client_id, date, kind, source)``. This means a re-sync overwrites
+the previous row for the same signal-day-source via the table's PK,
+instead of duplicating it. Downstream references (e.g. a
+recommendation's ``source_metric_ids``) stay valid across re-syncs.
 """
 from __future__ import annotations
 
+import hashlib
 import json
-import uuid
 import zipfile
 from collections import defaultdict
 from datetime import date, datetime
@@ -20,8 +26,44 @@ import pandas as pd
 from .ontology import MetricKind, MetricSource
 
 
-def _mid() -> str:
-    return f"m_{uuid.uuid4().hex[:12]}"
+def metric_id(client_id: str, day, kind: str, source: str) -> str:
+    """Deterministic ID for a metric row.
+
+    SHA-1 of the natural key, truncated to 14 hex chars. Collisions are
+    astronomically unlikely at this scale (~10^16 keys before a 50%
+    birthday collision); the short form keeps DB rows compact while
+    preserving stable IDs across re-syncs.
+
+    The ``day`` arg is normalized to an ISO date string before hashing
+    so we get the same ID regardless of whether the caller passes a
+    Python ``date``, a ``datetime``, a pandas ``Timestamp`` (which is
+    what DuckDB's ``.df()`` returns for DATE columns), or a pre-
+    formatted ISO string. Without this, the migration script (reading
+    Timestamps from DB) and the ingest path (passing Python dates)
+    would derive different IDs for the same logical row.
+    """
+    if hasattr(day, "date") and callable(day.date):  # pandas Timestamp / datetime
+        day = day.date()
+    if hasattr(day, "isoformat"):  # date object
+        day_str = day.isoformat()
+    else:
+        # Strip any time/zone portion and keep just YYYY-MM-DD.
+        day_str = str(day).split(" ", 1)[0].split("T", 1)[0]
+    key = f"{client_id}|{day_str}|{kind}|{source}"
+    return "m_" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:14]
+
+
+def _assign_metric_ids(df: pd.DataFrame) -> pd.DataFrame:
+    """Helper that fills in the ``id`` column from the natural-key columns."""
+    df.insert(
+        0,
+        "id",
+        [
+            metric_id(r["client_id"], r["date"], r["kind"], r["source"])
+            for _, r in df.iterrows()
+        ],
+    )
+    return df
 
 
 def from_strava_export(path: Path, client_id: str) -> pd.DataFrame:
@@ -31,6 +73,13 @@ def from_strava_export(path: Path, client_id: str) -> pd.DataFrame:
 
     Expected columns (Strava's actual export): Activity Date, Activity Type,
     Average Heart Rate, Max Heart Rate, Elapsed Time
+
+    Multiple activities on the same day collapse to a daily mean per kind,
+    matching the "one row per (client_id, date, kind, source)" convention
+    the reasoning layer assumes. Without that aggregation, a two-workout
+    day would create two rows with the same natural key — the second
+    would overwrite the first via the deterministic-ID upsert and the
+    first activity's data would silently disappear.
     """
     raw = pd.read_csv(path)
     raw = raw.rename(columns={
@@ -49,8 +98,12 @@ def from_strava_export(path: Path, client_id: str) -> pd.DataFrame:
             rows.append((client_id, r["date"], MetricSource.STRAVA.value,
                          MetricKind.HR_MAX.value, float(r["hr_max"]), "bpm"))
     df = pd.DataFrame(rows, columns=["client_id", "date", "source", "kind", "value", "unit"])
-    df.insert(0, "id", [_mid() for _ in range(len(df))])
-    return df[["id", "client_id", "date", "source", "kind", "value", "unit"]]
+    if not df.empty:
+        df = (
+            df.groupby(["client_id", "date", "source", "kind", "unit"], as_index=False)["value"]
+            .mean()
+        )
+    return _assign_metric_ids(df)[["id", "client_id", "date", "source", "kind", "value", "unit"]]
 
 
 def from_whoop_json(path: Path, client_id: str) -> pd.DataFrame:
@@ -73,8 +126,7 @@ def from_whoop_json(path: Path, client_id: str) -> pd.DataFrame:
             rows.append((client_id, day, MetricSource.WHOOP.value,
                          MetricKind.SLEEP_HOURS.value, float(d["sleep_hours"]), "h"))
     df = pd.DataFrame(rows, columns=["client_id", "date", "source", "kind", "value", "unit"])
-    df.insert(0, "id", [_mid() for _ in range(len(df))])
-    return df
+    return _assign_metric_ids(df)
 
 
 # Apple Health record types we care about. Apple's Health app names
@@ -160,8 +212,7 @@ def _parse_apple_health_xml(source, client_id: str) -> pd.DataFrame:
         for (day, kind, unit), vals in buckets.items()
     ]
     df = pd.DataFrame(rows, columns=["client_id", "date", "source", "kind", "value", "unit"])
-    df.insert(0, "id", [_mid() for _ in range(len(df))])
-    return df
+    return _assign_metric_ids(df)
 
 
 def from_intake_csv(path: Path) -> pd.DataFrame:
