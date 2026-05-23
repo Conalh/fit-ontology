@@ -321,13 +321,25 @@ st.markdown(
 # Trainer-to-client artifact. Friendly language, no SD/ACWR jargon — the
 # detailed view stays here in the dashboard. PDF is built on every render
 # (~50ms for a one-page report) so the download is a single click.
+#
+# The trainer can type a personal note that the PDF renders as a "Note
+# from your coach" section. The note persists across reruns via
+# st.text_area's session-state-backed value, so toggling other controls
+# doesn't clear it.
 
 client_row = clients.iloc[options.index(selected)]
+coach_message = st.text_area(
+    "Note from coach (optional, appears in the PDF)",
+    placeholder="e.g. 'Great push on Tuesday. This week's a recovery one — protect sleep and we'll be ready to PR Saturday.'",
+    key=f"coach_msg_{client_id}_{rec.week_of}",
+    height=80,
+)
 pdf_bytes = build_weekly_pdf(
     client_name=client_row["name"],
     client_goal=client_row["goal"],
     rec=rec,
     metrics=metrics,
+    coach_message=coach_message or None,
 )
 pdf_filename = f"{client_row['name'].replace(' ', '_')}_week_{rec.week_of:%Y%m%d}.pdf"
 st.download_button(
