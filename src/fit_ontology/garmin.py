@@ -20,21 +20,17 @@ against. Activities (workouts) come in a later pass.
 from __future__ import annotations
 
 import os
-import uuid
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
 import pandas as pd
 
+from .ingest import _assign_metric_ids
 from .ontology import MetricKind, MetricSource
 
 DEFAULT_TOKEN_DIR = Path.home() / ".garminconnect"
 DEFAULT_LOOKBACK_DAYS = 14
-
-
-def _mid() -> str:
-    return f"m_{uuid.uuid4().hex[:12]}"
 
 
 def make_garmin_client(
@@ -102,8 +98,7 @@ def fetch_daily_metrics(
         return df.assign(id=[]).loc[:, ["id", "client_id", "date", "source", "kind", "value", "unit"]]
 
     df["date"] = pd.to_datetime(df["date"]).dt.date
-    df.insert(0, "id", [_mid() for _ in range(len(df))])
-    return df[["id", "client_id", "date", "source", "kind", "value", "unit"]]
+    return _assign_metric_ids(df)[["id", "client_id", "date", "source", "kind", "value", "unit"]]
 
 
 # Each extractor is wrapped in a guarded call: Garmin endpoints occasionally
