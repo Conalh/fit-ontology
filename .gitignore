@@ -32,3 +32,6 @@ Thumbs.db
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local Claude Code config (per-developer tooling)
+.claude/
