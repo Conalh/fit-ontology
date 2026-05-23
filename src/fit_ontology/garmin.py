@@ -13,12 +13,17 @@ Trade-offs called out so a reader of the README knows what they're using:
     to the Garmin Health API.
   - Slow first login (~5-10s); subsequent calls hit the cached token.
 
-What we extract: HRV Status, sleep, resting HR, Body Battery, stress, and
-training readiness — the daily-cadence signals the reasoning layer joins
-against. Activities (workouts) come in a later pass.
+What we extract:
+  - HRV Status, sleep, resting HR, Body Battery, stress, training readiness
+    — the daily-cadence signals the reasoning layer joins against.
+  - Workout activities — auto-imported as Session rows so the trainer
+    doesn't manually log every workout. RPE is derived from Garmin's
+    Training Effect (the closest analogue Garmin exposes); the trainer
+    can still log their own session separately for perceived effort.
 """
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Iterable
 from datetime import date, timedelta
 from pathlib import Path
@@ -26,7 +31,7 @@ from pathlib import Path
 import pandas as pd
 
 from .ingest import _assign_metric_ids
-from .ontology import MetricKind, MetricSource
+from .ontology import MetricKind, MetricSource, SessionType
 
 DEFAULT_TOKEN_DIR = Path.home() / ".garminconnect"
 DEFAULT_LOOKBACK_DAYS = 14
@@ -193,3 +198,200 @@ def _extract_training_readiness(client, client_id: str, iso: str) -> Iterable[tu
     if score is None:
         return []
     return [(client_id, iso, MetricSource.GARMIN.value, MetricKind.TRAINING_READINESS.value, float(score), "score")]
+
+
+# ─── Activities → Sessions ────────────────────────────────────────────
+#
+# Garmin sees every workout the trainer's client logs on the watch.
+# Importing those as Session rows is the difference between a trainer
+# manually entering RPE every day and the system having a real view of
+# the client's load. RPE is the one thing Garmin doesn't measure
+# directly — but Garmin's Training Effect is a sufficient proxy:
+# anaerobic + aerobic effect (each 0-5) maps cleanly to perceived
+# exertion on the same range the trainer's manual RPE uses.
+#
+# Trainer-logged sessions and Garmin-imported sessions coexist; they're
+# distinguished by ID prefix (``s_garmin_*`` vs ``s_*``) and the
+# insert-or-replace upsert dedupes Garmin re-syncs by activity_id.
+
+
+# Garmin's activityType.typeKey strings map into our four-bucket Session
+# scheme. Unknown keys fall through to MIXED so an activity is never
+# silently dropped — the trainer can edit the session afterwards if a
+# wrong bucket lands.
+_TYPE_BUCKETS: dict[str, SessionType] = {
+    # Cardio
+    "running": SessionType.CARDIO,
+    "trail_running": SessionType.CARDIO,
+    "treadmill_running": SessionType.CARDIO,
+    "track_running": SessionType.CARDIO,
+    "cycling": SessionType.CARDIO,
+    "indoor_cycling": SessionType.CARDIO,
+    "mountain_biking": SessionType.CARDIO,
+    "road_biking": SessionType.CARDIO,
+    "gravel_cycling": SessionType.CARDIO,
+    "swimming": SessionType.CARDIO,
+    "lap_swimming": SessionType.CARDIO,
+    "open_water_swimming": SessionType.CARDIO,
+    "rowing": SessionType.CARDIO,
+    "elliptical": SessionType.CARDIO,
+    "walking": SessionType.CARDIO,
+    "hiking": SessionType.CARDIO,
+    # Strength
+    "strength_training": SessionType.STRENGTH,
+    "weight_training": SessionType.STRENGTH,
+    "indoor_climbing": SessionType.STRENGTH,
+    "bouldering": SessionType.STRENGTH,
+    # Mobility / recovery
+    "yoga": SessionType.MOBILITY,
+    "pilates": SessionType.MOBILITY,
+    "stretching": SessionType.MOBILITY,
+    "breathwork": SessionType.MOBILITY,
+    # Mixed (intervals / circuit / cross-training)
+    "hiit": SessionType.MIXED,
+    "circuit_training": SessionType.MIXED,
+    "crossfit": SessionType.MIXED,
+    "boxing": SessionType.MIXED,
+    "martial_arts": SessionType.MIXED,
+}
+
+
+def _bucket_type(type_key: str | None) -> SessionType:
+    if not type_key:
+        return SessionType.MIXED
+    return _TYPE_BUCKETS.get(type_key.lower(), SessionType.MIXED)
+
+
+def _rpe_from_training_effect(
+    aerobic: float | None,
+    anaerobic: float | None,
+    avg_hr: float | None,
+) -> int:
+    """Estimate session RPE (1-10) from what Garmin actually measures.
+
+    Training Effect runs 0-5 per channel — Garmin's own model of how
+    much stress the workout imposed. We take the max of aerobic +
+    anaerobic and double it (0-10 range), then nudge by avg HR for
+    short-but-intense sessions Training Effect can underweight.
+
+    Falls back to a low-confidence value of 5 (moderate) when neither
+    Training Effect nor HR is available — the trainer can override the
+    session if they have a different feel for it.
+    """
+    candidates: list[float] = []
+    if aerobic is not None:
+        candidates.append(float(aerobic))
+    if anaerobic is not None:
+        candidates.append(float(anaerobic))
+    if candidates:
+        te = max(candidates)
+        rpe = te * 2
+    elif avg_hr is not None:
+        # No TE? Map HR percentage of a fixed reference (180 bpm) to RPE.
+        # Rough — but better than zero, which would silence ACWR.
+        rpe = min(10.0, max(1.0, (float(avg_hr) / 180.0) * 10.0))
+    else:
+        rpe = 5.0
+    return max(1, min(10, round(rpe)))
+
+
+def _session_id(activity_id: int | str) -> str:
+    """Deterministic session ID from a Garmin activityId so re-syncs
+    upsert via the PK instead of duplicating. ``activityId`` is unique
+    per workout in Garmin's system."""
+    raw = f"garmin:{activity_id}"
+    return "s_garmin_" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def _notes_from_activity(act: dict) -> str:
+    """One-line summary the trainer sees in the sessions table. Names +
+    key stats, no fluff. Capped at ~80 chars so the sessions UI doesn't
+    wrap."""
+    parts: list[str] = []
+    name = (act.get("activityName") or "").strip()
+    if name and name.lower() not in {"activity", "workout"}:
+        parts.append(name)
+    dist_m = act.get("distance")
+    if isinstance(dist_m, (int, float)) and dist_m > 0:
+        km = dist_m / 1000.0
+        parts.append(f"{km:.1f} km" if km >= 1 else f"{int(dist_m)} m")
+    avg_hr = act.get("averageHR")
+    if isinstance(avg_hr, (int, float)) and avg_hr > 0:
+        parts.append(f"avg HR {int(avg_hr)}")
+    out = " · ".join(parts)
+    return out[:80]
+
+
+def fetch_activities(
+    client,
+    client_id: str,
+    *,
+    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+    today: date | None = None,
+) -> pd.DataFrame:
+    """Pull recent activities and map them to Session rows.
+
+    The garminconnect library exposes ``get_activities_by_date(start,
+    end)`` — Garmin's own paginated activity list. We pull the window,
+    bucket each activity's type, derive RPE from Training Effect, and
+    return a DataFrame in the Sessions schema shape (id, client_id,
+    date, type, duration_min, rpe, notes) ready for ``insert_sessions``.
+
+    Activities with zero duration (heart-rate broadcasts, stub entries)
+    are dropped — they'd skew ACWR with phantom load.
+    """
+    today = today or date.today()
+    start = today - timedelta(days=lookback_days)
+
+    raw = _safe_call(client.get_activities_by_date, start.isoformat(), today.isoformat())
+    if not raw:
+        return pd.DataFrame(columns=["id", "client_id", "date", "type", "duration_min", "rpe", "notes"])
+
+    rows: list[dict] = []
+    for act in raw:
+        if not isinstance(act, dict):
+            continue
+        activity_id = act.get("activityId")
+        if activity_id is None:
+            continue
+        duration_s = act.get("duration")
+        if not isinstance(duration_s, (int, float)) or duration_s <= 0:
+            continue
+        # Clamp duration_min into the Session model's 5-300 range. Sub-5
+        # is almost certainly a stub; >300 is a multi-day adventure
+        # ride; the model rejects either anyway.
+        duration_min = int(round(duration_s / 60))
+        if duration_min < 5 or duration_min > 300:
+            continue
+
+        start_iso = act.get("startTimeLocal") or act.get("startTimeGMT")
+        if not start_iso:
+            continue
+        day = date.fromisoformat(start_iso.split(" ", 1)[0].split("T", 1)[0])
+
+        type_key = (act.get("activityType") or {}).get("typeKey")
+        rpe = _rpe_from_training_effect(
+            act.get("aerobicTrainingEffect"),
+            act.get("anaerobicTrainingEffect"),
+            act.get("averageHR"),
+        )
+
+        rows.append({
+            "id": _session_id(activity_id),
+            "client_id": client_id,
+            "date": day,
+            "type": _bucket_type(type_key).value,
+            "duration_min": duration_min,
+            "rpe": rpe,
+            "notes": _notes_from_activity(act),
+        })
+
+    df = pd.DataFrame(
+        rows,
+        columns=["id", "client_id", "date", "type", "duration_min", "rpe", "notes"],
+    )
+    if not df.empty:
+        # Same-activity dedupe — if Garmin's listing returned the same
+        # activity twice (shouldn't, but be defensive), keep the first.
+        df = df.drop_duplicates(subset=["id"], keep="first").reset_index(drop=True)
+    return df

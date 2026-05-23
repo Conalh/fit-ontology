@@ -22,8 +22,8 @@ import sys
 from getpass import getpass
 
 from fit_ontology.config import load_env
-from fit_ontology.db import connect, ensure_client, insert_metrics
-from fit_ontology.garmin import fetch_daily_metrics, make_garmin_client
+from fit_ontology.db import connect, ensure_client, insert_metrics, insert_sessions
+from fit_ontology.garmin import fetch_activities, fetch_daily_metrics, make_garmin_client
 
 load_env()
 
@@ -53,20 +53,32 @@ def main() -> int:
     client = make_garmin_client(email, password, mfa_prompt=_prompt_mfa)
     print("Authenticated. Fetching metrics...")
 
-    df = fetch_daily_metrics(client, client_id, lookback_days=lookback)
-    if df.empty:
-        print(f"No metrics returned for the last {lookback} days.")
+    metrics_df = fetch_daily_metrics(client, client_id, lookback_days=lookback)
+    sessions_df = fetch_activities(client, client_id, lookback_days=lookback)
+
+    if metrics_df.empty and sessions_df.empty:
+        print(f"No data returned for the last {lookback} days.")
         return 0
 
     con = connect()
     ensure_client(con, client_id, name="Self (Garmin)")
-    insert_metrics(con, df)
+    if not metrics_df.empty:
+        insert_metrics(con, metrics_df)
+    if not sessions_df.empty:
+        insert_sessions(con, sessions_df)
     con.close()
 
-    by_kind = df.groupby("kind").size().to_dict()
-    print(f"Loaded {len(df)} rows for client_id={client_id}:")
-    for kind, count in sorted(by_kind.items()):
-        print(f"  {kind}: {count}")
+    print(f"Synced for client_id={client_id} (last {lookback} days):")
+    if not metrics_df.empty:
+        by_kind = metrics_df.groupby("kind").size().to_dict()
+        print(f"  metrics: {len(metrics_df)} rows")
+        for kind, count in sorted(by_kind.items()):
+            print(f"    {kind}: {count}")
+    if not sessions_df.empty:
+        by_type = sessions_df.groupby("type").size().to_dict()
+        print(f"  sessions: {len(sessions_df)} rows")
+        for stype, count in sorted(by_type.items()):
+            print(f"    {stype}: {count}")
     return 0
 
 

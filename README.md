@@ -47,11 +47,14 @@ python scripts/sync_garmin.py
 fit-ontology-serve
 ```
 
-Pulls 14 days of HRV Status, sleep, resting HR, Body Battery, stress, and
-Training Readiness from Garmin Connect into the ontology. The script
-handles 2FA via a one-time prompt and caches the session token in
-`~/.garminconnect/`. Uses the unofficial `python-garminconnect` library
-— personal-use only, not for a hosted product.
+Pulls 14 days of HRV Status, sleep, resting HR, Body Battery, stress,
+Training Readiness, **and workout activities** from Garmin Connect into
+the ontology. Activities auto-import as Session rows with RPE derived
+from Garmin's Training Effect — the trainer doesn't have to manually
+log every workout to get ACWR data. The script handles 2FA via a
+one-time prompt and caches the session token in `~/.garminconnect/`.
+Uses the unofficial `python-garminconnect` library — personal-use only,
+not for a hosted product.
 
 ### Ask FitOntology (conversational layer)
 
