@@ -79,3 +79,39 @@ def test_pdf_renders_with_empty_metrics():
         today=date(2026, 5, 23),
     )
     assert pdf.startswith(b"%PDF")
+
+
+def _build_two_pdfs(coach_message):
+    """Build a baseline and an instrumented PDF, identical except for the
+    coach_message. Used to assert that providing a coach message causes
+    the document to grow — ReportLab compresses its content stream, so
+    we can't substring-search the raw bytes for the rendered text."""
+    common = dict(
+        client_name="Note Client",
+        client_goal="strength",
+        rec=_rec(
+            "Standard progression per ACSM 11e: increase load 5–10%.",
+            "Recovery markers within baseline range; no flags.",
+        ),
+        metrics=_metrics_df(date(2026, 5, 23)),
+        today=date(2026, 5, 23),
+    )
+    baseline = build_weekly_pdf(**common, coach_message=None)
+    instrumented = build_weekly_pdf(**common, coach_message=coach_message)
+    return baseline, instrumented
+
+
+def test_pdf_grows_when_coach_message_added():
+    baseline, instrumented = _build_two_pdfs("Great push on Tuesday. Protect sleep this week.")
+    assert baseline.startswith(b"%PDF") and instrumented.startswith(b"%PDF")
+    assert len(instrumented) > len(baseline)
+
+
+def test_pdf_unchanged_for_whitespace_or_none_coach_message():
+    baseline, with_empty = _build_two_pdfs("")
+    _, with_whitespace = _build_two_pdfs("   \n  ")
+    # Trailing-metadata bytes (creation timestamps) make exact equality
+    # flaky; identical content streams produce nearly-identical sizes
+    # within a small constant.
+    assert abs(len(with_empty) - len(baseline)) < 30
+    assert abs(len(with_whitespace) - len(baseline)) < 30

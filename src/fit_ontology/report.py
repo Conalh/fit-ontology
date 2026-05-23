@@ -98,8 +98,15 @@ def build_weekly_pdf(
     rec: Recommendation,
     metrics: pd.DataFrame,
     today: date | None = None,
+    coach_message: str | None = None,
 ) -> bytes:
-    """Render the client-facing one-pager as PDF bytes."""
+    """Render the client-facing one-pager as PDF bytes.
+
+    ``coach_message`` is an optional free-text note from the trainer.
+    When provided, it renders as its own "Note from your coach" section
+    between the system's conclusion and the recovery snapshot — the
+    personal voice the deterministic flag translations can't carry.
+    """
     today = today or date.today()
 
     buffer = BytesIO()
@@ -173,6 +180,18 @@ def build_weekly_pdf(
 
     story.append(Paragraph(headline, h_headline))
     story.append(Paragraph(conclusion, h_body))
+
+    # Trainer's personal note — rendered before "What we saw" so the
+    # client reads the human voice first and the data second.
+    if coach_message and coach_message.strip():
+        story.append(Paragraph("Note from your coach", h_section))
+        # Preserve paragraph breaks from the trainer's input; ReportLab
+        # Paragraph treats <br/> as a line break, but blank lines need
+        # to become separate Paragraph instances or they collapse.
+        for chunk in coach_message.strip().split("\n\n"):
+            chunk = chunk.strip().replace("\n", "<br/>")
+            if chunk:
+                story.append(Paragraph(chunk, h_body))
 
     # What we saw — friendly translations of each flag.
     flags = _flags_from_rationale(rec.rationale)
