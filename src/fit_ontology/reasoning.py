@@ -90,6 +90,19 @@ DELOAD_LOAD_CUT = 0.20              # 20% cut; more aggressive than 15% reflects
                                     # recent autoregulation literature for clearly stressed states
 
 
+# Inline citations the detectors append to their summary strings. Keeping
+# these as a single dict means the source authority each rule cites is
+# auditable in one place — and if a paper gets superseded, we change the
+# citation here rather than chasing it through six summary strings.
+CITATIONS = {
+    "hrv":   "Plews & Laursen 2017",
+    "rhr":   "Buchheit 2014",
+    "sleep": "ACSM 11e §7",
+    "acwr":  "Gabbett 2016",
+    "rpe":   "Foster sRPE 1995",
+}
+
+
 # Severity thresholds the trainer can override per client. The names here
 # match the rows in the client_thresholds table; unset rows fall back to
 # these defaults. Window-day constants (HRV_BASELINE_DAYS, ACWR_CHRONIC_WEEKS,
@@ -228,7 +241,11 @@ def detect_hrv_signal(
     return Signal(
         kind="hrv_below_baseline",
         severity=severity,
-        summary=f"HRV acute {acute:.1f} ms is {drop_sd:.1f} SD below the {HRV_BASELINE_DAYS}d baseline ({baseline_mean:.1f} ms).",
+        summary=(
+            f"HRV averaged {acute:.0f} ms over the last {HRV_ACUTE_DAYS} days "
+            f"vs. a {HRV_BASELINE_DAYS}-day baseline of {baseline_mean:.0f} ms "
+            f"(-{drop_sd:.1f} SD; {CITATIONS['hrv']})."
+        ),
         source_metric_ids=list({*acute_ids, *baseline_ids}),
     )
 
@@ -261,7 +278,11 @@ def detect_rhr_signal(
     return Signal(
         kind="rhr_above_baseline",
         severity=severity,
-        summary=f"Resting HR acute {acute:.0f} bpm is {rise:+.0f} bpm above the {RHR_BASELINE_DAYS}d baseline ({baseline_mean:.0f} bpm).",
+        summary=(
+            f"Resting HR averaged {acute:.0f} bpm over the last {HRV_ACUTE_DAYS} days "
+            f"vs. a {RHR_BASELINE_DAYS}-day baseline of {baseline_mean:.0f} bpm "
+            f"(+{rise:.0f} bpm; {CITATIONS['rhr']})."
+        ),
         source_metric_ids=list({*acute_ids, *baseline_ids}),
     )
 
@@ -288,11 +309,26 @@ def detect_sleep_signal(
             severity = "severe"
         elif acute_hours < th["sleep_floor_hours"]:
             severity = "moderate"
-        parts.append(f"mean {acute_hours:.1f}h/night")
+        # Count how many nights were actually below the floor — the mean
+        # hides the shape ("6.8 average" can mean five 8h nights and two
+        # 4h nights; the latter is the real signal).
+        hour_window = _window(
+            metrics, MetricKind.SLEEP_HOURS.value,
+            today - timedelta(days=HRV_ACUTE_DAYS), today,
+        )
+        nights = len(hour_window)
+        below_floor = int((hour_window["value"] < th["sleep_floor_hours"]).sum())
+        if nights > 0 and below_floor > 0:
+            parts.append(
+                f"averaged {acute_hours:.1f} h/night with {below_floor} of {nights} "
+                f"nights below the {th['sleep_floor_hours']:.0f} h floor"
+            )
+        else:
+            parts.append(f"averaged {acute_hours:.1f} h/night")
 
     if acute_score is not None and acute_score < th["sleep_score_poor"]:
         severity = "moderate" if severity is None or severity == "mild" else severity
-        parts.append(f"sleep score {acute_score:.0f}")
+        parts.append(f"Garmin sleep score {acute_score:.0f}")
 
     if severity is None:
         return None
@@ -300,7 +336,7 @@ def detect_sleep_signal(
     return Signal(
         kind="sleep_deficit",
         severity=severity,
-        summary=f"Sleep last week: {'; '.join(parts)}.",
+        summary=f"Sleep {'; '.join(parts)} ({CITATIONS['sleep']}).",
         source_metric_ids=list({*hour_ids, *score_ids}),
     )
 
@@ -378,7 +414,11 @@ def detect_acwr_signal(
         return Signal(
             kind="acwr_low",
             severity="mild",
-            summary=f"ACWR {ratio:.2f} (acute {acute_total:.0f} AU / weekly chronic {weekly_chronic:.0f} AU). Below sweet spot — possible detraining.",
+            summary=(
+                f"ACWR {ratio:.2f} (acute {acute_total:,.0f} AU vs. weekly chronic "
+                f"{weekly_chronic:,.0f} AU) — below the 0.8–1.3 safe zone, possible "
+                f"detraining ({CITATIONS['acwr']})."
+            ),
             source_metric_ids=contributing_ids,
         )
 
@@ -388,7 +428,11 @@ def detect_acwr_signal(
     return Signal(
         kind="acwr_high",
         severity=severity,
-        summary=f"ACWR {ratio:.2f} (acute {acute_total:.0f} AU / weekly chronic {weekly_chronic:.0f} AU). Above safe zone (Gabbett 0.8–1.3).",
+        summary=(
+            f"ACWR {ratio:.2f} (acute {acute_total:,.0f} AU vs. weekly chronic "
+            f"{weekly_chronic:,.0f} AU) — above the 0.8–1.3 safe zone "
+            f"({CITATIONS['acwr']})."
+        ),
         source_metric_ids=contributing_ids,
     )
 
@@ -425,7 +469,10 @@ def detect_rpe_signal(
     return Signal(
         kind="rpe_rising",
         severity=severity,
-        summary=f"Session RPE rose {rise:+.1f} ({prior_mean:.1f} → {last_mean:.1f}) across the last two weeks.",
+        summary=(
+            f"Session RPE rose from {prior_mean:.1f} to {last_mean:.1f} across the last "
+            f"two weeks (+{rise:.1f}; {CITATIONS['rpe']})."
+        ),
         source_metric_ids=contributing_ids,
     )
 

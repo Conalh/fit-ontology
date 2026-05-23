@@ -15,8 +15,10 @@ import pandas as pd
 
 from fit_ontology.ontology import MetricKind
 from fit_ontology.reasoning import (
+    CITATIONS,
     detect_acwr_signal,
     detect_rpe_signal,
+    detect_sleep_signal,
     detect_training_readiness_signal,
     generate_recommendation,
 )
@@ -237,3 +239,43 @@ def test_rpe_signal_carries_session_source_ids():
     assert sig is not None
     assert sig.source_metric_ids
     assert all(sid.startswith("s-") for sid in sig.source_metric_ids)
+
+
+# --- Rationale upgrade: specifics + inline citations -------------------
+
+def test_signal_summaries_include_their_citations():
+    """Each rule's source authority should appear inline in the rationale —
+    not just in a module docstring — so the trainer reading the rec
+    sees which paper drives each call."""
+    today = date.today()
+    # HRV crash + sleep deficit + ACWR spike + RPE rise, all at once.
+    m = _metrics("c1", today=today, hrv_baseline=55, hrv_acute=40,
+                 rhr_baseline=58, rhr_acute=65, sleep_acute=5.5)
+    s = _sessions("c1", today=today, rpe_baseline=5, rpe_acute=9, duration_min=90)
+    r = generate_recommendation("c1", m, s, today=today)
+
+    # Every citation that *could* have fired should be present given this
+    # cocktail of stressors. TR isn't fed by the fixture so we skip it.
+    for key in ("hrv", "rhr", "sleep", "acwr", "rpe"):
+        assert CITATIONS[key] in r.rationale, f"missing {key} citation in rationale"
+
+
+def test_sleep_signal_counts_nights_below_floor():
+    """Mean alone hides the shape — a 6.8 h average can mean five 8h nights
+    and two 4h nights. Detector should count nights actually below the
+    floor so the rationale carries the texture of the deficit."""
+    today = date.today()
+    # 7 nights of sleep; 4 nights at 5h, 3 nights at 8h → mean ~6.3h
+    rows = []
+    for offset, hours in enumerate([5, 5, 5, 5, 8, 8, 8], start=1):
+        rows.append(dict(
+            id=f"sleep-{offset}",
+            client_id="c1", date=today - timedelta(days=offset),
+            source="garmin", kind=MetricKind.SLEEP_HOURS.value,
+            value=hours, unit="h",
+        ))
+    sig = detect_sleep_signal(pd.DataFrame(rows), today)
+    assert sig is not None
+    # Both the mean and the count of below-floor nights should appear.
+    assert "4 of 7" in sig.summary
+    assert "h floor" in sig.summary
