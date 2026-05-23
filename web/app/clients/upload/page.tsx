@@ -2,32 +2,28 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { Suspense, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { CSSProperties, DragEvent } from "react";
 import { Chevron, Sidebar, TopBar } from "@/components/chrome";
 import { withAlpha } from "@/lib/accent";
 import { api } from "@/lib/api";
 import { useClientAccent } from "@/lib/use-client-accent";
+import { useQueryParam } from "@/lib/use-query-param";
 
 /**
  * Upload — drop a wearable export (Apple Health zip/xml, Strava CSV,
  * Whoop JSON) and the server detects the format and inserts the rows.
  *
- * Reads ``?id=<client_id>`` from the URL so the Next.js static export
- * doesn't need a per-client dynamic segment.
+ * Reads ``?id=<client_id>`` via the useEffect-based hook (avoids the
+ * Suspense + useSearchParams hydration stall on direct URL loads).
  */
 export default function ClientUploadPage() {
-  return (
-    <Suspense fallback={null}>
-      <UploadInner />
-    </Suspense>
-  );
+  const clientIdParam = useQueryParam("id");
+  if (clientIdParam === null) return null;
+  return <UploadInner clientId={clientIdParam} />;
 }
 
-function UploadInner() {
-  const searchParams = useSearchParams();
-  const clientId = searchParams.get("id") ?? "";
+function UploadInner({ clientId }: { clientId: string }) {
   const missing = !clientId;
   const [accentHex] = useClientAccent(clientId || "_unknown");
 
