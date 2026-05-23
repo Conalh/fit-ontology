@@ -30,7 +30,6 @@ from reportlab.platypus import (
 from .ontology import MetricKind
 from .reasoning import Recommendation
 
-
 # Flag → friendly translation. The reasoning module names flags by
 # mechanism (hrv_below_baseline, sleep_deficit). For a client audience,
 # we restate them as observations.

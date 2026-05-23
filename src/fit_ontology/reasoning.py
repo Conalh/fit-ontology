@@ -45,7 +45,6 @@ import pandas as pd
 
 from .ontology import MetricKind, Recommendation
 
-
 # --- Thresholds (literature-anchored; centralized for trainer override) ---
 
 HRV_BASELINE_DAYS = 28              # Plews & Laursen recommend 21–28d windows
@@ -160,9 +159,12 @@ def detect_hrv_signal(metrics: pd.DataFrame, today: date) -> Signal | None:
     SDNN. Mixing the two within a single signal would distort baselines.
     """
     hrv_kind = MetricKind.HRV_RMSSD.value
-    if metrics.empty or hrv_kind not in metrics["kind"].values:
-        if MetricKind.HRV_SDNN.value in metrics["kind"].values:
-            hrv_kind = MetricKind.HRV_SDNN.value
+    if (
+        (metrics.empty or hrv_kind not in metrics["kind"].values)
+        and not metrics.empty
+        and MetricKind.HRV_SDNN.value in metrics["kind"].values
+    ):
+        hrv_kind = MetricKind.HRV_SDNN.value
 
     acute, acute_ids = _recent_mean(metrics, hrv_kind, today, HRV_ACUTE_DAYS)
     baseline_mean, baseline_sd, baseline_ids = _baseline(

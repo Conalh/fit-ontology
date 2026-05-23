@@ -19,10 +19,9 @@ against. Activities (workouts) come in a later pass.
 """
 from __future__ import annotations
 
-import os
+from collections.abc import Callable, Iterable
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Callable, Iterable, Optional
 
 import pandas as pd
 
@@ -38,7 +37,7 @@ def make_garmin_client(
     password: str,
     *,
     token_dir: Path = DEFAULT_TOKEN_DIR,
-    mfa_prompt: Optional[Callable[[], str]] = None,
+    mfa_prompt: Callable[[], str] | None = None,
 ):
     """
     Return an authenticated garminconnect.Garmin client.
@@ -72,7 +71,7 @@ def fetch_daily_metrics(
     client_id: str,
     *,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
-    today: Optional[date] = None,
+    today: date | None = None,
 ) -> pd.DataFrame:
     """
     Pull the daily-cadence signals we care about into the long-format

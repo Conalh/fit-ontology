@@ -31,7 +31,6 @@ import streamlit as st
 
 from fit_ontology.db import all_overrides, connect, list_clients
 
-
 st.set_page_config(page_title="Calibration · FitOntology", page_icon="🧭", layout="wide")
 st.title("Calibration")
 st.caption("How often the system agrees with the trainer's actual decision.")

@@ -29,10 +29,10 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import date
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import pandas as pd
 
@@ -41,10 +41,10 @@ from .db import (
     connect,
     list_clients,
     metrics_for_client,
+    overrides_for_client,
     sessions_for_client,
 )
 from .reasoning import generate_recommendation
-
 
 DEFAULT_MODEL = os.environ.get("FITONTOLOGY_MODEL", "claude-haiku-4-5-20251001")
 MAX_TURNS = 8           # cap tool-use loop length so we can't infinite-loop
@@ -61,6 +61,7 @@ Domain vocabulary you should use naturally:
 
 How to answer:
   - Lead with the recommendation, then the specific numbers that drove it.
+  - If the trainer asks about actual decisions, locked-in plans, or past overrides, call get_recent_overrides.
   - If a question is about a single client, call get_client_summary then compute_recommendation. Only pull raw metrics or sessions if the trainer asks why or wants detail.
   - If a question is across all clients (e.g. "who needs a deload?"), call list_clients then compute_recommendation per client.
   - If you don't have data, say so. Don't fabricate.
@@ -115,6 +116,19 @@ TOOLS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {"client_id": {"type": "string"}},
+            "required": ["client_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "get_recent_overrides",
+        "description": "Pull the trainer's historical decisions and overrides for a client. Returns what the system recommended, what the trainer actually prescribed (accept/edit/reject), the load change applied, and the trainer's reasoning notes. Use this to check what plans were actually locked in or when the trainer disagreed with the rules.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "client_id": {"type": "string", "description": "The client's id, e.g. 'c_ben'."},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+            },
             "required": ["client_id"],
             "additionalProperties": False,
         },
@@ -210,6 +224,13 @@ def _tool_compute_recommendation(db_path: Path, client_id: str) -> str:
     })
 
 
+def _tool_get_recent_overrides(db_path: Path, client_id: str, limit: int = 10) -> str:
+    con = connect(db_path, read_only=True)
+    df = overrides_for_client(con, client_id, limit=limit)
+    con.close()
+    return _df_brief(df)
+
+
 def _execute_tool(name: str, arguments: dict[str, Any], db_path: Path) -> str:
     if name == "list_clients":
         return _tool_list_clients(db_path)
@@ -221,6 +242,8 @@ def _execute_tool(name: str, arguments: dict[str, Any], db_path: Path) -> str:
         return _tool_get_recent_sessions(db_path, arguments["client_id"], arguments.get("days", 21))
     if name == "compute_recommendation":
         return _tool_compute_recommendation(db_path, arguments["client_id"])
+    if name == "get_recent_overrides":
+        return _tool_get_recent_overrides(db_path, arguments["client_id"], arguments.get("limit", 10))
     return f"(unknown tool: {name})"
 
 

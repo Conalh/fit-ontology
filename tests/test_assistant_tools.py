@@ -18,7 +18,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from fit_ontology.assistant import AssistantTurn, _execute_tool, ask, TOOLS
+from fit_ontology.assistant import TOOLS, AssistantTurn, _execute_tool, ask
 from fit_ontology.db import connect, ensure_client, insert_metrics, insert_sessions
 from fit_ontology.ontology import MetricKind
 
@@ -105,6 +105,32 @@ def test_compute_recommendation_returns_structured_json(seeded_db: Path):
     assert "rationale" in parsed
     assert "confidence" in parsed
     assert 0 <= parsed["confidence"] <= 1
+
+
+def test_get_recent_overrides_returns_csv(seeded_db: Path):
+    import uuid
+    from datetime import date, datetime
+
+    from fit_ontology.db import insert_override
+    from fit_ontology.ontology import OverrideAction, RecommendationOverride
+    con = connect(seeded_db, read_only=False)
+    ov = RecommendationOverride(
+        id=f"o_{uuid.uuid4().hex[:12]}",
+        client_id="c_test",
+        week_of=date(2026, 5, 18),
+        system_recommendation="Standard progression",
+        system_confidence=0.8,
+        trainer_action=OverrideAction.ACCEPT,
+        trainer_note="Looks perfect",
+        created_at=datetime.now(),
+    )
+    insert_override(con, ov)
+    con.close()
+
+    out = _execute_tool("get_recent_overrides", {"client_id": "c_test", "limit": 5}, seeded_db)
+    assert "c_test" in out
+    assert "accept" in out
+    assert "Looks perfect" in out
 
 
 def test_unknown_tool_name_returns_friendly_error(seeded_db: Path):
