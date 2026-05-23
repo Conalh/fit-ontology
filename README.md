@@ -118,13 +118,20 @@ Thresholds and references live in [`src/fit_ontology/reasoning.py`](src/fit_onto
 
 Write one function. Add a row to `MetricSource`. That's the whole change.
 
-```python
-def from_garmin_export(path, client_id):
-    # parse vendor format, yield rows in the long-format schema
-    return df  # columns: id, client_id, date, source, kind, value, unit
-```
+The Apple Health Export adapter is the worked example: 80 lines in
+[`src/fit_ontology/ingest.py`](src/fit_ontology/ingest.py)
+parse iOS's `export.zip` into the canonical long-format schema, and a
+single one-line fall-through in
+[`src/fit_ontology/reasoning.py`](src/fit_ontology/reasoning.py)
+lets the HRV detector use Apple's SDNN when Garmin's RMSSD isn't
+available. No schema migration, no dashboard changes, no test churn
+outside the adapter's own suite.
 
-No downstream code changes. No schema migration. That's the point of the ontology.
+```bash
+# On the iPhone: Health → profile → Export All Health Data → export.zip
+python scripts/import_apple_health.py path/to/export.zip --client-id c_me
+streamlit run app.py
+```
 
 ## Tests
 
@@ -136,7 +143,7 @@ Smoke tests cover the three reasoning branches against synthetic fixtures.
 
 ## Status
 
-v0.2. The reasoning rules are deliberately conservative and few — the value proposition is the modeling, not the cleverness of the heuristics. The roster, override log, calibration view, and weekly client-facing PDF export are live: every recommendation can be marked accepted / edited / rejected with a note, the calibration page rolls those decisions into a system-vs-trainer agreement matrix, and the PDF export produces a jargon-free one-pager the trainer can send to the client. Future work: bring more ACSM guidance into the rules table, add a second wearable adapter, and ship a CLI version of the dashboard for headless deployment.
+v0.3. The reasoning rules are deliberately conservative and few — the value proposition is the modeling, not the cleverness of the heuristics. Live in the dashboard: the roster triage view, the trainer override log, the system-vs-trainer calibration matrix, and a weekly client-facing PDF export. Live in ingestion: Garmin Connect sync, an Apple Health Export adapter (HRV SDNN, resting HR, body composition), and a Strava bulk-export reader. Future work: stage-level Apple sleep aggregation, more ACSM guidance in the rules table, and a CLI version of the dashboard for headless deployment.
 
 ## License
 

@@ -41,6 +41,10 @@ class MetricKind(str, Enum):
     HR_AVG = "hr_avg"
     HR_MAX = "hr_max"
     HRV_RMSSD = "hrv_rmssd"
+    # Apple Health reports HRV as SDNN, not RMSSD. The two are highly
+    # correlated in resting conditions but measure different things; we
+    # keep them as separate kinds so reasoning stays within-source.
+    HRV_SDNN = "hrv_sdnn"
     SLEEP_HOURS = "sleep_hours"
     SLEEP_QUALITY = "sleep_quality"
     SLEEP_SCORE = "sleep_score"
@@ -60,6 +64,7 @@ class MetricSource(str, Enum):
     STRAVA = "strava"
     WHOOP = "whoop"
     GARMIN = "garmin"
+    APPLE_HEALTH = "apple_health"
     MANUAL = "manual"
 
 
