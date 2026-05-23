@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FitOntology · Client detail</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  /* Light theme (default) */
+  [data-theme="light"] {
+    --surface:        #ffffff;
+    --surface-2:      #fafafa;
+    --surface-3:      #f4f4f5;
+    --text:           #0a0a0a;
+    --text-muted:     #71717a;
+    --border:         #e9e9ec;
+    --grid:           #ececef;
+    --shadow-sm:      rgba(10, 10, 10, 0.04);
+    --shadow-md:      rgba(10, 10, 10, 0.08);
+
+    /* --accent / --accent-bg are set per-client at the page wrapper */
+    --accent:         #4f46e5;
+    --accent-bg:      rgba(79, 70, 229, 0.08);
+
+    --ok:             #16a34a;
+    --ok-bg:          rgba(22, 163, 74, 0.10);
+    --warn:           #b45309;
+    --warn-bg:        rgba(245, 158, 11, 0.10);
+    --warn-border:    rgba(245, 158, 11, 0.30);
+    --danger:         #dc2626;
+    --danger-bg:      rgba(220, 38, 38, 0.10);
+  }
+
+  [data-theme="dark"] {
+    --surface:        #0a0a0b;
+    --surface-2:      #131316;
+    --surface-3:      #1c1c20;
+    --text:           #fafafa;
+    --text-muted:     #a1a1aa;
+    --border:         #27272a;
+    --grid:           #2d2d31;
+    --shadow-sm:      rgba(0, 0, 0, 0.3);
+    --shadow-md:      rgba(0, 0, 0, 0.5);
+
+    --accent:         #818cf8;
+    --accent-bg:      rgba(129, 140, 248, 0.12);
+
+    --ok:             #4ade80;
+    --ok-bg:          rgba(74, 222, 128, 0.12);
+    --warn:           #fbbf24;
+    --warn-bg:        rgba(251, 191, 36, 0.12);
+    --warn-border:    rgba(251, 191, 36, 0.30);
+    --danger:         #f87171;
+    --danger-bg:      rgba(248, 113, 113, 0.12);
+  }
+
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  #root { height: 100%; }
+
+  * { box-sizing: border-box; }
+
+  button { font-family: inherit; }
+
+  /* Reusable button classes */
+  .btn-ghost {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    padding: 5px 9px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 12.5px;
+    font-weight: 500;
+    transition: background 0.1s, color 0.1s;
+  }
+  .btn-ghost:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .btn-primary {
+    background: var(--text);
+    border: 1px solid var(--text);
+    color: var(--surface);
+    padding: 5px 11px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 12.5px;
+    font-weight: 500;
+  }
+  .btn-primary:hover { opacity: 0.85; }
+
+  .btn-chip {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 3px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .btn-chip-on {
+    background: var(--surface);
+    border: 1px solid var(--text);
+    color: var(--text);
+    padding: 3px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .btn-icon {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    width: 26px; height: 26px;
+    border-radius: 5px;
+    cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .btn-icon:hover {
+    color: var(--text);
+    background: var(--surface-2);
+  }
+
+  ::selection { background: var(--accent-bg); color: var(--text); }
+</style>
+
+<!-- React + Babel -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="data.jsx"></script>
+<script type="text/babel" src="charts.jsx"></script>
+<script type="text/babel" src="chrome.jsx"></script>
+<script type="text/babel" src="variant-safe.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+
+<script type="text/babel">
+  // Per-client accent lives on each client (defaults in ROSTER, overrides in
+  // localStorage). The Tweaks panel only controls page-wide concerns now.
+  const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+    "theme": "dark"
+  }/*EDITMODE-END*/;
+
+  function App() {
+    const [t, setT] = window.useTweaks(TWEAK_DEFAULTS);
+    return (
+      <>
+        <div data-theme={t.theme} style={{ height: '100%', background: 'var(--surface)', color: 'var(--text)' }}>
+          <VariantSafe />
+        </div>
+        <TweaksPanel title="Tweaks">
+          <TweakSection label="Theme" />
+          <TweakRadio
+            label="Mode"
+            value={t.theme}
+            onChange={v => setT('theme', v)}
+            options={[
+              { value: 'light', label: 'Light' },
+              { value: 'dark',  label: 'Dark' },
+            ]}
+          />
+          <TweakSection label="Per-client accent" />
+          <div style={{
+            fontSize: 11.5, color: 'var(--text-muted)',
+            padding: '0 14px 12px',
+            lineHeight: 1.5,
+          }}>
+            Each client has their own color. Click the swatch next to the client name in the header to change it — choice persists per client.
+          </div>
+        </TweaksPanel>
+      </>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+
+</body>
+</html>

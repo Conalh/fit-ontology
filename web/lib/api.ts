@@ -61,10 +61,59 @@ export interface Recommendation {
   generated_at: string;
 }
 
+export interface MetricRow {
+  id: string;
+  date: string;
+  source: string;
+  kind: string;
+  value: number;
+  unit: string;
+}
+
+export interface SessionRow {
+  id: string;
+  date: string;
+  type: string;
+  duration_min: number;
+  rpe: number;
+  notes: string | null;
+}
+
+export interface OverrideRow {
+  id: string;
+  client_id: string;
+  week_of: string;
+  system_recommendation: string;
+  system_confidence: number;
+  trainer_action: "accept" | "edit" | "reject";
+  applied_load_change_pct: number | null;
+  trainer_note: string | null;
+  created_at: string;
+}
+
 export const api = {
   health: () => request<{ ok: boolean }>("/api/health"),
   clients: () => request<ClientSummary[]>("/api/clients"),
+  client: (clientId: string) => request<Record<string, unknown>>(`/api/clients/${clientId}`),
   roster: () => request<RosterRow[]>("/api/roster"),
   recommendation: (clientId: string) =>
     request<Recommendation>(`/api/clients/${clientId}/recommendation`),
+  metrics: (clientId: string, days = 35) =>
+    request<MetricRow[]>(`/api/clients/${clientId}/metrics?days=${days}`),
+  sessions: (clientId: string, days = 35) =>
+    request<SessionRow[]>(`/api/clients/${clientId}/sessions?days=${days}`),
+  overrides: (clientId: string, limit = 20) =>
+    request<OverrideRow[]>(`/api/clients/${clientId}/overrides?limit=${limit}`),
+  saveOverride: (clientId: string, payload: {
+    week_of: string;
+    system_recommendation: string;
+    system_confidence: number;
+    trainer_action: "accept" | "edit" | "reject";
+    applied_load_change_pct?: number | null;
+    trainer_note?: string | null;
+  }) =>
+    request<OverrideRow>(`/api/clients/${clientId}/overrides`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 };
