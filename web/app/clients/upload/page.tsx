@@ -2,7 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { use, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useRef, useState } from "react";
 import type { CSSProperties, DragEvent } from "react";
 import { Chevron, Sidebar, TopBar } from "@/components/chrome";
 import { withAlpha } from "@/lib/accent";
@@ -12,19 +13,30 @@ import { useClientAccent } from "@/lib/use-client-accent";
 /**
  * Upload — drop a wearable export (Apple Health zip/xml, Strava CSV,
  * Whoop JSON) and the server detects the format and inserts the rows.
- * Matches the design's surface tone: a single dropzone card, status
- * line on completion, link back to the client detail.
+ *
+ * Reads ``?id=<client_id>`` from the URL so the Next.js static export
+ * doesn't need a per-client dynamic segment.
  */
-export default function ClientUploadPage({
-  params,
-}: {
-  params: Promise<{ clientId: string }>;
-}) {
-  const { clientId } = use(params);
-  const [accentHex] = useClientAccent(clientId);
+export default function ClientUploadPage() {
+  return (
+    <Suspense fallback={null}>
+      <UploadInner />
+    </Suspense>
+  );
+}
+
+function UploadInner() {
+  const searchParams = useSearchParams();
+  const clientId = searchParams.get("id") ?? "";
+  const missing = !clientId;
+  const [accentHex] = useClientAccent(clientId || "_unknown");
 
   const rosterQ = useQuery({ queryKey: ["roster"], queryFn: api.roster });
-  const clientQ = useQuery({ queryKey: ["client", clientId], queryFn: () => api.client(clientId) });
+  const clientQ = useQuery({
+    queryKey: ["client", clientId],
+    queryFn: () => api.client(clientId),
+    enabled: !missing,
+  });
   const client = clientQ.data as { name?: string } | undefined;
   const clientName = (client?.name as string | undefined) ?? clientId;
 
@@ -50,6 +62,20 @@ export default function ClientUploadPage({
     if (!file) return;
     upload.mutate(file);
   };
+
+  if (missing) {
+    return (
+      <main style={{ padding: "40px", color: "var(--text-muted)" }}>
+        <p>
+          Missing client id. Open a client from the{" "}
+          <Link href="/" style={{ color: "var(--accent)" }}>
+            roster
+          </Link>
+          .
+        </p>
+      </main>
+    );
+  }
 
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -81,7 +107,7 @@ export default function ClientUploadPage({
                 Roster
               </Link>
               <Chevron />
-              <Link href={`/clients/${clientId}`} style={{ color: "var(--text-muted)", textDecoration: "none" }}>
+              <Link href={`/clients?id=${clientId}`} style={{ color: "var(--text-muted)", textDecoration: "none" }}>
                 {clientName}
               </Link>
               <Chevron />
@@ -89,7 +115,7 @@ export default function ClientUploadPage({
             </>
           }
         >
-          <Link href={`/clients/${clientId}`} className="btn-ghost">
+          <Link href={`/clients?id=${clientId}`} className="btn-ghost">
             Back to detail
           </Link>
         </TopBar>
@@ -193,7 +219,7 @@ export default function ClientUploadPage({
               <div style={{ marginTop: 6, fontSize: 12, color: "var(--text-muted)" }}>
                 Trend charts refresh automatically.{" "}
                 <Link
-                  href={`/clients/${clientId}`}
+                  href={`/clients?id=${clientId}`}
                   style={{ color: "var(--accent)", textDecoration: "none" }}
                 >
                   Back to detail →

@@ -2,7 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { use, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { Donut, LoadBars, TrendChart } from "@/components/charts";
 import { Chevron, ClientHeader, Sidebar, TopBar, VerdictBadge } from "@/components/chrome";
@@ -14,29 +15,69 @@ import { useClientAccent } from "@/lib/use-client-accent";
 
 /**
  * Client detail — the surface Claude Design was designed against.
- * Sidebar + top bar + client header from chrome.tsx; the page body
- * is the recommendation card, trends grid, sessions table, decision
- * history, and an optional override drawer.
  *
- * The per-client accent flows through every component via the
- * --accent CSS custom property set on this page wrapper.
+ * Reads ``?id=<client_id>`` from the URL instead of using a dynamic
+ * route segment so Next.js's static export (``output: 'export'``)
+ * works without a per-client pre-render step.
  */
-export default function ClientDetailPage({
-  params,
-}: {
-  params: Promise<{ clientId: string }>;
-}) {
-  const { clientId } = use(params);
-  const [accentHex, setAccentHex] = useClientAccent(clientId);
+export default function ClientDetailPage() {
+  return (
+    <Suspense fallback={null}>
+      <ClientDetailInner />
+    </Suspense>
+  );
+}
+
+function ClientDetailInner() {
+  const searchParams = useSearchParams();
+  const clientId = searchParams.get("id") ?? "";
+  const missing = !clientId;
+  // Hooks must be called unconditionally — pass a stable placeholder
+  // when the id is missing; we render a redirect-style message below.
+  const [accentHex, setAccentHex] = useClientAccent(clientId || "_unknown");
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [coachMessage, setCoachMessage] = useState("");
 
-  const clientQ = useQuery({ queryKey: ["client", clientId], queryFn: () => api.client(clientId) });
+  const clientQ = useQuery({
+    queryKey: ["client", clientId],
+    queryFn: () => api.client(clientId),
+    enabled: !missing,
+  });
   const rosterQ = useQuery({ queryKey: ["roster"], queryFn: api.roster });
-  const recQ = useQuery({ queryKey: ["rec", clientId], queryFn: () => api.recommendation(clientId) });
-  const metricsQ = useQuery({ queryKey: ["metrics", clientId], queryFn: () => api.metrics(clientId, 35) });
-  const sessionsQ = useQuery({ queryKey: ["sessions", clientId], queryFn: () => api.sessions(clientId, 35) });
-  const overridesQ = useQuery({ queryKey: ["overrides", clientId], queryFn: () => api.overrides(clientId, 20) });
+  const recQ = useQuery({
+    queryKey: ["rec", clientId],
+    queryFn: () => api.recommendation(clientId),
+    enabled: !missing,
+  });
+  const metricsQ = useQuery({
+    queryKey: ["metrics", clientId],
+    queryFn: () => api.metrics(clientId, 35),
+    enabled: !missing,
+  });
+  const sessionsQ = useQuery({
+    queryKey: ["sessions", clientId],
+    queryFn: () => api.sessions(clientId, 35),
+    enabled: !missing,
+  });
+  const overridesQ = useQuery({
+    queryKey: ["overrides", clientId],
+    queryFn: () => api.overrides(clientId, 20),
+    enabled: !missing,
+  });
+
+  if (missing) {
+    return (
+      <main style={{ padding: "40px", color: "var(--text-muted)" }}>
+        <p>
+          Missing client id. Open a client from the{" "}
+          <Link href="/" style={{ color: "var(--accent)" }}>
+            roster
+          </Link>
+          .
+        </p>
+      </main>
+    );
+  }
 
   const accentVars = {
     "--accent": accentHex,
@@ -87,7 +128,7 @@ export default function ClientDetailPage({
             </>
           }
         >
-          <Link href={`/clients/${clientId}/upload`} className="btn-ghost">
+          <Link href={`/clients/upload?id=${clientId}`} className="btn-ghost">
             Upload
           </Link>
           <button className="btn-primary" onClick={() => setOverrideOpen((s) => !s)}>
