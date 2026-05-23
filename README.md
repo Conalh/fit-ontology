@@ -8,8 +8,7 @@ trainer intake (CSV)                 ├──► ontology (DuckDB) ──► re
 ACSM reference guidelines           ─┘
 ```
 
-Ships as a Streamlit dashboard for development and a packaged Windows
-executable (`FitOntology.exe`) for trainers who don't run Python.
+Ships as a Streamlit dashboard.
 
 ## Why this exists
 
@@ -68,16 +67,6 @@ Defaults to `claude-haiku-4-5-20251001` for speed and cost; the
 sidebar lets you swap to `claude-opus-4-7` for harder questions. The
 system prompt is cached via `cache_control: ephemeral`, so repeat
 questions in a session hit the prompt cache.
-
-### As a packaged desktop app
-
-```bash
-python build.py
-# dist/FitOntology/FitOntology.exe
-```
-
-PyInstaller wraps the launcher + Streamlit dashboard + Python runtime
-into a Windows executable for trainers without Python installed.
 
 ## The ontology
 

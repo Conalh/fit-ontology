@@ -32,8 +32,3 @@ Thumbs.db
 
 # Streamlit
 .streamlit/secrets.toml
-
-# PyInstaller build artifacts
-build/
-dist/
-*.spec
