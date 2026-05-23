@@ -59,6 +59,7 @@ from .ingest import (
     from_strava_export,
     from_whoop_json,
 )
+from .contraindications import match_contraindications
 from .ontology import OverrideAction, RecommendationOverride, Sex
 from .reasoning import generate_recommendation
 from .report import build_weekly_pdf
@@ -104,6 +105,13 @@ class SessionRow(BaseModel):
     notes: str | None = None
 
 
+class ContraindicationItem(BaseModel):
+    kind: str
+    title: str
+    advice: str
+    source_phrase: str
+
+
 class RecommendationResponse(BaseModel):
     id: str
     client_id: str
@@ -113,6 +121,10 @@ class RecommendationResponse(BaseModel):
     source_metric_ids: list[str]
     confidence: float
     generated_at: datetime
+    # Static per-client constraints derived from the trainer's intake.
+    # Independent of the weekly verdict — a deload still respects
+    # "cap plyometrics" on a knee-history client.
+    contraindications: list[ContraindicationItem] = []
 
 
 class OverrideResponse(BaseModel):
@@ -343,11 +355,26 @@ def get_recommendation(client_id: str, con=Depends(_read_only_conn)) -> Recommen
     metrics = metrics_for_client(con, client_id, days=35)
     sessions = sessions_for_client(con, client_id, days=35)
     rec = generate_recommendation(client_id, metrics, sessions)
+
+    # Contraindications come from the trainer's free-text intake — pull
+    # it here rather than threading another arg through the reasoning
+    # module. The recovery-verdict and the structural-constraint layers
+    # stay decoupled.
+    injury_row = con.execute(
+        "SELECT injury_history FROM clients WHERE id = ?", [client_id]
+    ).fetchone()
+    injury = injury_row[0] if injury_row else None
+    contras = [
+        ContraindicationItem(kind=c.kind, title=c.title, advice=c.advice, source_phrase=c.source_phrase)
+        for c in match_contraindications(injury)
+    ]
+
     return RecommendationResponse(
         id=rec.id, client_id=rec.client_id, week_of=rec.week_of,
         recommendation=rec.recommendation, rationale=rec.rationale,
         source_metric_ids=rec.source_metric_ids, confidence=rec.confidence,
         generated_at=rec.generated_at,
+        contraindications=contras,
     )
 
 
