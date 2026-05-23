@@ -52,9 +52,13 @@ with st.sidebar:
 
 # ─── Conversation state ────────────────────────────────────────────────
 
-# `ask_messages` drives the visible chat panel.
-# `ask_history` is the Anthropic-format list of {role, content} dicts that
-#  we pass forward to keep multi-turn context. Both are kept in sync.
+# `ask_messages` drives the visible chat panel (Streamlit-shaped entries).
+# `ask_history` is the full Anthropic-format message stream that fed the
+#  most recent assistant turn — text *and* tool_use *and* tool_result
+#  blocks. We persist what ask() returns verbatim and pass it back next
+#  call. Replacing simplified strings with the real message stream is
+#  what makes multi-turn chat actually multi-turn: turn 2 sees the
+#  numeric data that backed turn 1's answer instead of an opaque string.
 if "ask_messages" not in st.session_state:
     st.session_state.ask_messages = []
 if "ask_history" not in st.session_state:
@@ -104,14 +108,9 @@ if prompt:
                     args_str = ", ".join(f"{k}={v!r}" for k, v in trace.arguments.items()) or "—"
                     st.markdown(f"**{trace.name}**(`{args_str}`) → {trace.result_summary}")
 
-    # The assistant module returned both the answer and the full history
-    # we passed back into it; we re-derive the full multi-turn state for
-    # the next call. Cheapest way: re-build by appending the user prompt
-    # and a synthetic assistant message containing just the final text.
-    # (Tool-use turns are already in the message stream that ask() saw;
-    # the next call will replay them implicitly via session history.)
-    st.session_state.ask_history.append({"role": "user", "content": prompt})
-    st.session_state.ask_history.append({"role": "assistant", "content": turn.answer})
+    # Replace history with the full message stream the assistant
+    # actually used — text, tool_use, tool_result blocks all preserved.
+    st.session_state.ask_history = turn.messages
 
     st.session_state.ask_messages.append({
         "role": "assistant",

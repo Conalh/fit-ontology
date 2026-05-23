@@ -137,6 +137,12 @@ class AssistantTurn:
     answer: str
     traces: list[ToolTrace] = field(default_factory=list)
     turns_used: int = 0
+    # Full Anthropic-format message stream that produced ``answer``.
+    # Pass this back as ``history=`` on the next call so multi-turn chat
+    # retains the assistant's tool_use blocks and the tool_result blocks
+    # that fed them — without these, the second turn has no idea what
+    # numbers the first turn was reasoning over.
+    messages: list[dict] = field(default_factory=list)
 
 
 # --- Tool implementations ------------------------------------------------
@@ -285,7 +291,12 @@ def ask(
 
         if not tool_use_blocks:
             answer_text = "".join(b.text for b in response.content if b.type == "text").strip()
-            return AssistantTurn(answer=answer_text, traces=traces, turns_used=turns)
+            return AssistantTurn(
+                answer=answer_text,
+                traces=traces,
+                turns_used=turns,
+                messages=messages,
+            )
 
         # Execute every tool the model requested, then send all results
         # back as a single user-role tool_result message.
@@ -309,4 +320,5 @@ def ask(
         answer="(no answer — turn limit reached)",
         traces=traces,
         turns_used=turns,
+        messages=messages,
     )
