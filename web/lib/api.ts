@@ -91,6 +91,16 @@ export interface OverrideRow {
   created_at: string;
 }
 
+export interface CalibrationResponse {
+  total: number;
+  accept_rate: number;
+  edits: number;
+  rejects: number;
+  /** matrix[system_type][action] -> count */
+  matrix: Record<string, Record<string, number>>;
+  recent: OverrideRow[];
+}
+
 export const api = {
   health: () => request<{ ok: boolean }>("/api/health"),
   clients: () => request<ClientSummary[]>("/api/clients"),
@@ -116,4 +126,33 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  calibration: () => request<CalibrationResponse>("/api/calibration"),
+  upload: async (clientId: string, file: File): Promise<{ inserted: number; kinds: string[] }> => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(
+      `${process.env.NEXT_PUBLIC_API_URL ?? ""}/api/clients/${clientId}/upload`,
+      { method: "POST", body: form },
+    );
+    if (!res.ok) {
+      const detail = await res.text().catch(() => res.statusText);
+      throw new ApiError(res.status, detail || `HTTP ${res.status}`);
+    }
+    return res.json();
+  },
+  downloadPdf: async (clientId: string, coachMessage: string | null): Promise<Blob> => {
+    const res = await fetch(
+      `${process.env.NEXT_PUBLIC_API_URL ?? ""}/api/clients/${clientId}/pdf`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ coach_message: coachMessage ?? null }),
+      },
+    );
+    if (!res.ok) {
+      const detail = await res.text().catch(() => res.statusText);
+      throw new ApiError(res.status, detail || `HTTP ${res.status}`);
+    }
+    return res.blob();
+  },
 };

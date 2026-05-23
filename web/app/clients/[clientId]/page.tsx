@@ -29,6 +29,7 @@ export default function ClientDetailPage({
   const { clientId } = use(params);
   const [accentHex, setAccentHex] = useClientAccent(clientId);
   const [overrideOpen, setOverrideOpen] = useState(false);
+  const [coachMessage, setCoachMessage] = useState("");
 
   const clientQ = useQuery({ queryKey: ["client", clientId], queryFn: () => api.client(clientId) });
   const rosterQ = useQuery({ queryKey: ["roster"], queryFn: api.roster });
@@ -89,25 +90,6 @@ export default function ClientDetailPage({
           <Link href={`/clients/${clientId}/upload`} className="btn-ghost">
             Upload
           </Link>
-          <button
-            className="btn-ghost"
-            onClick={async () => {
-              // Trigger a PDF download.
-              const res = await fetch(
-                `${process.env.NEXT_PUBLIC_API_URL ?? ""}/api/clients/${clientId}/pdf`,
-                { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
-              );
-              const blob = await res.blob();
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = `${clientName.replace(/\s+/g, "_")}_week.pdf`;
-              a.click();
-              URL.revokeObjectURL(url);
-            }}
-          >
-            PDF
-          </button>
           <button className="btn-primary" onClick={() => setOverrideOpen((s) => !s)}>
             Override
           </button>
@@ -126,6 +108,13 @@ export default function ClientDetailPage({
             rec={recQ.data}
             isLoading={recQ.isLoading}
             overrides={overridesQ.data ?? []}
+          />
+
+          <SendToClient
+            clientId={clientId}
+            clientName={clientName}
+            coachMessage={coachMessage}
+            onCoachMessageChange={setCoachMessage}
           />
 
           <TrendsGrid
@@ -382,6 +371,101 @@ function verdictSubtitle(verdict: "DELOAD" | "CONSERVATIVE" | "STANDARD") {
   if (verdict === "DELOAD") return "Pull back to recover";
   if (verdict === "CONSERVATIVE") return "Hold intensity, reduce volume";
   return "Proceed with planned progression";
+}
+
+// ─── Send to client (PDF export + coach's note) ──────────────────────
+
+function SendToClient({
+  clientId,
+  clientName,
+  coachMessage,
+  onCoachMessageChange,
+}: {
+  clientId: string;
+  clientName: string;
+  coachMessage: string;
+  onCoachMessageChange: (next: string) => void;
+}) {
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const download = async () => {
+    setDownloading(true);
+    setError(null);
+    try {
+      const blob = await api.downloadPdf(clientId, coachMessage.trim() || null);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${clientName.replace(/\s+/g, "_")}_week.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <section
+      style={{
+        border: "1px solid var(--border)",
+        borderRadius: 10,
+        background: "var(--surface)",
+        padding: "16px 20px",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 18 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h3
+            style={{
+              margin: 0,
+              fontSize: 13.5,
+              fontWeight: 600,
+              color: "var(--text)",
+              letterSpacing: "-0.005em",
+            }}
+          >
+            Send to client
+          </h3>
+          <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>
+            One-page PDF in client-friendly language. Optional personal note from you.
+          </p>
+        </div>
+        <button
+          className="btn-primary"
+          onClick={download}
+          disabled={downloading}
+          style={{ flexShrink: 0 }}
+        >
+          {downloading ? "Generating…" : "Download PDF"}
+        </button>
+      </div>
+      <textarea
+        value={coachMessage}
+        onChange={(e) => onCoachMessageChange(e.target.value)}
+        placeholder="e.g. 'Tough call this week — your HRV and sleep have been off. Bed by 10pm and we reassess Sunday.'"
+        style={{
+          marginTop: 12,
+          width: "100%",
+          minHeight: 70,
+          padding: "8px 10px",
+          background: "var(--surface-2)",
+          border: "1px solid var(--border)",
+          borderRadius: 6,
+          fontSize: 12.5,
+          fontFamily: "inherit",
+          color: "var(--text)",
+          resize: "vertical",
+          boxSizing: "border-box",
+        }}
+      />
+      {error && (
+        <p style={{ marginTop: 8, fontSize: 12, color: "var(--danger)" }}>{error}</p>
+      )}
+    </section>
+  );
 }
 
 // ─── Trends grid ─────────────────────────────────────────────────────
