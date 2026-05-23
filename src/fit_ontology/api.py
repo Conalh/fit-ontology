@@ -246,7 +246,7 @@ class AskResponse(BaseModel):
 
 # ─── App + CORS ──────────────────────────────────────────────────────
 
-app = FastAPI(title="FitOntology API", version="0.5.0")
+app = FastAPI(title="FitOntology API", version="0.5.1")
 # NOTE: bumped in lockstep with pyproject.toml; the version string also
 # appears in the OpenAPI doc so SDK consumers can pin against it.
 

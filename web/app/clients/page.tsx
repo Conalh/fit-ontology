@@ -2,8 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { Suspense, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { Donut, LoadBars, TrendChart } from "@/components/charts";
 import { Chevron, ClientHeader, Sidebar, TopBar, VerdictBadge } from "@/components/chrome";
@@ -13,25 +12,27 @@ import { api } from "@/lib/api";
 import { withAlpha } from "@/lib/accent";
 import { acwrSeries, baseline, dailySeries, loadSeries, recentMean } from "@/lib/series";
 import { useClientAccent } from "@/lib/use-client-accent";
+import { useQueryParam } from "@/lib/use-query-param";
 
 /**
  * Client detail — the surface Claude Design was designed against.
  *
- * Reads ``?id=<client_id>`` from the URL instead of using a dynamic
- * route segment so Next.js's static export (``output: 'export'``)
- * works without a per-client pre-render step.
+ * Reads ``?id=<client_id>`` from the URL via a useEffect-based hook
+ * (see lib/use-query-param.ts) so we sidestep the Next 16 +
+ * Turbopack + useSearchParams + Suspense hydration stall on direct
+ * URL loads. Client-side nav from the roster already worked; this
+ * fix makes bookmarked URLs and page reloads work too.
  */
 export default function ClientDetailPage() {
-  return (
-    <Suspense fallback={null}>
-      <ClientDetailInner />
-    </Suspense>
-  );
+  const clientIdParam = useQueryParam("id");
+  // Render nothing until the URL is parsed on the client. Without this
+  // initial render flicker the page would briefly show "missing client
+  // id" before useEffect fires.
+  if (clientIdParam === null) return null;
+  return <ClientDetailInner clientId={clientIdParam} />;
 }
 
-function ClientDetailInner() {
-  const searchParams = useSearchParams();
-  const clientId = searchParams.get("id") ?? "";
+function ClientDetailInner({ clientId }: { clientId: string }) {
   const missing = !clientId;
   // Hooks must be called unconditionally — pass a stable placeholder
   // when the id is missing; we render a redirect-style message below.

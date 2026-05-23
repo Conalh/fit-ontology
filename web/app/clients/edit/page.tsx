@@ -2,27 +2,24 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 import type { CSSProperties } from "react";
 import { ClientForm } from "@/components/client-form";
 import { Chevron, Sidebar, TopBar } from "@/components/chrome";
 import { withAlpha } from "@/lib/accent";
 import { api, type ClientFormPayload } from "@/lib/api";
+import { useQueryParam } from "@/lib/use-query-param";
 
 export default function EditClientPage() {
-  return (
-    <Suspense fallback={null}>
-      <EditInner />
-    </Suspense>
-  );
+  const clientIdParam = useQueryParam("id");
+  if (clientIdParam === null) return null;
+  return <EditInner clientId={clientIdParam} />;
 }
 
-function EditInner() {
+function EditInner({ clientId }: { clientId: string }) {
   const router = useRouter();
   const qc = useQueryClient();
-  const searchParams = useSearchParams();
-  const clientId = searchParams.get("id") ?? "";
 
   const rosterQ = useQuery({ queryKey: ["roster"], queryFn: api.roster });
   const clientQ = useQuery({
