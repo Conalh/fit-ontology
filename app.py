@@ -87,7 +87,16 @@ with col_title:
     st.caption("Client intelligence — wearables, intake, and ACSM guidelines unified.")
 with col_picker:
     options = [f"{r['name']} — {r['goal']}" for _, r in clients.iterrows()]
-    selected = st.selectbox("Client", options, label_visibility="collapsed")
+    # Honor `?client=<id>` from the Roster page so clicking through opens
+    # the right client. Falls back to first client when the param is missing
+    # or points to an unknown id.
+    preselect_id = st.query_params.get("client")
+    default_idx = 0
+    if preselect_id:
+        matches = clients.index[clients["id"] == preselect_id].tolist()
+        if matches:
+            default_idx = int(matches[0])
+    selected = st.selectbox("Client", options, index=default_idx, label_visibility="collapsed")
     client_id = clients.iloc[options.index(selected)]["id"]
 
 
