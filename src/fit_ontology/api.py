@@ -28,10 +28,11 @@ served from this same FastAPI process) CORS isn't engaged at all.
 from __future__ import annotations
 
 import contextlib
+import json
 import tempfile
 import uuid
 from collections.abc import Iterator
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import duckdb
@@ -51,9 +52,12 @@ from .db import (
     delete_threshold,
     insert_metrics,
     insert_override,
+    insert_recommendation,
     list_clients,
     metrics_for_client,
     overrides_for_client,
+    recommendation_for_week,
+    recommendations_for_client,
     sessions_for_client,
     thresholds_for_client,
     upsert_threshold,
@@ -368,25 +372,60 @@ def get_sessions(client_id: str, days: int = 35, con=Depends(_read_only_conn)) -
 
 
 @app.get("/api/clients/{client_id}/recommendation", response_model=RecommendationResponse)
-def get_recommendation(client_id: str, con=Depends(_read_only_conn)) -> RecommendationResponse:
-    metrics = metrics_for_client(con, client_id, days=35)
-    sessions = sessions_for_client(con, client_id, days=35)
-    overrides = thresholds_for_client(con, client_id)
-    rec = generate_recommendation(client_id, metrics, sessions, thresholds=overrides)
+def get_recommendation(client_id: str) -> RecommendationResponse:
+    """Return the recommendation for the current week, persisting it on
+    first compute so subsequent lookups are stable.
 
-    # Contraindications come from the trainer's free-text intake — pull
-    # it here rather than threading another arg through the reasoning
-    # module. The recovery-verdict and the structural-constraint layers
-    # stay decoupled.
-    injury_row = con.execute(
-        "SELECT injury_history FROM clients WHERE id = ?", [client_id]
-    ).fetchone()
-    injury = injury_row[0] if injury_row else None
+    Why lazy-persist rather than overwrite-on-every-render: the trainer
+    needs the rec they saw on Monday to still read the same way on
+    Wednesday when they override it. New wearable data arriving
+    mid-week shouldn't silently change what the system "said" this
+    week — the override log already captures the moment-of-decision
+    snapshot, and the persisted recommendation is the canonical
+    "what the system said this week" record.
+
+    Connection lifecycle: we manage our own here rather than taking
+    the read-only dependency, because if the rec for this week hasn't
+    been persisted yet we need to open a write connection. DuckDB
+    refuses to open write while any read handle is alive in the same
+    process, so we read first (closing the connection), then write.
+    """
+    today = date.today()
+    week_of = today - timedelta(days=today.weekday())  # Monday
+
+    needs_persist = False
+    rec = None
+    injury: str | None = None
+
+    with connect(DEFAULT_DB_PATH, read_only=True) as rcon:
+        stored = recommendation_for_week(rcon, client_id, week_of)
+        injury_row = rcon.execute(
+            "SELECT injury_history FROM clients WHERE id = ?", [client_id]
+        ).fetchone()
+        injury = injury_row[0] if injury_row else None
+
+        if stored is not None:
+            rec = stored
+        else:
+            metrics = metrics_for_client(rcon, client_id, days=35)
+            sessions = sessions_for_client(rcon, client_id, days=35)
+            overrides = thresholds_for_client(rcon, client_id)
+            rec = generate_recommendation(client_id, metrics, sessions, thresholds=overrides)
+            needs_persist = True
+
+    if needs_persist:
+        try:
+            with connect(DEFAULT_DB_PATH, read_only=False) as wcon:
+                insert_recommendation(wcon, rec)
+        except duckdb.IOException as e:
+            raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
+
     contras = [
         ContraindicationItem(kind=c.kind, title=c.title, advice=c.advice, source_phrase=c.source_phrase)
         for c in match_contraindications(injury)
     ]
 
+    assert rec is not None  # for type-checkers; the branches above both set it
     return RecommendationResponse(
         id=rec.id, client_id=rec.client_id, week_of=rec.week_of,
         recommendation=rec.recommendation, rationale=rec.rationale,
@@ -394,6 +433,41 @@ def get_recommendation(client_id: str, con=Depends(_read_only_conn)) -> Recommen
         generated_at=rec.generated_at,
         contraindications=contras,
     )
+
+
+@app.get(
+    "/api/clients/{client_id}/recommendations",
+    response_model=list[RecommendationResponse],
+)
+def get_recommendation_history(
+    client_id: str,
+    limit: int = 12,
+    con=Depends(_read_only_conn),
+) -> list[RecommendationResponse]:
+    """Past weekly recommendations, newest first. Contraindications
+    are not historical — they're derived from the current intake — so
+    each row's ``contraindications`` field is the empty list. Callers
+    that need contraindications should hit /recommendation for the
+    current week."""
+    df = recommendations_for_client(con, client_id, limit=limit)
+    if df.empty:
+        return []
+    out: list[RecommendationResponse] = []
+    for _, row in df.iterrows():
+        out.append(
+            RecommendationResponse(
+                id=row["id"],
+                client_id=row["client_id"],
+                week_of=row["week_of"],
+                recommendation=row["recommendation"],
+                rationale=row["rationale"],
+                source_metric_ids=json.loads(row["source_metric_ids"]) if row.get("source_metric_ids") else [],
+                confidence=float(row["confidence"]),
+                generated_at=row["generated_at"],
+                contraindications=[],
+            )
+        )
+    return out
 
 
 @app.get("/api/clients/{client_id}/overrides", response_model=list[OverrideResponse])

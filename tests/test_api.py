@@ -107,6 +107,33 @@ def test_get_recommendation_returns_structured_payload(app_with_db):
     assert "contraindications" in data
 
 
+def test_recommendation_is_lazy_persisted_and_stable(app_with_db):
+    """First GET this week computes + persists. Second GET returns the
+    SAME id — proves we read the stored row instead of recomputing
+    (which would generate a fresh uuid)."""
+    first = app_with_db.get("/api/clients/c_test/recommendation").json()
+    second = app_with_db.get("/api/clients/c_test/recommendation").json()
+    assert first["id"] == second["id"], "second GET should return the stored row"
+    assert first["week_of"] == second["week_of"]
+
+
+def test_recommendation_history_endpoint(app_with_db):
+    """Calling the recommendation endpoint persists; the history
+    endpoint then surfaces it."""
+    # Trigger one persist by hitting /recommendation first.
+    seeded = app_with_db.get("/api/clients/c_test/recommendation").json()
+
+    r = app_with_db.get("/api/clients/c_test/recommendations")
+    assert r.status_code == 200
+    rows = r.json()
+    assert len(rows) >= 1
+    assert any(row["id"] == seeded["id"] for row in rows)
+    # History rows always omit contraindications (they're derived from
+    # current intake, not historical).
+    for row in rows:
+        assert row["contraindications"] == []
+
+
 def test_recommendation_surfaces_contraindications_from_injury(app_with_db):
     """Editing the client's injury_history should make matching
     contraindications appear in the next recommendation response."""

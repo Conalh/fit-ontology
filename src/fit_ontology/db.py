@@ -125,6 +125,53 @@ def latest_recommendation(con, client_id: str) -> pd.DataFrame:
     ).df()
 
 
+def recommendation_for_week(con, client_id: str, week_of):
+    """Return the stored Recommendation for this (client, week) or None.
+    Hydrates the JSON source_metric_ids back into a list, so callers
+    get the same shape ``generate_recommendation`` produces in memory."""
+    from .ontology import Recommendation
+
+    row = con.execute(
+        """
+        SELECT id, client_id, generated_at, week_of, recommendation, rationale,
+               source_metric_ids, confidence
+        FROM recommendations
+        WHERE client_id = ? AND week_of = ?
+        LIMIT 1
+        """,
+        [client_id, week_of],
+    ).fetchone()
+    if not row:
+        return None
+    rid, cid, gen_at, woek, rec_text, rat, source_json, conf = row
+    return Recommendation(
+        id=rid,
+        client_id=cid,
+        generated_at=gen_at,
+        week_of=woek,
+        recommendation=rec_text,
+        rationale=rat,
+        source_metric_ids=json.loads(source_json) if source_json else [],
+        confidence=float(conf),
+    )
+
+
+def recommendations_for_client(con, client_id: str, limit: int = 12) -> pd.DataFrame:
+    """All stored weekly recommendations for a client, newest first.
+    Drives the history view on the detail page."""
+    return con.execute(
+        """
+        SELECT id, client_id, week_of, recommendation, rationale,
+               source_metric_ids, confidence, generated_at
+        FROM recommendations
+        WHERE client_id = ?
+        ORDER BY week_of DESC
+        LIMIT ?
+        """,
+        [client_id, limit],
+    ).df()
+
+
 # ─── Trainer overrides ────────────────────────────────────────────────
 #
 # A read-only DuckDB connection cannot create tables, so a DB that
