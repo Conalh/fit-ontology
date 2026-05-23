@@ -128,7 +128,7 @@ function RosterTable({ rows }: { rows: RosterRow[] }) {
               <tr key={row.client_id} style={{ borderTop: "1px solid var(--border)" }}>
                 <td style={{ padding: "11px 16px" }}>
                   <Link
-                    href={`/clients/${row.client_id}`}
+                    href={`/clients?id=${row.client_id}`}
                     style={{
                       display: "flex",
                       alignItems: "center",

@@ -107,7 +107,7 @@ export function Sidebar({
 }) {
   const navItems: NavItem[] = [
     { icon: "grid", label: "Roster", href: "/", count: rosterTotal ?? roster.length, active: activeNav === "roster" },
-    { icon: "user", label: "Client", href: activeClientId ? `/clients/${activeClientId}` : "/", active: activeNav === "client" },
+    { icon: "user", label: "Client", href: activeClientId ? `/clients?id=${activeClientId}` : "/", active: activeNav === "client" },
     { icon: "check", label: "Calibration", href: "/calibration", active: activeNav === "calibration" },
     { icon: "chat", label: "Ask FitOntology", href: "/ask", active: activeNav === "ask" },
   ];
@@ -229,7 +229,7 @@ export function Sidebar({
             return (
               <Link
                 key={c.client_id}
-                href={`/clients/${c.client_id}`}
+                href={`/clients?id=${c.client_id}`}
                 style={{
                   display: "flex",
                   alignItems: "center",
