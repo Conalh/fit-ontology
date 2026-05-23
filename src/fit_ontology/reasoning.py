@@ -82,6 +82,16 @@ TR_MILD = 60                        # below this is "moderate" zone — recovery
 TR_MODERATE = 45                    # mid-Low Garmin band
 TR_SEVERE = 30                      # well into Low band — multi-day under-recovery
 
+# Trend slope thresholds. We compute least-squares slope over the last 7
+# days and express it in baseline-SD units per day so the same boundaries
+# apply across HRV (ms), RHR (bpm), and sleep (hours). At 0.1 SD/day a
+# signal that started "normal" today would be -0.7 SD below baseline a
+# week from now — already mild-territory by Plews & Laursen — so it's
+# worth flagging before the level signal trips.
+SLOPE_MILD_SD_PER_DAY = 0.05
+SLOPE_MODERATE_SD_PER_DAY = 0.10
+SLOPE_SEVERE_SD_PER_DAY = 0.20
+
 # Progression magnitudes from ACSM 11e Ch. 6 (cardiorespiratory) and
 # Ch. 7 (resistance). Conservative end picked when any signal is present.
 ACSM_STANDARD_RANGE = (0.05, 0.10)
@@ -127,6 +137,9 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "tr_mild":              TR_MILD,
     "tr_moderate":          TR_MODERATE,
     "tr_severe":            TR_SEVERE,
+    "slope_mild_sd_per_day":     SLOPE_MILD_SD_PER_DAY,
+    "slope_moderate_sd_per_day": SLOPE_MODERATE_SD_PER_DAY,
+    "slope_severe_sd_per_day":   SLOPE_SEVERE_SD_PER_DAY,
 }
 
 
@@ -190,6 +203,44 @@ def _recent_mean(metrics: pd.DataFrame, kind: str, today: date, days: int) -> tu
     if window.empty:
         return None, []
     return float(window["value"].mean()), window["id"].tolist()
+
+
+def _slope_per_day(
+    metrics: pd.DataFrame, kind: str, today: date, days: int = 7,
+) -> tuple[float | None, list[str]]:
+    """Least-squares slope of the metric (value-per-day) over the trailing
+    ``days`` window. Returns ``(None, [])`` if there are fewer than 4
+    daily points — three points is not enough to distinguish trend from
+    noise. Otherwise returns ``(slope, contributing_ids)``.
+
+    Pure pandas/numpy math, no scipy. Days-since-window-start is the
+    x-axis so the slope is in metric-units per day.
+    """
+    window = _window(metrics, kind, today - timedelta(days=days), today)
+    if len(window) < 4:
+        return None, []
+    df = window.sort_values("date")
+    dates = pd.to_datetime(df["date"])
+    days_x = (dates - dates.iloc[0]).dt.days.astype(float).to_numpy()
+    values = df["value"].astype(float).to_numpy()
+    mean_x = float(days_x.mean())
+    mean_y = float(values.mean())
+    num = ((days_x - mean_x) * (values - mean_y)).sum()
+    den = ((days_x - mean_x) ** 2).sum()
+    if den == 0:
+        return None, []
+    return float(num / den), df["id"].tolist()
+
+
+def _trend_severity(sd_per_day: float, th: Mapping[str, float]) -> Severity | None:
+    """Map an absolute SD/day slope magnitude to a severity bucket."""
+    if sd_per_day >= th["slope_severe_sd_per_day"]:
+        return "severe"
+    if sd_per_day >= th["slope_moderate_sd_per_day"]:
+        return "moderate"
+    if sd_per_day >= th["slope_mild_sd_per_day"]:
+        return "mild"
+    return None
 
 
 # --- Per-signal detectors -------------------------------------------------
@@ -477,6 +528,118 @@ def detect_rpe_signal(
     )
 
 
+def _hrv_kind(metrics: pd.DataFrame) -> str:
+    """Pick HRV metric kind to reason over — RMSSD if present, else SDNN.
+    Centralized so the level and trend detectors agree."""
+    if metrics.empty:
+        return MetricKind.HRV_RMSSD.value
+    if MetricKind.HRV_RMSSD.value in metrics["kind"].values:
+        return MetricKind.HRV_RMSSD.value
+    if MetricKind.HRV_SDNN.value in metrics["kind"].values:
+        return MetricKind.HRV_SDNN.value
+    return MetricKind.HRV_RMSSD.value
+
+
+def detect_hrv_trend_signal(
+    metrics: pd.DataFrame,
+    today: date,
+    thresholds: Mapping[str, float] | None = None,
+) -> Signal | None:
+    """7-day slope of HRV. A still-falling HRV at a given level is more
+    concerning than the same level holding steady — Plews & Laursen
+    (2017) recommend reacting to the trajectory, not the instantaneous
+    value. We measure slope in baseline-SD units per day so the same
+    severity bands apply across athletes with different absolute HRV.
+    """
+    th = _merge_thresholds(thresholds)
+    kind = _hrv_kind(metrics)
+    slope, ids = _slope_per_day(metrics, kind, today, HRV_ACUTE_DAYS)
+    _, baseline_sd, _ = _baseline(metrics, kind, today, HRV_BASELINE_DAYS)
+    if slope is None or not baseline_sd:
+        return None
+    # Only flag a *downward* trend — rising HRV is a good thing.
+    if slope >= 0:
+        return None
+    sd_per_day = abs(slope) / baseline_sd
+    severity = _trend_severity(sd_per_day, th)
+    if severity is None:
+        return None
+    return Signal(
+        kind="hrv_trend_down",
+        severity=severity,
+        summary=(
+            f"HRV trending down: {slope:+.1f} ms/day across the last {HRV_ACUTE_DAYS} days "
+            f"({sd_per_day:.2f} SD/day; {CITATIONS['hrv']})."
+        ),
+        source_metric_ids=ids,
+    )
+
+
+def detect_rhr_trend_signal(
+    metrics: pd.DataFrame,
+    today: date,
+    thresholds: Mapping[str, float] | None = None,
+) -> Signal | None:
+    """7-day slope of resting HR. A rising RHR — even before it crosses
+    the absolute +5 bpm Buchheit threshold — signals accumulating
+    autonomic stress, especially when paired with falling HRV.
+    """
+    th = _merge_thresholds(thresholds)
+    kind = MetricKind.RESTING_HR.value
+    slope, ids = _slope_per_day(metrics, kind, today, HRV_ACUTE_DAYS)
+    _, baseline_sd, _ = _baseline(metrics, kind, today, RHR_BASELINE_DAYS)
+    if slope is None or not baseline_sd:
+        return None
+    # Rising RHR is the concerning direction.
+    if slope <= 0:
+        return None
+    sd_per_day = slope / baseline_sd
+    severity = _trend_severity(sd_per_day, th)
+    if severity is None:
+        return None
+    return Signal(
+        kind="rhr_trend_up",
+        severity=severity,
+        summary=(
+            f"Resting HR trending up: {slope:+.1f} bpm/day across the last {HRV_ACUTE_DAYS} days "
+            f"({sd_per_day:.2f} SD/day; {CITATIONS['rhr']})."
+        ),
+        source_metric_ids=ids,
+    )
+
+
+def detect_sleep_trend_signal(
+    metrics: pd.DataFrame,
+    today: date,
+    thresholds: Mapping[str, float] | None = None,
+) -> Signal | None:
+    """7-day slope of nightly sleep hours. Catches the case where mean
+    sleep is technically OK but eroding day-by-day — a useful early
+    warning before the mean crosses the 7 h ACSM floor.
+    """
+    th = _merge_thresholds(thresholds)
+    kind = MetricKind.SLEEP_HOURS.value
+    slope, ids = _slope_per_day(metrics, kind, today, HRV_ACUTE_DAYS)
+    _, baseline_sd, _ = _baseline(metrics, kind, today, HRV_BASELINE_DAYS)
+    if slope is None or not baseline_sd:
+        return None
+    if slope >= 0:
+        return None
+    sd_per_day = abs(slope) / baseline_sd
+    severity = _trend_severity(sd_per_day, th)
+    if severity is None:
+        return None
+    return Signal(
+        kind="sleep_trend_down",
+        severity=severity,
+        summary=(
+            f"Sleep trending down: {slope:+.2f} h/day across the last {HRV_ACUTE_DAYS} days "
+            f"({sd_per_day:.2f} SD/day; {CITATIONS['sleep']})."
+        ),
+        source_metric_ids=ids,
+    )
+
+
 def detect_training_readiness_signal(
     metrics: pd.DataFrame,
     today: date,
@@ -539,8 +702,11 @@ def generate_recommendation(
 
     detectors_metric = [
         detect_hrv_signal,
+        detect_hrv_trend_signal,
         detect_rhr_signal,
+        detect_rhr_trend_signal,
         detect_sleep_signal,
+        detect_sleep_trend_signal,
         detect_training_readiness_signal,
     ]
     detectors_session = [detect_acwr_signal, detect_rpe_signal]

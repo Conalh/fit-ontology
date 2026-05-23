@@ -17,8 +17,11 @@ from fit_ontology.ontology import MetricKind
 from fit_ontology.reasoning import (
     CITATIONS,
     detect_acwr_signal,
+    detect_hrv_trend_signal,
+    detect_rhr_trend_signal,
     detect_rpe_signal,
     detect_sleep_signal,
+    detect_sleep_trend_signal,
     detect_training_readiness_signal,
     generate_recommendation,
 )
@@ -258,6 +261,87 @@ def test_signal_summaries_include_their_citations():
     # cocktail of stressors. TR isn't fed by the fixture so we skip it.
     for key in ("hrv", "rhr", "sleep", "acwr", "rpe"):
         assert CITATIONS[key] in r.rationale, f"missing {key} citation in rationale"
+
+
+# --- Trend slope detection ---------------------------------------------
+
+def _falling_hrv(today: date, start: float = 55, end: float = 45, days: int = 28) -> pd.DataFrame:
+    """Build HRV history that falls linearly from `start` to `end` over `days`.
+    Used for trend tests — we want a clearly directional slope so the
+    detector doesn't have to fight noise."""
+    rows = []
+    for offset in range(days, 0, -1):
+        d = today - timedelta(days=offset)
+        # Most-recent day is `end`; oldest is `start`. Linear ramp.
+        t = (days - offset) / max(1, days - 1)
+        value = start + (end - start) * t
+        rows.append(dict(
+            id=f"hrv-{offset}",
+            client_id="c1", date=d,
+            source="garmin", kind=MetricKind.HRV_RMSSD.value,
+            value=value, unit="ms",
+        ))
+    return pd.DataFrame(rows)
+
+
+def test_hrv_trend_signal_fires_when_falling():
+    """A clearly downward HRV trajectory over the last 7 days should fire
+    the trend detector even before the level signal trips."""
+    today = date.today()
+    m = _falling_hrv(today, start=55, end=42, days=28)
+    sig = detect_hrv_trend_signal(m, today)
+    assert sig is not None
+    assert sig.kind == "hrv_trend_down"
+    assert "trending down" in sig.summary.lower()
+    assert CITATIONS["hrv"] in sig.summary
+
+
+def test_hrv_trend_signal_does_not_fire_when_rising():
+    """Rising HRV is a good thing — detector must not flag it."""
+    today = date.today()
+    m = _falling_hrv(today, start=42, end=55, days=28)  # reversed: rising
+    sig = detect_hrv_trend_signal(m, today)
+    assert sig is None
+
+
+def test_rhr_trend_signal_fires_when_rising():
+    """Rising resting HR — the bad direction for RHR — fires the trend
+    detector. Symmetric mirror of the HRV-falling case."""
+    today = date.today()
+    rows = []
+    for offset in range(28, 0, -1):
+        d = today - timedelta(days=offset)
+        t = (28 - offset) / 27
+        value = 55 + 8 * t  # 55 → 63 bpm over the window
+        rows.append(dict(
+            id=f"rhr-{offset}",
+            client_id="c1", date=d,
+            source="garmin", kind=MetricKind.RESTING_HR.value,
+            value=value, unit="bpm",
+        ))
+    sig = detect_rhr_trend_signal(pd.DataFrame(rows), today)
+    assert sig is not None
+    assert sig.kind == "rhr_trend_up"
+
+
+def test_sleep_trend_signal_fires_when_eroding():
+    """Mean might still clear the floor, but a clear downward slope on
+    nightly hours should fire as an early warning."""
+    today = date.today()
+    rows = []
+    for offset in range(28, 0, -1):
+        d = today - timedelta(days=offset)
+        t = (28 - offset) / 27
+        value = 8.5 - 1.5 * t  # 8.5h → 7.0h over the window
+        rows.append(dict(
+            id=f"sleep-{offset}",
+            client_id="c1", date=d,
+            source="garmin", kind=MetricKind.SLEEP_HOURS.value,
+            value=value, unit="h",
+        ))
+    sig = detect_sleep_trend_signal(pd.DataFrame(rows), today)
+    assert sig is not None
+    assert sig.kind == "sleep_trend_down"
 
 
 def test_sleep_signal_counts_nights_below_floor():
