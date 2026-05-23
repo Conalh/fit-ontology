@@ -12,7 +12,8 @@ a new wearable signal means one ingest adapter and no dashboard work.
 from __future__ import annotations
 
 import sys
-from datetime import date, timedelta
+import uuid
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
@@ -22,11 +23,14 @@ import streamlit as st
 
 from fit_ontology.db import (
     connect,
+    insert_override,
+    latest_override_for_week,
     list_clients,
     metrics_for_client,
+    overrides_for_client,
     sessions_for_client,
 )
-from fit_ontology.ontology import MetricKind
+from fit_ontology.ontology import MetricKind, OverrideAction, RecommendationOverride
 from fit_ontology.reasoning import generate_recommendation
 
 
@@ -60,9 +64,21 @@ st.markdown(
 
 
 # ─── Data layer ────────────────────────────────────────────────────────
+#
+# The DuckDB read-only handle is cached as a singleton per Streamlit
+# session. Without the cache, each script rerun would open a new
+# connection and leave the previous one alive until GC — which blocks
+# in-process write attempts ("Can't open a connection to same database
+# file with a different configuration"). With the cache there's always
+# exactly one read-only handle we can explicitly close before writing.
+
+@st.cache_resource
+def _open_db():
+    return connect(read_only=True)
+
 
 try:
-    con = connect(read_only=True)
+    con = _open_db()
 except FileNotFoundError:
     st.title("FitOntology")
     st.warning(
@@ -153,6 +169,76 @@ st.markdown(
 )
 
 
+# ─── Trainer override ─────────────────────────────────────────────────
+#
+# The system's recommendation is a starting point, not a verdict. The
+# trainer records what they actually decided so we have an audit trail
+# and, eventually, a calibration signal: how often does the model agree
+# with the practitioner?
+
+latest_override_df = latest_override_for_week(con, client_id, rec.week_of)
+if not latest_override_df.empty:
+    row = latest_override_df.iloc[0]
+    action = row["trainer_action"]
+    when = pd.to_datetime(row["created_at"]).strftime("%Y-%m-%d %H:%M")
+    pct = row["applied_load_change_pct"]
+    parts = [f"**{action.capitalize()}**", f"logged {when}"]
+    if action == OverrideAction.EDIT.value and pct is not None and not pd.isna(pct):
+        parts.append(f"applied {pct:+.0f}% load change")
+    if row["trainer_note"]:
+        parts.append(f"note: {row['trainer_note']}")
+    st.info(" · ".join(parts))
+
+with st.expander(f"Record trainer decision for week of {rec.week_of}", expanded=False):
+    action_value = st.radio(
+        "What did you do with this recommendation?",
+        options=[a.value for a in OverrideAction],
+        format_func=lambda v: v.capitalize(),
+        horizontal=True,
+        key=f"action_{client_id}_{rec.week_of}",
+    )
+    applied_pct: float | None = None
+    if action_value == OverrideAction.EDIT.value:
+        applied_pct = st.number_input(
+            "Applied load change (%) — what you actually did",
+            min_value=-50.0,
+            max_value=50.0,
+            value=0.0,
+            step=1.0,
+            key=f"pct_{client_id}_{rec.week_of}",
+        )
+    note = st.text_input(
+        "Note (optional)",
+        placeholder="e.g. 'travel week, kept it light'",
+        key=f"note_{client_id}_{rec.week_of}",
+    )
+    if st.button("Save decision", key=f"save_{client_id}_{rec.week_of}"):
+        # DuckDB refuses to open a write connection in the same process while
+        # any read-only handle to the same file is alive. We close the cached
+        # singleton, clear the cache so the next rerun reopens cleanly, then
+        # do the write.
+        ov = RecommendationOverride(
+            id=f"o_{uuid.uuid4().hex[:12]}",
+            client_id=client_id,
+            week_of=rec.week_of,
+            system_recommendation=rec.recommendation,
+            system_confidence=rec.confidence,
+            trainer_action=OverrideAction(action_value),
+            applied_load_change_pct=applied_pct,
+            trainer_note=note or None,
+            created_at=datetime.now(),
+        )
+        con.close()
+        _open_db.clear()
+        try:
+            with connect(read_only=False) as write_con:
+                insert_override(write_con, ov)
+            st.success("Decision saved.")
+            st.rerun()
+        except Exception as e:  # noqa: BLE001 — surface lock errors to the user
+            st.error(f"Could not save: {e}. If a Garmin sync is running, wait for it to finish and try again.")
+
+
 # ─── Status row ───────────────────────────────────────────────────────
 
 STATUS_CARDS = [
@@ -215,6 +301,18 @@ with right:
 
     with st.expander(f"Source metrics for this recommendation ({len(rec.source_metric_ids)})"):
         st.code("\n".join(rec.source_metric_ids) or "(none)", language="text")
+
+
+# ─── Decision history ────────────────────────────────────────────────
+
+history = overrides_for_client(con, client_id, limit=20)
+if not history.empty:
+    with st.expander(f"Decision history ({len(history)})"):
+        display_history = history[
+            ["created_at", "week_of", "trainer_action", "applied_load_change_pct", "system_recommendation", "trainer_note"]
+        ].copy()
+        display_history["created_at"] = pd.to_datetime(display_history["created_at"]).dt.strftime("%Y-%m-%d %H:%M")
+        st.dataframe(display_history, use_container_width=True, hide_index=True)
 
 
 # ─── Raw data fallback ───────────────────────────────────────────────

@@ -38,8 +38,16 @@ st.title("Roster")
 st.caption("All clients at a glance — ranked by recommendation urgency.")
 
 
+# Cache the read-only handle as a singleton so we don't leak connections
+# across reruns — DuckDB blocks in-process write attempts (used by the
+# detail page's override save) while any read-only handle is alive.
+@st.cache_resource
+def _open_db():
+    return connect(read_only=True)
+
+
 try:
-    con = connect(read_only=True)
+    con = _open_db()
 except FileNotFoundError:
     st.warning(
         "No database yet. Run `python scripts/generate_synthetic.py && "

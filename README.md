@@ -136,7 +136,7 @@ Smoke tests cover the three reasoning branches against synthetic fixtures.
 
 ## Status
 
-v0.1. The reasoning rules are deliberately conservative and few — the value proposition is the modeling, not the cleverness of the heuristics. Future work: bring more ACSM guidance into the rules table, add an audit log of trainer overrides (so the system can learn from disagreement), and ship a CLI version of the dashboard for headless deployment.
+v0.2. The reasoning rules are deliberately conservative and few — the value proposition is the modeling, not the cleverness of the heuristics. The trainer roster view and the override audit log are live (every recommendation can be marked accepted / edited / rejected with a note, captured against the week it was made). Future work: surface a calibration view across the override log, bring more ACSM guidance into the rules table, and ship a CLI version of the dashboard for headless deployment.
 
 ## License
 
