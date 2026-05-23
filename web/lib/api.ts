@@ -136,6 +136,11 @@ export interface ClientFormPayload {
   injury_history?: string | null;
 }
 
+export interface ThresholdsResponse {
+  defaults: Record<string, number>;
+  overrides: Record<string, number>;
+}
+
 export interface AskResponse {
   answer: string;
   traces: AskTrace[];
@@ -180,6 +185,13 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   calibration: () => request<CalibrationResponse>("/api/calibration"),
+  thresholds: (clientId: string) =>
+    request<ThresholdsResponse>(`/api/clients/${clientId}/thresholds`),
+  saveThresholds: (clientId: string, overrides: Record<string, number | null>) =>
+    request<ThresholdsResponse>(`/api/clients/${clientId}/thresholds`, {
+      method: "PATCH",
+      body: JSON.stringify({ overrides }),
+    }),
   upload: async (clientId: string, file: File): Promise<{ inserted: number; kinds: string[] }> => {
     const form = new FormData();
     form.append("file", file);

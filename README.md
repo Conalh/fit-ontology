@@ -206,7 +206,7 @@ runs the same suite on Python 3.11 and 3.12 for every push and PR
 
 ## Status
 
-v0.4. The reasoning rules are deliberately conservative and few — the value proposition is the modeling, not the cleverness of the heuristics. The full dashboard now ships as Next.js + Tailwind backed by a typed FastAPI surface, served from a single process. Live: per-client roster triage, detail page with baseline-ribbon charts and the override drawer, client-facing PDF export with a coach's note, calibration matrix, conversational layer, and in-browser wearable ingestion. Live adapters: Garmin Connect (real sync), Apple Health Export, Strava bulk export, Whoop daily-record JSON. Future work: stage-level Apple sleep aggregation, per-client reasoning thresholds, more ACSM guidance in the rules table.
+v0.5. The reasoning rules are deliberately conservative and few — the value proposition is the modeling, not the cleverness of the heuristics. The full dashboard now ships as Next.js + Tailwind backed by a typed FastAPI surface, served from a single process. Live: per-client roster triage, detail page with baseline-ribbon charts and the override drawer, client-facing PDF export with a coach's note, calibration matrix, conversational layer, in-browser wearable ingestion, **add/edit clients from the UI**, **injury-aware contraindications driven off intake**, **per-client severity-threshold overrides**. Live adapters: Garmin Connect (real sync), Apple Health Export, Strava bulk export, Whoop daily-record JSON. Future work: stage-level Apple sleep aggregation, scheduled syncs, more ACSM guidance in the rules table.
 
 ## License
 
