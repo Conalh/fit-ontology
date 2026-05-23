@@ -119,3 +119,103 @@ def latest_recommendation(con, client_id: str) -> pd.DataFrame:
         """,
         [client_id],
     ).df()
+
+
+# ─── Trainer overrides ────────────────────────────────────────────────
+#
+# A read-only DuckDB connection cannot create tables, so a DB that
+# predates the override schema will error on the first SELECT. We catch
+# the missing-table case and return empty results; the table appears the
+# first time an override is written (which opens write mode, where the
+# IF NOT EXISTS DDL runs as part of connect()).
+
+def insert_override(con, ov) -> None:
+    con.execute(
+        """
+        INSERT INTO recommendation_overrides
+        (id, client_id, week_of, system_recommendation, system_confidence,
+         trainer_action, applied_load_change_pct, trainer_note, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            ov.id,
+            ov.client_id,
+            ov.week_of,
+            ov.system_recommendation,
+            ov.system_confidence,
+            ov.trainer_action.value,
+            ov.applied_load_change_pct,
+            ov.trainer_note,
+            ov.created_at,
+        ],
+    )
+
+
+def _empty_overrides_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "id",
+            "client_id",
+            "week_of",
+            "system_recommendation",
+            "system_confidence",
+            "trainer_action",
+            "applied_load_change_pct",
+            "trainer_note",
+            "created_at",
+        ]
+    )
+
+
+def overrides_for_client(con, client_id: str, limit: int = 50) -> pd.DataFrame:
+    """All overrides for a client, newest first. Empty if the table
+    doesn't exist yet (pre-migration DB)."""
+    try:
+        return con.execute(
+            """
+            SELECT id, client_id, week_of, system_recommendation, system_confidence,
+                   trainer_action, applied_load_change_pct, trainer_note, created_at
+            FROM recommendation_overrides
+            WHERE client_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            [client_id, limit],
+        ).df()
+    except duckdb.CatalogException:
+        return _empty_overrides_df()
+
+
+def latest_override_for_week(con, client_id: str, week_of) -> pd.DataFrame:
+    """The most recent override for (client_id, week_of), or empty."""
+    try:
+        return con.execute(
+            """
+            SELECT id, client_id, week_of, system_recommendation, system_confidence,
+                   trainer_action, applied_load_change_pct, trainer_note, created_at
+            FROM recommendation_overrides
+            WHERE client_id = ? AND week_of = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            [client_id, week_of],
+        ).df()
+    except duckdb.CatalogException:
+        return _empty_overrides_df()
+
+
+def all_overrides(con, limit: int = 1000) -> pd.DataFrame:
+    """All overrides across clients — for the calibration page."""
+    try:
+        return con.execute(
+            """
+            SELECT id, client_id, week_of, system_recommendation, system_confidence,
+                   trainer_action, applied_load_change_pct, trainer_note, created_at
+            FROM recommendation_overrides
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            [limit],
+        ).df()
+    except duckdb.CatalogException:
+        return _empty_overrides_df()

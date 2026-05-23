@@ -106,6 +106,44 @@ class Recommendation(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
 
 
+class OverrideAction(str, Enum):
+    """What the trainer did with the system's recommendation.
+
+    - ACCEPT: followed the recommendation as-is.
+    - EDIT:   followed the direction but applied a different magnitude.
+              ``applied_load_change_pct`` captures what they actually did.
+    - REJECT: ignored the recommendation and did something materially
+              different (free-text in ``trainer_note`` explains).
+    """
+    ACCEPT = "accept"
+    EDIT = "edit"
+    REJECT = "reject"
+
+
+class RecommendationOverride(BaseModel):
+    """A trainer's decision on a system recommendation.
+
+    We snapshot the system's recommendation text and confidence at the
+    moment of override rather than just FK'ing to recommendations.id,
+    because the recommendation can change as more wearable data lands.
+    The trainer's decision was made at a point in time with the data
+    they had; preserving that is the audit value of this table.
+
+    Keyed by (client_id, week_of) at the application level — multiple
+    overrides for the same week are allowed (the trainer's view can
+    change), and the most recent row is the operative decision.
+    """
+    id: str
+    client_id: str
+    week_of: date
+    system_recommendation: str
+    system_confidence: float = Field(ge=0.0, le=1.0)
+    trainer_action: OverrideAction
+    applied_load_change_pct: Optional[float] = Field(default=None, ge=-100.0, le=100.0)
+    trainer_note: Optional[str] = None
+    created_at: datetime
+
+
 # DDL for DuckDB — kept in code so the schema lives with the model.
 SCHEMA_DDL = """
 CREATE TABLE IF NOT EXISTS clients (
@@ -153,4 +191,19 @@ CREATE TABLE IF NOT EXISTS recommendations (
     source_metric_ids  VARCHAR,  -- JSON array of metric ids
     confidence         DOUBLE NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS recommendation_overrides (
+    id                       VARCHAR PRIMARY KEY,
+    client_id                VARCHAR NOT NULL REFERENCES clients(id),
+    week_of                  DATE NOT NULL,
+    system_recommendation    VARCHAR NOT NULL,
+    system_confidence        DOUBLE NOT NULL,
+    trainer_action           VARCHAR NOT NULL,
+    applied_load_change_pct  DOUBLE,
+    trainer_note             VARCHAR,
+    created_at               TIMESTAMP NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_overrides_client_week
+    ON recommendation_overrides(client_id, week_of);
 """
