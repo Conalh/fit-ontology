@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import json
 import uuid
+import zipfile
+from collections import defaultdict
 from datetime import date, datetime
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 import pandas as pd
 
@@ -69,6 +72,93 @@ def from_whoop_json(path: Path, client_id: str) -> pd.DataFrame:
         if "sleep_hours" in d:
             rows.append((client_id, day, MetricSource.WHOOP.value,
                          MetricKind.SLEEP_HOURS.value, float(d["sleep_hours"]), "h"))
+    df = pd.DataFrame(rows, columns=["client_id", "date", "source", "kind", "value", "unit"])
+    df.insert(0, "id", [_mid() for _ in range(len(df))])
+    return df
+
+
+# Apple Health record types we care about. Apple's Health app names
+# every signal with the HK* identifier prefix; we map a handful into our
+# canonical MetricKind values. Other Record types in the export are
+# ignored.
+_APPLE_TYPE_MAP: dict[str, tuple[MetricKind, str]] = {
+    "HKQuantityTypeIdentifierHeartRateVariabilitySDNN": (MetricKind.HRV_SDNN, "ms"),
+    "HKQuantityTypeIdentifierRestingHeartRate": (MetricKind.RESTING_HR, "bpm"),
+    "HKQuantityTypeIdentifierBodyMass": (MetricKind.BODY_WEIGHT_KG, "kg"),
+    "HKQuantityTypeIdentifierBodyFatPercentage": (MetricKind.BODY_FAT_PCT, "%"),
+}
+
+
+def from_apple_health_export(path: Path, client_id: str) -> pd.DataFrame:
+    """
+    Apple Health Export. The user taps "Export All Health Data" in the iOS
+    Health app and gets an ``export.zip`` containing ``apple_health_export/
+    export.xml`` — that file (or the zip directly) is what we read here.
+
+    We surface HRV (SDNN, not RMSSD — Apple's chosen variant), resting HR,
+    body mass, and body-fat percentage. Apple Health's sleep schema uses
+    stage-level intervals that need aggregation per night; we skip it for
+    now and rely on Garmin/Whoop for sleep totals when both sources are
+    available for the same client.
+
+    Daily aggregation: when Apple writes multiple Records of the same kind
+    on the same day (common for Apple Watch, which can capture HRV many
+    times an hour), we take the mean per (date, kind). That matches the
+    "one row per day per signal" convention the reasoning layer assumes.
+
+    For large exports we use iterparse so memory stays bounded; an old
+    Apple Watch user's export can run into multi-GB territory.
+    """
+    path = Path(path)
+    if path.suffix == ".zip":
+        with zipfile.ZipFile(path) as z:
+            # The export ships at apple_health_export/export.xml; tolerate
+            # other locations by picking the first export.xml in the zip.
+            xml_name = next(n for n in z.namelist() if n.endswith("export.xml"))
+            with z.open(xml_name) as fh:
+                return _parse_apple_health_xml(fh, client_id)
+    else:
+        return _parse_apple_health_xml(path, client_id)
+
+
+def _parse_apple_health_xml(source, client_id: str) -> pd.DataFrame:
+    """Stream-parse ``<Record>`` elements and aggregate to daily means."""
+    # (date, kind) -> [values]; daily mean is computed after the full pass.
+    buckets: dict[tuple[date, MetricKind, str], list[float]] = defaultdict(list)
+
+    for _, elem in ET.iterparse(source, events=("end",)):
+        if elem.tag != "Record":
+            elem.clear()
+            continue
+
+        type_attr = elem.get("type")
+        spec = _APPLE_TYPE_MAP.get(type_attr) if type_attr else None
+        if spec is None:
+            elem.clear()
+            continue
+
+        kind, unit = spec
+        try:
+            value = float(elem.get("value", ""))
+        except ValueError:
+            elem.clear()
+            continue
+
+        start = elem.get("startDate")
+        if not start:
+            elem.clear()
+            continue
+        # Apple writes dates as "2026-05-18 06:14:23 -0700"; the date
+        # portion is the local-day for that record.
+        day = date.fromisoformat(start.split(" ", 1)[0])
+
+        buckets[(day, kind, unit)].append(value)
+        elem.clear()  # release the parsed element to keep memory flat
+
+    rows = [
+        (client_id, day, MetricSource.APPLE_HEALTH.value, kind.value, sum(vals) / len(vals), unit)
+        for (day, kind, unit), vals in buckets.items()
+    ]
     df = pd.DataFrame(rows, columns=["client_id", "date", "source", "kind", "value", "unit"])
     df.insert(0, "id", [_mid() for _ in range(len(df))])
     return df

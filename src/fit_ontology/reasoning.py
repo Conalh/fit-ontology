@@ -140,10 +140,22 @@ def detect_hrv_signal(metrics: pd.DataFrame, today: date) -> Signal | None:
     against the athlete's own 21–28 day rolling baseline, not against
     population norms or simple week-over-week deltas. We use the more
     stable 28-day window.
+
+    HRV metric selection: Garmin / Whoop report RMSSD; Apple Health
+    reports SDNN. They measure different things but the SD-deviation-
+    from-baseline reasoning is within-subject and within-metric, so
+    whichever one this client has is fine. We prefer RMSSD when both
+    exist (more common in sport-science literature), falling back to
+    SDNN. Mixing the two within a single signal would distort baselines.
     """
-    acute, acute_ids = _recent_mean(metrics, MetricKind.HRV_RMSSD.value, today, HRV_ACUTE_DAYS)
+    hrv_kind = MetricKind.HRV_RMSSD.value
+    if metrics.empty or hrv_kind not in metrics["kind"].values:
+        if MetricKind.HRV_SDNN.value in metrics["kind"].values:
+            hrv_kind = MetricKind.HRV_SDNN.value
+
+    acute, acute_ids = _recent_mean(metrics, hrv_kind, today, HRV_ACUTE_DAYS)
     baseline_mean, baseline_sd, baseline_ids = _baseline(
-        metrics, MetricKind.HRV_RMSSD.value, today, HRV_BASELINE_DAYS
+        metrics, hrv_kind, today, HRV_BASELINE_DAYS
     )
     if acute is None or baseline_mean is None or not baseline_sd:
         return None
