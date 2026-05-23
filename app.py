@@ -12,6 +12,7 @@ a new wearable signal means one ingest adapter and no dashboard work.
 from __future__ import annotations
 
 import sys
+import tempfile
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -24,12 +25,18 @@ import streamlit as st
 
 from fit_ontology.db import (
     connect,
+    insert_metrics,
     insert_override,
     latest_override_for_week,
     list_clients,
     metrics_for_client,
     overrides_for_client,
     sessions_for_client,
+)
+from fit_ontology.ingest import (
+    from_apple_health_export,
+    from_strava_export,
+    from_whoop_json,
 )
 from fit_ontology.ontology import MetricKind, OverrideAction, RecommendationOverride
 from fit_ontology.reasoning import generate_recommendation
@@ -116,6 +123,80 @@ with col_picker:
             default_idx = int(matches[0])
     selected = st.selectbox("Client", options, index=default_idx, label_visibility="collapsed")
     client_id = clients.iloc[options.index(selected)]["id"]
+
+
+# ─── Upload wearable data for this client ─────────────────────────────
+#
+# Closes the "CLI-only ingestion" gap for non-technical trainers. The
+# trainer picks a client above, drops an export file here, and we
+# auto-detect the format (Apple Health zip/xml, Strava CSV, Whoop JSON)
+# and route to the right adapter. Same close-then-write pattern as the
+# override save: DuckDB blocks in-process write while a read-only
+# handle is alive.
+
+def _detect_and_parse(filename: str, raw_bytes: bytes, target_client_id: str) -> pd.DataFrame:
+    """Sniff the file format from extension + content, dispatch to the
+    right adapter, return a DataFrame ready for insert_metrics.
+
+    Buffers the upload to a tempfile because the adapter functions take
+    a Path — we could refactor them to accept file-like, but the I/O is
+    cheap relative to the DuckDB write that follows, and a tempfile is
+    safer for concurrent uploads from multiple browser tabs than a
+    fixed scratch path under the project root.
+    """
+    suffix = Path(filename).suffix.lower()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+        tmp_file.write(raw_bytes)
+        tmp_path = Path(tmp_file.name)
+    try:
+        if suffix == ".zip" or (suffix == ".xml" and b"HealthData" in raw_bytes[:4096]):
+            return from_apple_health_export(tmp_path, target_client_id)
+        if suffix == ".csv":
+            return from_strava_export(tmp_path, target_client_id)
+        if suffix == ".json":
+            return from_whoop_json(tmp_path, target_client_id)
+        raise ValueError(f"Unrecognized file type: {filename}")
+    finally:
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+with st.expander("Upload wearable data for this client", expanded=False):
+    st.caption(
+        "Drop an Apple Health export (`.zip` or `.xml`), a Strava bulk export "
+        "(`.csv`), or a Whoop daily-record JSON. Auto-detects the format and "
+        "loads it for the currently selected client."
+    )
+    uploaded = st.file_uploader(
+        "Choose a file",
+        type=["zip", "xml", "csv", "json"],
+        accept_multiple_files=False,
+        label_visibility="collapsed",
+        key=f"upload_{client_id}",
+    )
+    if uploaded is not None and st.button("Import", key=f"import_{client_id}"):
+        try:
+            df = _detect_and_parse(uploaded.name, uploaded.getvalue(), client_id)
+        except Exception as e:  # noqa: BLE001
+            st.error(f"Could not parse {uploaded.name}: {e}")
+            df = None
+
+        if df is not None and df.empty:
+            st.warning("File parsed, but no usable rows were found.")
+        elif df is not None:
+            client_name_for_msg = clients[clients["id"] == client_id]["name"].iloc[0]
+            con.close()
+            _open_db.clear()
+            try:
+                with connect(read_only=False) as write_con:
+                    insert_metrics(write_con, df)
+                kinds = ", ".join(sorted(df["kind"].unique()))
+                st.success(f"Imported {len(df)} metric rows ({kinds}) for {client_name_for_msg}.")
+                st.rerun()
+            except Exception as e:  # noqa: BLE001
+                st.error(f"Could not write to DB: {e}. If a Garmin sync is running, wait and retry.")
 
 
 # ─── Pull metrics ──────────────────────────────────────────────────────
