@@ -30,8 +30,10 @@ developer_key
 .DS_Store
 Thumbs.db
 
-# Streamlit
-.streamlit/secrets.toml
-
 # Local Claude Code config (per-developer tooling)
 .claude/
+
+# Next.js build artifacts (rebuild via `npm run build --prefix web`)
+web/.next/
+web/out/
+web/node_modules/
