@@ -37,6 +37,7 @@ yield a conservative progression.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Literal
@@ -87,6 +88,43 @@ ACSM_STANDARD_RANGE = (0.05, 0.10)
 ACSM_CONSERVATIVE = 0.05
 DELOAD_LOAD_CUT = 0.20              # 20% cut; more aggressive than 15% reflects
                                     # recent autoregulation literature for clearly stressed states
+
+
+# Severity thresholds the trainer can override per client. The names here
+# match the rows in the client_thresholds table; unset rows fall back to
+# these defaults. Window-day constants (HRV_BASELINE_DAYS, ACWR_CHRONIC_WEEKS,
+# etc.) and progression magnitudes stay global — they're methodology, not
+# per-athlete tuning.
+DEFAULT_THRESHOLDS: dict[str, float] = {
+    "hrv_mild_sd":          HRV_MILD_SD,
+    "hrv_moderate_sd":      HRV_MODERATE_SD,
+    "hrv_severe_sd":        HRV_SEVERE_SD,
+    "acwr_safe_low":        ACWR_SAFE_LOW,
+    "acwr_safe_high":       ACWR_SAFE_HIGH,
+    "acwr_moderate_high":   ACWR_MODERATE_HIGH,
+    "acwr_severe_high":     ACWR_SEVERE_HIGH,
+    "rhr_mild_bpm":         RHR_MILD_BPM,
+    "rhr_moderate_bpm":     RHR_MODERATE_BPM,
+    "rhr_severe_bpm":       RHR_SEVERE_BPM,
+    "sleep_floor_hours":    SLEEP_FLOOR_HOURS,
+    "sleep_deficit_hours":  SLEEP_DEFICIT_HOURS,
+    "sleep_score_poor":     SLEEP_SCORE_POOR,
+    "rpe_rise_mild":        RPE_RISE_MILD,
+    "rpe_rise_moderate":    RPE_RISE_MODERATE,
+    "tr_mild":              TR_MILD,
+    "tr_moderate":          TR_MODERATE,
+    "tr_severe":            TR_SEVERE,
+}
+
+
+def _merge_thresholds(overrides: Mapping[str, float] | None) -> dict[str, float]:
+    """Compose the per-call threshold dict: defaults shadowed by any
+    per-client overrides the caller passes in."""
+    if not overrides:
+        return DEFAULT_THRESHOLDS.copy()
+    merged = DEFAULT_THRESHOLDS.copy()
+    merged.update(overrides)
+    return merged
 
 
 Severity = Literal["mild", "moderate", "severe"]
@@ -143,7 +181,11 @@ def _recent_mean(metrics: pd.DataFrame, kind: str, today: date, days: int) -> tu
 
 # --- Per-signal detectors -------------------------------------------------
 
-def detect_hrv_signal(metrics: pd.DataFrame, today: date) -> Signal | None:
+def detect_hrv_signal(
+    metrics: pd.DataFrame,
+    today: date,
+    thresholds: Mapping[str, float] | None = None,
+) -> Signal | None:
     """Acute HRV mean vs 28-day baseline, expressed in baseline-SD units.
 
     Plews & Laursen (2017): individual HRV reactivity is best measured
@@ -158,6 +200,7 @@ def detect_hrv_signal(metrics: pd.DataFrame, today: date) -> Signal | None:
     exist (more common in sport-science literature), falling back to
     SDNN. Mixing the two within a single signal would distort baselines.
     """
+    th = _merge_thresholds(thresholds)
     hrv_kind = MetricKind.HRV_RMSSD.value
     if (
         (metrics.empty or hrv_kind not in metrics["kind"].values)
@@ -174,12 +217,12 @@ def detect_hrv_signal(metrics: pd.DataFrame, today: date) -> Signal | None:
         return None
 
     drop_sd = (baseline_mean - acute) / baseline_sd
-    if drop_sd < HRV_MILD_SD:
+    if drop_sd < th["hrv_mild_sd"]:
         return None
 
     severity: Severity = (
-        "severe" if drop_sd >= HRV_SEVERE_SD
-        else "moderate" if drop_sd >= HRV_MODERATE_SD
+        "severe" if drop_sd >= th["hrv_severe_sd"]
+        else "moderate" if drop_sd >= th["hrv_moderate_sd"]
         else "mild"
     )
     return Signal(
@@ -190,10 +233,15 @@ def detect_hrv_signal(metrics: pd.DataFrame, today: date) -> Signal | None:
     )
 
 
-def detect_rhr_signal(metrics: pd.DataFrame, today: date) -> Signal | None:
+def detect_rhr_signal(
+    metrics: pd.DataFrame,
+    today: date,
+    thresholds: Mapping[str, float] | None = None,
+) -> Signal | None:
     """Resting HR rise above the 28-day baseline. Buchheit (2014): a
     sustained 5+ bpm elevation indicates autonomic stress, particularly
     when paired with depressed HRV."""
+    th = _merge_thresholds(thresholds)
     acute, acute_ids = _recent_mean(metrics, MetricKind.RESTING_HR.value, today, HRV_ACUTE_DAYS)
     baseline_mean, _baseline_sd, baseline_ids = _baseline(
         metrics, MetricKind.RESTING_HR.value, today, RHR_BASELINE_DAYS
@@ -202,12 +250,12 @@ def detect_rhr_signal(metrics: pd.DataFrame, today: date) -> Signal | None:
         return None
 
     rise = acute - baseline_mean
-    if rise < RHR_MILD_BPM:
+    if rise < th["rhr_mild_bpm"]:
         return None
 
     severity: Severity = (
-        "severe" if rise >= RHR_SEVERE_BPM
-        else "moderate" if rise >= RHR_MODERATE_BPM
+        "severe" if rise >= th["rhr_severe_bpm"]
+        else "moderate" if rise >= th["rhr_moderate_bpm"]
         else "mild"
     )
     return Signal(
@@ -218,10 +266,15 @@ def detect_rhr_signal(metrics: pd.DataFrame, today: date) -> Signal | None:
     )
 
 
-def detect_sleep_signal(metrics: pd.DataFrame, today: date) -> Signal | None:
+def detect_sleep_signal(
+    metrics: pd.DataFrame,
+    today: date,
+    thresholds: Mapping[str, float] | None = None,
+) -> Signal | None:
     """Mean sleep duration over the last 7 days against ACSM 11e
     7-9 h guidance, with a 6 h "severe deficit" floor. Also folds in
     Garmin's sleep score when present (< 70 = poor)."""
+    th = _merge_thresholds(thresholds)
     acute_hours, hour_ids = _recent_mean(metrics, MetricKind.SLEEP_HOURS.value, today, HRV_ACUTE_DAYS)
     acute_score, score_ids = _recent_mean(metrics, MetricKind.SLEEP_SCORE.value, today, HRV_ACUTE_DAYS)
     if acute_hours is None and acute_score is None:
@@ -231,13 +284,13 @@ def detect_sleep_signal(metrics: pd.DataFrame, today: date) -> Signal | None:
     parts: list[str] = []
 
     if acute_hours is not None:
-        if acute_hours < SLEEP_DEFICIT_HOURS:
+        if acute_hours < th["sleep_deficit_hours"]:
             severity = "severe"
-        elif acute_hours < SLEEP_FLOOR_HOURS:
+        elif acute_hours < th["sleep_floor_hours"]:
             severity = "moderate"
         parts.append(f"mean {acute_hours:.1f}h/night")
 
-    if acute_score is not None and acute_score < SLEEP_SCORE_POOR:
+    if acute_score is not None and acute_score < th["sleep_score_poor"]:
         severity = "moderate" if severity is None or severity == "mild" else severity
         parts.append(f"sleep score {acute_score:.0f}")
 
@@ -274,7 +327,11 @@ def _session_load(sessions: pd.DataFrame) -> tuple[pd.Series, dict[date, list[st
     return loads, ids_by_date
 
 
-def detect_acwr_signal(sessions: pd.DataFrame, today: date) -> Signal | None:
+def detect_acwr_signal(
+    sessions: pd.DataFrame,
+    today: date,
+    thresholds: Mapping[str, float] | None = None,
+) -> Signal | None:
     """Acute:Chronic Workload Ratio per Gabbett (2016).
 
     Acute = sum of session loads over the last 7 days.
@@ -285,6 +342,7 @@ def detect_acwr_signal(sessions: pd.DataFrame, today: date) -> Signal | None:
     Ratios < 0.8 flag detraining (mild signal — under-load is not a
     deload trigger but is worth surfacing to a trainer).
     """
+    th = _merge_thresholds(thresholds)
     loads, ids_by_date = _session_load(sessions)
     if loads.empty:
         return None
@@ -308,13 +366,13 @@ def detect_acwr_signal(sessions: pd.DataFrame, today: date) -> Signal | None:
     ratio = acute_total / weekly_chronic
     severity: Severity | None = None
 
-    if ratio >= ACWR_SEVERE_HIGH:
+    if ratio >= th["acwr_severe_high"]:
         severity = "severe"
-    elif ratio >= ACWR_MODERATE_HIGH:
+    elif ratio >= th["acwr_moderate_high"]:
         severity = "moderate"
-    elif ratio > ACWR_SAFE_HIGH:
+    elif ratio > th["acwr_safe_high"]:
         severity = "mild"
-    elif ratio < ACWR_SAFE_LOW:
+    elif ratio < th["acwr_safe_low"]:
         # Under-load. Mild signal so it shows up in the rationale without
         # triggering a deload; trainers may want to increase volume.
         return Signal(
@@ -335,11 +393,16 @@ def detect_acwr_signal(sessions: pd.DataFrame, today: date) -> Signal | None:
     )
 
 
-def detect_rpe_signal(sessions: pd.DataFrame, today: date) -> Signal | None:
+def detect_rpe_signal(
+    sessions: pd.DataFrame,
+    today: date,
+    thresholds: Mapping[str, float] | None = None,
+) -> Signal | None:
     """Session-RPE drift: last-week mean RPE vs prior-week mean. A rising
     RPE at constant volume indicates undertrained recovery."""
     if sessions.empty:
         return None
+    th = _merge_thresholds(thresholds)
     s = sessions.copy()
     s["date"] = _as_dates(s["date"])
     last_week = s[(s["date"] > today - timedelta(days=7)) & (s["date"] <= today)]
@@ -351,10 +414,10 @@ def detect_rpe_signal(sessions: pd.DataFrame, today: date) -> Signal | None:
     prior_mean = float(prior_week["rpe"].mean())
     rise = last_mean - prior_mean
 
-    if rise < RPE_RISE_MILD:
+    if rise < th["rpe_rise_mild"]:
         return None
 
-    severity: Severity = "moderate" if rise >= RPE_RISE_MODERATE else "mild"
+    severity: Severity = "moderate" if rise >= th["rpe_rise_moderate"] else "mild"
     # All sessions from both compared weeks form the audit set.
     contributing_ids: list[str] = []
     if "id" in s.columns:
@@ -367,7 +430,11 @@ def detect_rpe_signal(sessions: pd.DataFrame, today: date) -> Signal | None:
     )
 
 
-def detect_training_readiness_signal(metrics: pd.DataFrame, today: date) -> Signal | None:
+def detect_training_readiness_signal(
+    metrics: pd.DataFrame,
+    today: date,
+    thresholds: Mapping[str, float] | None = None,
+) -> Signal | None:
     """Garmin Training Readiness (0–100) — Garmin's composite of recent
     HRV, stress, sleep, recovery time, and acute load.
 
@@ -381,13 +448,14 @@ def detect_training_readiness_signal(metrics: pd.DataFrame, today: date) -> Sign
     Garmin's published documentation; we collapse to mild / moderate /
     severe over a 7-day mean to smooth daily noise.
     """
+    th = _merge_thresholds(thresholds)
     acute, acute_ids = _recent_mean(metrics, MetricKind.TRAINING_READINESS.value, today, HRV_ACUTE_DAYS)
-    if acute is None or acute >= TR_MILD:
+    if acute is None or acute >= th["tr_mild"]:
         return None
 
     severity: Severity = (
-        "severe" if acute < TR_SEVERE
-        else "moderate" if acute < TR_MODERATE
+        "severe" if acute < th["tr_severe"]
+        else "moderate" if acute < th["tr_moderate"]
         else "mild"
     )
     return Signal(
@@ -405,6 +473,7 @@ def generate_recommendation(
     metrics: pd.DataFrame,
     sessions: pd.DataFrame,
     today: date | None = None,
+    thresholds: Mapping[str, float] | None = None,
 ) -> Recommendation:
     """Decide a recommendation for the upcoming training week.
 
@@ -412,6 +481,11 @@ def generate_recommendation(
       - 1 severe OR 2+ moderate (excluding mild-only ACWR-low) → deload
       - 1 moderate OR 2+ mild → conservative progression
       - 0 signals (or only ACWR-low) → standard ACSM progression
+
+    ``thresholds`` is a sparse per-client override dict — only the
+    severity boundaries the trainer customized appear here; everything
+    else falls back to DEFAULT_THRESHOLDS. None / empty means use the
+    population defaults across the board.
     """
     today = today or date.today()
     week_of = today - timedelta(days=today.weekday())  # Monday
@@ -426,11 +500,11 @@ def generate_recommendation(
 
     signals: list[Signal] = []
     for fn in detectors_metric:
-        sig = fn(metrics, today)
+        sig = fn(metrics, today, thresholds)
         if sig:
             signals.append(sig)
     for fn in detectors_session:
-        sig = fn(sessions, today)
+        sig = fn(sessions, today, thresholds)
         if sig:
             signals.append(sig)
 

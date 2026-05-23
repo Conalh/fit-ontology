@@ -43,25 +43,28 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .config import load_env
+from .contraindications import match_contraindications
 from .db import (
     DEFAULT_DB_PATH,
     all_overrides,
     connect,
+    delete_threshold,
     insert_metrics,
     insert_override,
     list_clients,
     metrics_for_client,
     overrides_for_client,
     sessions_for_client,
+    thresholds_for_client,
+    upsert_threshold,
 )
 from .ingest import (
     from_apple_health_export,
     from_strava_export,
     from_whoop_json,
 )
-from .contraindications import match_contraindications
 from .ontology import OverrideAction, RecommendationOverride, Sex
-from .reasoning import generate_recommendation
+from .reasoning import DEFAULT_THRESHOLDS, generate_recommendation
 from .report import build_weekly_pdf
 
 load_env()
@@ -203,6 +206,20 @@ class ClientUpdate(BaseModel):
     weight_kg: float | None = Field(default=None, gt=30, lt=250)
     goal: str | None = Field(default=None, min_length=1, max_length=200)
     injury_history: str | None = None
+
+
+class ThresholdsResponse(BaseModel):
+    """Defaults + overrides shape so the front-end can show each
+    threshold with both its baseline and the trainer's per-client tweak
+    (when one exists)."""
+    defaults: dict[str, float]
+    overrides: dict[str, float]
+
+
+class ThresholdsPatch(BaseModel):
+    """Sparse patch — only the keys the trainer touched. ``None``
+    deletes that key (reverts to the global default); a float upserts."""
+    overrides: dict[str, float | None]
 
 
 class AskTrace(BaseModel):
@@ -354,7 +371,8 @@ def get_sessions(client_id: str, days: int = 35, con=Depends(_read_only_conn)) -
 def get_recommendation(client_id: str, con=Depends(_read_only_conn)) -> RecommendationResponse:
     metrics = metrics_for_client(con, client_id, days=35)
     sessions = sessions_for_client(con, client_id, days=35)
-    rec = generate_recommendation(client_id, metrics, sessions)
+    overrides = thresholds_for_client(con, client_id)
+    rec = generate_recommendation(client_id, metrics, sessions, thresholds=overrides)
 
     # Contraindications come from the trainer's free-text intake — pull
     # it here rather than threading another arg through the reasoning
@@ -407,6 +425,42 @@ def post_override(client_id: str, payload: OverrideCreate) -> OverrideResponse:
         raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
 
     return _override_response_from_model(ov)
+
+
+@app.get("/api/clients/{client_id}/thresholds", response_model=ThresholdsResponse)
+def get_thresholds(client_id: str, con=Depends(_read_only_conn)) -> ThresholdsResponse:
+    """Returns the global defaults + this client's sparse overrides.
+    Front-end renders each threshold with the override styled distinctly
+    when present."""
+    return ThresholdsResponse(
+        defaults=DEFAULT_THRESHOLDS,
+        overrides=thresholds_for_client(con, client_id),
+    )
+
+
+@app.patch("/api/clients/{client_id}/thresholds", response_model=ThresholdsResponse)
+def patch_thresholds(client_id: str, payload: ThresholdsPatch) -> ThresholdsResponse:
+    """Sparse upsert/delete. Keys with a float value are upserted;
+    keys with null are deleted (reverting to the global default).
+    Unknown threshold names are rejected so we don't accumulate
+    junk rows the reasoning layer never reads."""
+    unknown = set(payload.overrides) - set(DEFAULT_THRESHOLDS)
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown threshold name(s): {sorted(unknown)}",
+        )
+    try:
+        with connect(DEFAULT_DB_PATH, read_only=False) as con:
+            for name, value in payload.overrides.items():
+                if value is None:
+                    delete_threshold(con, client_id, name)
+                else:
+                    upsert_threshold(con, client_id, name, value)
+            new_overrides = thresholds_for_client(con, client_id)
+    except duckdb.IOException as e:
+        raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
+    return ThresholdsResponse(defaults=DEFAULT_THRESHOLDS, overrides=new_overrides)
 
 
 @app.post("/api/clients/{client_id}/upload", response_model=dict)

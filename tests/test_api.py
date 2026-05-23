@@ -243,6 +243,41 @@ def test_patch_client_noop_returns_ok(app_with_db):
     assert r.json()["updated"] == []
 
 
+def test_thresholds_get_returns_defaults_and_overrides(app_with_db):
+    r = app_with_db.get("/api/clients/c_test/thresholds")
+    assert r.status_code == 200
+    data = r.json()
+    assert "defaults" in data and "overrides" in data
+    assert data["defaults"]["hrv_mild_sd"] == 0.5
+    assert data["overrides"] == {}
+
+
+def test_thresholds_patch_upsert_and_revert(app_with_db):
+    # Upsert two overrides.
+    r = app_with_db.patch(
+        "/api/clients/c_test/thresholds",
+        json={"overrides": {"hrv_mild_sd": 0.7, "sleep_floor_hours": 6.5}},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["overrides"] == {"hrv_mild_sd": 0.7, "sleep_floor_hours": 6.5}
+
+    # Update one + revert the other to default in the same call.
+    r = app_with_db.patch(
+        "/api/clients/c_test/thresholds",
+        json={"overrides": {"hrv_mild_sd": 0.6, "sleep_floor_hours": None}},
+    )
+    assert r.json()["overrides"] == {"hrv_mild_sd": 0.6}
+
+
+def test_thresholds_patch_rejects_unknown_keys(app_with_db):
+    r = app_with_db.patch(
+        "/api/clients/c_test/thresholds",
+        json={"overrides": {"bogus_threshold": 1.0}},
+    )
+    assert r.status_code == 400
+    assert "Unknown threshold" in r.json()["detail"]
+
+
 def test_upload_apple_health_xml(app_with_db, tmp_path: Path):
     xml = """<?xml version="1.0"?>
 <HealthData>
