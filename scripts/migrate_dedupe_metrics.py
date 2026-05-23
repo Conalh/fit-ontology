@@ -19,10 +19,6 @@ because all IDs already match the deterministic form.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-
 
 from fit_ontology.db import connect
 from fit_ontology.ingest import metric_id

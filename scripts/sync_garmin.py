@@ -20,17 +20,12 @@ from __future__ import annotations
 import os
 import sys
 from getpass import getpass
-from pathlib import Path
-
-# Make src importable when running as `python scripts/sync_garmin.py`
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from fit_ontology.config import load_env
-
-load_env()
-
 from fit_ontology.db import connect, ensure_client, insert_metrics
 from fit_ontology.garmin import fetch_daily_metrics, make_garmin_client
+
+load_env()
 
 DEFAULT_CLIENT_ID = "c_self"
 

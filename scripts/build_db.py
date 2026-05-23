@@ -1,11 +1,7 @@
 """Build the DuckDB from the synthetic CSVs and JSONs."""
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-
-# Make src importable when running as `python scripts/build_db.py`
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pandas as pd
 

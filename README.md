@@ -21,7 +21,7 @@ FitOntology models the integration explicitly. Every recommendation traces back 
 ### With synthetic data (no account needed)
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 python scripts/generate_synthetic.py    # writes data/synthetic/
 python scripts/build_db.py              # builds data/fit_ontology.duckdb
 streamlit run app.py
@@ -35,7 +35,7 @@ Three synthetic clients are seeded to exercise different reasoning branches:
 ### With your real Garmin Connect data
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 cp .env.example .env
 # Edit .env with your GARMIN_EMAIL and GARMIN_PASSWORD
 python scripts/sync_garmin.py
@@ -136,7 +136,7 @@ streamlit run app.py
 ## Tests
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -e .[dev]
 pytest -q
 ```
 

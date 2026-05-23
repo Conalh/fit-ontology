@@ -9,13 +9,9 @@ Tests the XML parser end-to-end including:
 """
 from __future__ import annotations
 
-import sys
 import zipfile
 from datetime import date, timedelta
-from io import BytesIO
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from fit_ontology.ingest import from_apple_health_export
 from fit_ontology.ontology import MetricKind, MetricSource

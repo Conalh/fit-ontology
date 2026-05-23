@@ -10,15 +10,11 @@ Verifies that:
 """
 from __future__ import annotations
 
-import sys
 import uuid
 from datetime import date, datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
 import duckdb
-import pandas as pd
 
 from fit_ontology.db import (
     connect,

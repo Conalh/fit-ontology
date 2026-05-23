@@ -23,9 +23,6 @@ import argparse
 import sys
 from pathlib import Path
 
-# Make src importable when running as `python scripts/import_apple_health.py`
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-
 from fit_ontology.db import connect, ensure_client, insert_metrics
 from fit_ontology.ingest import from_apple_health_export
 

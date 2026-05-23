@@ -11,12 +11,7 @@ as a signal absent because the client is well-recovered.
 """
 from __future__ import annotations
 
-import sys
 from datetime import date
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
 
 import pandas as pd
 import streamlit as st
