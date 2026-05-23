@@ -19,7 +19,6 @@ Modeling choices worth flagging:
 
 from datetime import date, datetime
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -76,7 +75,7 @@ class Client(BaseModel):
     height_cm: float = Field(gt=100, lt=230)
     weight_kg: float = Field(gt=30, lt=250)
     goal: str
-    injury_history: Optional[str] = None
+    injury_history: str | None = None
     created_at: datetime
 
 
@@ -87,7 +86,7 @@ class Session(BaseModel):
     type: SessionType
     duration_min: int = Field(ge=5, le=300)
     rpe: int = Field(ge=1, le=10, description="Borg RPE (1-10) — client-reported exertion")
-    notes: Optional[str] = None
+    notes: str | None = None
 
 
 class Metric(BaseModel):
@@ -144,8 +143,8 @@ class RecommendationOverride(BaseModel):
     system_recommendation: str
     system_confidence: float = Field(ge=0.0, le=1.0)
     trainer_action: OverrideAction
-    applied_load_change_pct: Optional[float] = Field(default=None, ge=-100.0, le=100.0)
-    trainer_note: Optional[str] = None
+    applied_load_change_pct: float | None = Field(default=None, ge=-100.0, le=100.0)
+    trainer_note: str | None = None
     created_at: datetime
 
 

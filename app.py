@@ -11,10 +11,11 @@ a new wearable signal means one ingest adapter and no dashboard work.
 """
 from __future__ import annotations
 
+import contextlib
 import sys
 import tempfile
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
@@ -22,6 +23,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 import altair as alt
 import pandas as pd
 import streamlit as st
+
+from fit_ontology.config import load_env
+
+load_env()
 
 from fit_ontology.db import (
     connect,
@@ -41,7 +46,6 @@ from fit_ontology.ingest import (
 from fit_ontology.ontology import MetricKind, OverrideAction, RecommendationOverride
 from fit_ontology.reasoning import generate_recommendation
 from fit_ontology.report import build_weekly_pdf
-
 
 st.set_page_config(
     page_title="FitOntology",
@@ -157,10 +161,8 @@ def _detect_and_parse(filename: str, raw_bytes: bytes, target_client_id: str) ->
             return from_whoop_json(tmp_path, target_client_id)
         raise ValueError(f"Unrecognized file type: {filename}")
     finally:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             tmp_path.unlink()
-        except FileNotFoundError:
-            pass
 
 
 with st.expander("Upload wearable data for this client", expanded=False):
@@ -432,7 +434,7 @@ STATUS_CARDS = [
 ]
 
 cards = st.columns(len(STATUS_CARDS))
-for col, (label, kind, unit) in zip(cards, STATUS_CARDS):
+for col, (label, kind, unit) in zip(cards, STATUS_CARDS, strict=True):
     value = _latest(kind)
     delta = _week_delta(kind)
     with col:

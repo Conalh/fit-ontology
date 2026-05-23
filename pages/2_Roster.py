@@ -29,7 +29,6 @@ from fit_ontology.db import (
 )
 from fit_ontology.reasoning import generate_recommendation
 
-
 STALE_DATA_DAYS = 7
 
 

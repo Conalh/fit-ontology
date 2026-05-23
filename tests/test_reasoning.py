@@ -25,7 +25,6 @@ from fit_ontology.reasoning import (
     generate_recommendation,
 )
 
-
 # ---- Fixture builders ---------------------------------------------------
 
 def _stable_metric(client_id: str, kind: str, baseline: float, today: date,
@@ -130,14 +129,18 @@ def test_two_moderate_signals_trigger_deload():
 
 
 def test_single_mild_signal_yields_conservative():
-    """A single mild HRV deviation → conservative, not deload."""
+    """A single mild HRV deviation → conservative progression.
+
+    The fixture's jitter is deterministically seeded (random.Random
+    keyed by metric kind + baseline), so this assertion is stable
+    across pytest runs. The earlier hedge "conservative or standard,
+    both acceptable" hid the actual contract — pin it.
+    """
     today = date.today()
     m = _metrics("c1", today=today, hrv_baseline=55, hrv_acute=51, sleep_acute=7.8)
     s = _sessions("c1", today=today, rpe_baseline=6)
     r = generate_recommendation("c1", m, s, today=today)
-    # Either conservative or standard depending on jitter; both are
-    # acceptable for a single mild deviation — but never deload.
-    assert "deload" not in r.recommendation.lower()
+    assert "conservative progression" in r.recommendation.lower()
 
 
 def test_rhr_elevated_contributes_to_signal_count():

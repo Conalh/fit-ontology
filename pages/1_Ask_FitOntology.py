@@ -13,17 +13,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-try:
-    from dotenv import load_dotenv
+from fit_ontology.config import load_env  # noqa: E402
 
-    load_dotenv(ROOT / ".env")
-except ImportError:
-    pass
+load_env(ROOT)
 
-import streamlit as st
+import streamlit as st  # noqa: E402
 
-from fit_ontology.assistant import DEFAULT_MODEL, ask
-
+from fit_ontology.assistant import DEFAULT_MODEL, ask  # noqa: E402
 
 st.set_page_config(page_title="Ask FitOntology", page_icon="💬", layout="wide")
 st.title("Ask FitOntology")

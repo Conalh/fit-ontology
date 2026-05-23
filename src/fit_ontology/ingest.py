@@ -17,7 +17,7 @@ import hashlib
 import json
 import zipfile
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from xml.etree import ElementTree as ET
 

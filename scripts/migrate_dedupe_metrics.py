@@ -23,7 +23,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-import pandas as pd
 
 from fit_ontology.db import connect
 from fit_ontology.ingest import metric_id

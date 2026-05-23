@@ -1,0 +1,48 @@
+# Lint config. Sized to a small project — stricter than autoformat-only,
+# looser than "enable every rule and fix the resulting noise."
+#
+# Selected rule families:
+#   E, W    — pycodestyle (PEP 8 errors and warnings)
+#   F       — pyflakes (unused imports, undefined names, etc.)
+#   I       — isort (import ordering and grouping)
+#   UP      — pyupgrade (modern Python idioms; we target 3.11+)
+#   B       — flake8-bugbear (common pitfalls: mutable defaults, etc.)
+#   SIM     — flake8-simplify (small clarity wins)
+#
+# Explicitly NOT enabled: D (pydocstyle) — module docstrings are intentional
+# but per-function docstrings on small helpers would be noise; the codebase
+# already documents the WHY where it matters.
+
+line-length = 110
+target-version = "py311"
+
+[lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",   # line length — line-length above is informational; ruff format
+              # already handles long lines, and we sometimes intentionally
+              # let a log message run a bit long.
+    "B008",   # function call in default arg — pydantic Field(...) and pandas
+              # use this pattern broadly.
+    "UP042",  # str-Enum -> StrEnum — would change Pydantic serialization
+              # behavior in ways the test suite doesn't pin. Revisit when
+              # the project moves to Pydantic v3.
+    "SIM108", # ternary-vs-if-else — preference; the if/else version is
+              # often clearer when the branches express intent.
+]
+
+[lint.per-file-ignores]
+"tests/*.py" = [
+    "F401",   # unused imports — tests sometimes import side-effect modules
+]
+# Streamlit entry points and CLI scripts intentionally do `sys.path.insert`
+# (or load .env) before importing `fit_ontology` — pyproject.toml-based
+# editable install would let this go away, but until then the order is
+# load-bearing.
+"app.py" = ["E402"]
+"pages/*.py" = ["E402"]
+"scripts/*.py" = ["E402"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
