@@ -166,6 +166,67 @@ def test_pdf_endpoint_returns_pdf_bytes(app_with_db):
     assert "attachment" in r.headers.get("content-disposition", "")
 
 
+def test_post_client_creates_row(app_with_db):
+    payload = {
+        "name": "New Client",
+        "sex": "F",
+        "age": 31,
+        "height_cm": 168.0,
+        "weight_kg": 62.0,
+        "goal": "Half marathon Q3",
+        "injury_history": None,
+    }
+    r = app_with_db.post("/api/clients", json=payload)
+    assert r.status_code == 200, r.text
+    new_id = r.json()["id"]
+    assert new_id.startswith("c_")
+
+    # Confirm it actually landed in the roster.
+    listed = app_with_db.get("/api/clients").json()
+    assert any(c["id"] == new_id for c in listed)
+
+    detail = app_with_db.get(f"/api/clients/{new_id}").json()
+    assert detail["name"] == "New Client"
+    assert detail["sex"] == "F"
+    assert detail["goal"] == "Half marathon Q3"
+
+
+def test_post_client_validates_ranges(app_with_db):
+    bad = {
+        "name": "Bad", "sex": "F", "age": 5,  # below range
+        "height_cm": 165.0, "weight_kg": 60.0, "goal": "x",
+    }
+    assert app_with_db.post("/api/clients", json=bad).status_code == 422
+
+
+def test_patch_client_partial_update(app_with_db):
+    # The fixture seeds c_test as "Test Client". Rename + change goal,
+    # leave the other fields untouched and confirm they survive.
+    r = app_with_db.patch(
+        "/api/clients/c_test", json={"name": "Renamed Client", "goal": "Strength + GPP"}
+    )
+    assert r.status_code == 200, r.text
+    assert set(r.json()["updated"]) == {"name", "goal"}
+
+    detail = app_with_db.get("/api/clients/c_test").json()
+    assert detail["name"] == "Renamed Client"
+    assert detail["goal"] == "Strength + GPP"
+    # Age, height, weight from the fixture's ensure_client call must
+    # still be there.
+    assert detail["age"] == 30
+
+
+def test_patch_client_404_for_unknown(app_with_db):
+    r = app_with_db.patch("/api/clients/c_missing", json={"name": "Nope"})
+    assert r.status_code == 404
+
+
+def test_patch_client_noop_returns_ok(app_with_db):
+    r = app_with_db.patch("/api/clients/c_test", json={})
+    assert r.status_code == 200
+    assert r.json()["updated"] == []
+
+
 def test_upload_apple_health_xml(app_with_db, tmp_path: Path):
     xml = """<?xml version="1.0"?>
 <HealthData>
