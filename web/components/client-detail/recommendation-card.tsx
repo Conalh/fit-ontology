@@ -1,10 +1,19 @@
 import { useMemo } from "react";
 import { Donut } from "@/components/charts";
-import { VerdictBadge } from "@/components/chrome";
 import { Skeleton } from "@/components/skeleton";
 import type { OverrideRow, Recommendation } from "@/lib/api";
 import type { Verdict } from "./verdict-utils";
 
+/**
+ * Recommendation card — the hero of the detail page.
+ *
+ * The weekly verdict (Deload / Conservative / Standard) is THE answer
+ * the trainer is here for. Visual treatment reflects that: a 4px
+ * verdict-colored left rail, a display-size headline in the verdict's
+ * color, the rationale in generous reading type underneath, and the
+ * engine + agreement donuts off to the right rather than competing
+ * for the eye.
+ */
 export function RecommendationCard({
   rec,
   isLoading,
@@ -50,42 +59,82 @@ export function RecommendationCard({
     return { rate: agreed / sameType.length, agreed, total: sameType.length };
   }, [overrides, verdict]);
 
+  const verdictColor = verdictColorFor(verdict);
+
   return (
     <section
       style={{
         border: "1px solid var(--border)",
+        borderLeft: `4px solid ${verdictColor}`,
         borderRadius: 10,
         background: "var(--surface)",
         overflow: "hidden",
+        transition: "border-color 220ms ease",
       }}
     >
-      <div className="fit-rec-card" style={{ padding: "22px 24px 20px", display: "flex", gap: 28, alignItems: "flex-start" }}>
+      <div
+        className="fit-rec-card"
+        style={{
+          padding: "24px 28px 22px",
+          display: "flex",
+          gap: 32,
+          alignItems: "flex-start",
+        }}
+      >
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
             style={{
               fontSize: 10.5,
               color: "var(--text-muted)",
               textTransform: "uppercase",
-              letterSpacing: "0.08em",
+              letterSpacing: "0.1em",
               fontWeight: 500,
-              marginBottom: 8,
+              marginBottom: 12,
             }}
           >
-            {rec ? `Week of ${rec.week_of}` : "Loading"} · Recommendation
+            {rec ? `Week of ${rec.week_of}` : "Loading"} · This week&apos;s call
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-            <VerdictBadge verdict={verdict} size="lg" />
-            <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              gap: 14,
+              flexWrap: "wrap",
+              marginBottom: 16,
+            }}
+          >
+            <h2
+              style={{
+                margin: 0,
+                fontSize: 34,
+                fontWeight: 700,
+                letterSpacing: "-0.035em",
+                color: verdictColor,
+                lineHeight: 1,
+                transition: "color 220ms ease",
+              }}
+            >
+              {verdictLabel(verdict)}
+            </h2>
+            <span
+              style={{
+                fontSize: 14,
+                color: "var(--text-muted)",
+                fontWeight: 400,
+              }}
+            >
               {verdictSubtitle(verdict)}
             </span>
           </div>
+
           <p
             style={{
-              fontSize: 15,
+              fontSize: 14.5,
               color: "var(--text)",
-              margin: "6px 0 0",
+              margin: 0,
               maxWidth: 640,
-              lineHeight: 1.5,
+              lineHeight: 1.6,
               letterSpacing: "-0.005em",
             }}
           >
@@ -98,33 +147,35 @@ export function RecommendationCard({
               summary || "Recovery markers look healthy. No flags."
             )}
           </p>
+
           {rec && (
             <div
               style={{
-                marginTop: 14,
-                padding: "10px 12px",
+                marginTop: 18,
+                padding: "11px 14px",
                 background: "var(--surface-2)",
                 border: "1px solid var(--border)",
-                borderRadius: 6,
+                borderRadius: 7,
                 fontSize: 13,
                 color: "var(--text)",
                 display: "flex",
-                gap: 8,
+                gap: 10,
+                alignItems: "center",
               }}
             >
               <svg
-                width="14"
-                height="14"
+                width="15"
+                height="15"
                 viewBox="0 0 20 20"
                 fill="none"
-                stroke="var(--text-muted)"
-                strokeWidth="1.5"
-                style={{ flexShrink: 0, marginTop: 2 }}
+                stroke={verdictColor}
+                strokeWidth="1.6"
+                style={{ flexShrink: 0, transition: "stroke 220ms ease" }}
               >
                 <circle cx="10" cy="10" r="7" />
                 <path d="M10 6v4l3 2" strokeLinecap="round" />
               </svg>
-              <span style={{ flex: 1 }}>{rec.recommendation}</span>
+              <span style={{ flex: 1, lineHeight: 1.4 }}>{rec.recommendation}</span>
             </div>
           )}
         </div>
@@ -136,7 +187,7 @@ export function RecommendationCard({
               display: "flex",
               gap: 24,
               alignItems: "center",
-              paddingLeft: 24,
+              paddingLeft: 28,
               borderLeft: "1px solid var(--border)",
             }}
           >
@@ -198,7 +249,7 @@ export function RecommendationCard({
       {flags.length > 0 && (
         <div
           style={{
-            padding: "11px 24px",
+            padding: "12px 28px",
             background: "var(--surface-2)",
             borderTop: "1px solid var(--border)",
             display: "flex",
@@ -208,7 +259,9 @@ export function RecommendationCard({
             color: "var(--text-muted)",
           }}
         >
-          <span style={{ color: "var(--text)", fontWeight: 500 }}>{flags.length} signal{flags.length === 1 ? "" : "s"} fired</span>
+          <span style={{ color: "var(--text)", fontWeight: 500 }}>
+            {flags.length} signal{flags.length === 1 ? "" : "s"} fired
+          </span>
           <span>·</span>
           <span style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
             {flags.map((f) => (
@@ -234,8 +287,23 @@ export function RecommendationCard({
   );
 }
 
+function verdictColorFor(verdict: Verdict): string {
+  if (verdict === "DELOAD") return "var(--danger)";
+  if (verdict === "CONSERVATIVE") return "var(--warn)";
+  if (verdict === "STANDARD") return "var(--ok)";
+  return "var(--text-muted)";
+}
+
+function verdictLabel(verdict: Verdict): string {
+  if (verdict === "DELOAD") return "Deload";
+  if (verdict === "CONSERVATIVE") return "Conservative";
+  if (verdict === "STANDARD") return "Standard";
+  return "No data";
+}
+
 function verdictSubtitle(verdict: Verdict) {
   if (verdict === "DELOAD") return "Pull back to recover";
   if (verdict === "CONSERVATIVE") return "Hold intensity, reduce volume";
-  return "Proceed with planned progression";
+  if (verdict === "STANDARD") return "Proceed with planned progression";
+  return "Awaiting wearable data";
 }

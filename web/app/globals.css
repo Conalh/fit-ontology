@@ -256,9 +256,52 @@ svg polyline {
   }
 }
 
+/* Roster row hover — subtle background shift so the trainer's eye
+   knows the row is clickable. Inline transition is set on the row's
+   style; this just defines the hover state. */
+.fit-roster-row:hover {
+  background: var(--surface-2);
+}
+
 /* Responsive overrides — the layout's inline styles handle the desktop
    shape; these media queries selectively override the layout-only bits
    (display, grid columns, flex direction) at narrower viewports. */
+
+@media (max-width: 720px) {
+  /* Roster collapses from table-shape to stacked cards. The hidden
+     header strip + each row's named grid areas swap to a 2-column,
+     3-row layout: name + conf on top, verdict + last-data underneath,
+     flags spanning the full width below. Tap target stays large enough
+     for a thumb. */
+  .fit-roster-header {
+    display: none !important;
+  }
+  .fit-roster-row {
+    grid-template-columns: 1fr auto !important;
+    grid-template-areas:
+      "client conf"
+      "verdict last"
+      "flags flags" !important;
+    row-gap: 8px !important;
+    padding: 14px 16px !important;
+  }
+  .fit-roster-client { grid-area: client; }
+  .fit-roster-verdict { grid-area: verdict; }
+  .fit-roster-flags {
+    grid-area: flags;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    border-top: 1px dashed var(--border);
+    padding-top: 8px;
+  }
+  .fit-roster-conf {
+    grid-area: conf;
+    font-size: 16px !important;
+    font-weight: 600;
+  }
+  .fit-roster-last { grid-area: last; }
+}
 
 @media (max-width: 1023px) {
   /* Sidebar hides on mobile/tablet — the breadcrumb in the top bar plus

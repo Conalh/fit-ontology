@@ -183,6 +183,10 @@ function RosterTable({ rows }: { rows: RosterRow[] }) {
   const sorted = [...rows].sort(
     (a, b) => RANK[a.label] - RANK[b.label] || (b.confidence ?? 0) - (a.confidence ?? 0),
   );
+  // Grid layout instead of a <table> so we can restructure into a
+  // stacked-card shape on phones via CSS grid-template-areas. Same row
+  // shape, totally different visual at <720px. See globals.css for the
+  // mobile breakpoint rules tied to .fit-roster-row / .fit-roster-header.
   return (
     <section
       style={{
@@ -192,95 +196,130 @@ function RosterTable({ rows }: { rows: RosterRow[] }) {
         overflow: "hidden",
       }}
     >
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-        <thead>
-          <tr
+      <div
+        className="fit-roster-header"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 140px 1fr 70px 100px",
+          gap: 12,
+          alignItems: "center",
+          padding: "11px 16px",
+          fontSize: 10.5,
+          color: "var(--text-muted)",
+          textTransform: "uppercase",
+          letterSpacing: "0.08em",
+          fontWeight: 500,
+          background: "var(--surface-2)",
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
+        <span>Client</span>
+        <span>Recommendation</span>
+        <span>Flags</span>
+        <span style={{ textAlign: "right" }}>Conf</span>
+        <span style={{ textAlign: "right" }}>Last data</span>
+      </div>
+
+      {sorted.map((row) => {
+        const accent = defaultAccentForClient(row.client_id);
+        return (
+          <Link
+            key={row.client_id}
+            href={`/clients?id=${row.client_id}`}
+            className="fit-roster-row"
             style={{
-              fontSize: 10.5,
-              color: "var(--text-muted)",
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              borderBottom: "1px solid var(--border)",
-              background: "var(--surface-2)",
+              display: "grid",
+              gridTemplateColumns: "1fr 140px 1fr 70px 100px",
+              gap: 12,
+              alignItems: "center",
+              padding: "12px 16px",
+              borderTop: "1px solid var(--border)",
+              color: "var(--text)",
+              textDecoration: "none",
+              transition: "background 0.15s",
             }}
           >
-            <th style={{ textAlign: "left", padding: "11px 16px", fontWeight: 500 }}>Client</th>
-            <th style={{ textAlign: "left", padding: "11px 0", fontWeight: 500 }}>Recommendation</th>
-            <th style={{ textAlign: "left", padding: "11px 0", fontWeight: 500 }}>Flags</th>
-            <th style={{ textAlign: "right", padding: "11px 0", fontWeight: 500 }}>Conf</th>
-            <th style={{ textAlign: "right", padding: "11px 16px", fontWeight: 500 }}>Last data</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map((row) => {
-            const accent = defaultAccentForClient(row.client_id);
-            return (
-              <tr key={row.client_id} style={{ borderTop: "1px solid var(--border)" }}>
-                <td style={{ padding: "11px 16px" }}>
-                  <Link
-                    href={`/clients?id=${row.client_id}`}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      color: "var(--text)",
-                      textDecoration: "none",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: 26,
-                        height: 26,
-                        borderRadius: 6,
-                        background: withAlpha(accent, 0.16),
-                        color: accent,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: 10.5,
-                        fontWeight: 600,
-                        flexShrink: 0,
-                      }}
-                    >
-                      {initialsFor(row.name)}
-                    </div>
-                    <div>
-                      <div style={{ fontWeight: 500, color: "var(--text)" }}>{row.name}</div>
-                      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{row.goal}</div>
-                    </div>
-                  </Link>
-                </td>
-                <td style={{ padding: "11px 0" }}>
-                  <VerdictBadge verdict={labelToVerdict(row.label)} />
-                </td>
-                <td style={{ padding: "11px 0", fontSize: 11.5, color: "var(--text-muted)" }}>
-                  {row.flags.length === 0 ? "—" : row.flags.join(", ")}
-                </td>
-                <td
+            <div
+              className="fit-roster-client"
+              style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}
+            >
+              <div
+                style={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: 7,
+                  background: withAlpha(accent, 0.16),
+                  color: accent,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  flexShrink: 0,
+                }}
+              >
+                {initialsFor(row.name)}
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 500, color: "var(--text)" }}>{row.name}</div>
+                <div
                   style={{
-                    padding: "11px 0",
-                    textAlign: "right",
-                    color: "var(--text)",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {row.confidence == null ? "—" : `${Math.round(row.confidence * 100)}%`}
-                </td>
-                <td
-                  style={{
-                    padding: "11px 16px",
-                    textAlign: "right",
+                    fontSize: 11,
                     color: "var(--text-muted)",
-                    fontVariantNumeric: "tabular-nums",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
                   }}
                 >
-                  {row.last_data_days == null ? "—" : `${row.last_data_days}d ago`}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                  {row.goal}
+                </div>
+              </div>
+            </div>
+
+            <div className="fit-roster-verdict">
+              <VerdictBadge verdict={labelToVerdict(row.label)} />
+            </div>
+
+            <div
+              className="fit-roster-flags"
+              style={{
+                fontSize: 11.5,
+                color: "var(--text-muted)",
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {row.flags.length === 0 ? "—" : row.flags.join(", ")}
+            </div>
+
+            <div
+              className="fit-roster-conf"
+              style={{
+                textAlign: "right",
+                color: "var(--text)",
+                fontVariantNumeric: "tabular-nums",
+                fontSize: 13,
+              }}
+            >
+              {row.confidence == null ? "—" : `${Math.round(row.confidence * 100)}%`}
+            </div>
+
+            <div
+              className="fit-roster-last"
+              style={{
+                textAlign: "right",
+                color: "var(--text-muted)",
+                fontVariantNumeric: "tabular-nums",
+                fontSize: 12,
+              }}
+            >
+              {row.last_data_days == null ? "—" : `${row.last_data_days}d ago`}
+            </div>
+          </Link>
+        );
+      })}
     </section>
   );
 }
