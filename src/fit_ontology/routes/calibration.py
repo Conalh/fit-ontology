@@ -22,11 +22,19 @@ router = APIRouter()
 
 @router.get("/api/calibration", response_model=CalibrationResponse)
 def get_calibration(con=Depends(read_only_conn)) -> CalibrationResponse:
+    # Plan adherence is independent of override history — compute it
+    # first so suggestions on a brand-new trainer (no overrides yet) can
+    # still surface "this client is off-plan" before the override-based
+    # signals have anything to say.
+    plan_adherence = _build_plan_adherence(con)
+
     df = all_overrides(con, limit=1000)
     if df.empty:
         return CalibrationResponse(
             total=0, accept_rate=0.0, edits=0, rejects=0, matrix={}, recent=[],
-            by_week=[], by_client=[], suggestions=[],
+            by_week=[], by_client=[],
+            suggestions=_build_suggestions(pd.DataFrame(), plan_adherence),
+            plan_adherence=plan_adherence,
         )
 
     df = df.copy()
@@ -46,9 +54,8 @@ def get_calibration(con=Depends(read_only_conn)) -> CalibrationResponse:
 
     by_week = _build_weekly_agreement(df)
     by_client = _build_per_client_agreement(con, df)
-    suggestions = _build_suggestions(df)
+    suggestions = _build_suggestions(df, plan_adherence)
     confidence_audit = _build_confidence_audit(con)
-    plan_adherence = _build_plan_adherence(con)
 
     return CalibrationResponse(
         total=total,
@@ -255,60 +262,144 @@ def _build_per_client_agreement(con, df: pd.DataFrame) -> list[PerClientAgreemen
     return rows
 
 
-def _build_suggestions(df: pd.DataFrame) -> list[CalibrationSuggestion]:
+def _build_suggestions(
+    df: pd.DataFrame,
+    plan_adherence: list[PlanAdherenceRow] | None = None,
+) -> list[CalibrationSuggestion]:
     """Rule-based tuning prompts. These aren't ML; they're explicit
     if/then heuristics the trainer can audit. The "explainable beats
     clever" thesis applies — a trainer who can't reason about why a
-    suggestion appeared won't trust it."""
+    suggestion appeared won't trust it.
+
+    Sources of signal:
+      - ``df``              the recommendation_overrides log
+                            (engine-vs-trainer agreement patterns)
+      - ``plan_adherence``  per-client plan-vs-execution rows derived
+                            from the planned_sessions ⋈ sessions join
+                            (did the client actually do the work?)
+
+    Override-based rules surface trainer-engine drift. Adherence-based
+    rules surface trainer-client drift. Both go in the same suggestions
+    list so the trainer sees a single consolidated "things to consider"
+    panel, sorted naturally by severity (warn > info).
+    """
     suggestions: list[CalibrationSuggestion] = []
 
-    # Rule 1: ≥60% of recent (last 5) deload calls were not accepted →
-    # HRV thresholds may be too sensitive for this trainer's clients.
-    deloads = df[df["system_type"] == "Deload"].sort_values("created_at", ascending=False).head(5)
-    if len(deloads) >= 3:
-        rejected_or_edited = int(((deloads["trainer_action"] == "reject") | (deloads["trainer_action"] == "edit")).sum())
-        if rejected_or_edited / len(deloads) >= 0.6:
-            suggestions.append(CalibrationSuggestion(
-                kind="threshold_tune",
-                severity="warn",
-                message=(
-                    f"You've pushed back on {rejected_or_edited} of the last {len(deloads)} deload calls. "
-                    f"Consider raising hrv_severe_sd or rhr_severe_bpm in the affected clients' threshold panel — "
-                    f"your athletes may be more reactive than the population default."
-                ),
-                target="hrv_severe_sd",
-            ))
+    # ---- Override-based rules (engine ↔ trainer drift) -----------------
 
-    # Rule 2: ≥50% of recent (last 5) standard calls were edited or
-    # rejected → standard progression may be too aggressive for this practice.
-    standards = df[df["system_type"] == "Standard"].sort_values("created_at", ascending=False).head(5)
-    if len(standards) >= 3:
-        not_accepted = int((standards["trainer_action"] != "accept").sum())
-        if not_accepted / len(standards) >= 0.5:
-            suggestions.append(CalibrationSuggestion(
-                kind="threshold_tune",
-                severity="info",
-                message=(
-                    f"You've adjusted {not_accepted} of the last {len(standards)} standard-progression calls. "
-                    f"The ACSM 5-10% range may be too aggressive for your clients — consider tuning per client."
-                ),
-                target=None,
-            ))
-
-    # Rule 3: any single client with ≥3 overrides and accept rate ≤0.25
-    # → flag for review.
-    for client_id, group in df.groupby("client_id"):
-        if len(group) >= 3:
-            rate = (group["trainer_action"] == "accept").sum() / len(group)
-            if rate <= 0.25:
+    if not df.empty:
+        # Rule 1: ≥60% of recent (last 5) deload calls were not accepted →
+        # HRV thresholds may be too sensitive for this trainer's clients.
+        deloads = df[df["system_type"] == "Deload"].sort_values("created_at", ascending=False).head(5)
+        if len(deloads) >= 3:
+            rejected_or_edited = int(((deloads["trainer_action"] == "reject") | (deloads["trainer_action"] == "edit")).sum())
+            if rejected_or_edited / len(deloads) >= 0.6:
                 suggestions.append(CalibrationSuggestion(
-                    kind="per_client_drift",
+                    kind="threshold_tune",
                     severity="warn",
                     message=(
-                        f"You've accepted only {int((group['trainer_action'] == 'accept').sum())} of "
-                        f"{len(group)} system calls for this client. Their thresholds may need per-client tuning."
+                        f"You've pushed back on {rejected_or_edited} of the last {len(deloads)} deload calls. "
+                        f"Consider raising hrv_severe_sd or rhr_severe_bpm in the affected clients' threshold panel — "
+                        f"your athletes may be more reactive than the population default."
                     ),
-                    target=str(client_id),
+                    target="hrv_severe_sd",
                 ))
 
+        # Rule 2: ≥50% of recent (last 5) standard calls were edited or
+        # rejected → standard progression may be too aggressive for this practice.
+        standards = df[df["system_type"] == "Standard"].sort_values("created_at", ascending=False).head(5)
+        if len(standards) >= 3:
+            not_accepted = int((standards["trainer_action"] != "accept").sum())
+            if not_accepted / len(standards) >= 0.5:
+                suggestions.append(CalibrationSuggestion(
+                    kind="threshold_tune",
+                    severity="info",
+                    message=(
+                        f"You've adjusted {not_accepted} of the last {len(standards)} standard-progression calls. "
+                        f"The ACSM 5-10% range may be too aggressive for your clients — consider tuning per client."
+                    ),
+                    target=None,
+                ))
+
+        # Rule 3: any single client with ≥3 overrides and accept rate ≤0.25
+        # → flag for review.
+        for client_id, group in df.groupby("client_id"):
+            if len(group) >= 3:
+                rate = (group["trainer_action"] == "accept").sum() / len(group)
+                if rate <= 0.25:
+                    suggestions.append(CalibrationSuggestion(
+                        kind="per_client_drift",
+                        severity="warn",
+                        message=(
+                            f"You've accepted only {int((group['trainer_action'] == 'accept').sum())} of "
+                            f"{len(group)} system calls for this client. Their thresholds may need per-client tuning."
+                        ),
+                        target=str(client_id),
+                    ))
+
+    # ---- Plan-adherence rules (trainer ↔ client drift) -----------------
+
+    for row in (plan_adherence or []):
+        # Rule 4 (warn): The "out of sync" client — they're skipping
+        # prescribed sessions AND when they do train, they're way off
+        # the prescribed intensity. Both signals at once suggests a
+        # conversation, not a threshold tune.
+        if (
+            row.total_slots >= 3
+            and row.match_rate < 0.6
+            and row.load_delta_pct is not None
+            and abs(row.load_delta_pct) >= 25
+        ):
+            direction = "over" if row.load_delta_pct > 0 else "under"
+            suggestions.append(CalibrationSuggestion(
+                kind="plan_adherence",
+                severity="warn",
+                message=(
+                    f"{row.name}'s plan adherence is {int(row.match_rate * 100)}% "
+                    f"({row.matched_slots} of {row.total_slots} slots), and the sessions they did do "
+                    f"averaged {row.load_delta_pct:+.0f}% load vs. plan — they're training "
+                    f"{direction} the prescription. Worth a check-in on pacing."
+                ),
+                target=row.client_id,
+            ))
+            continue  # don't double-flag with the milder rules below
+
+        # Rule 5 (info): Just low adherence — they're not showing up
+        # for the prescribed work. Could be life, could be that the
+        # plan doesn't fit their actual schedule. Soft signal.
+        if row.total_slots >= 4 and row.match_rate <= 0.5:
+            suggestions.append(CalibrationSuggestion(
+                kind="plan_adherence",
+                severity="info",
+                message=(
+                    f"{row.name} executed {row.matched_slots} of {row.total_slots} prescribed sessions "
+                    f"({int(row.match_rate * 100)}%). Consider whether the plan template matches "
+                    f"their actual training week."
+                ),
+                target=row.client_id,
+            ))
+            continue
+
+        # Rule 6 (info): Just systematic load drift — they're showing up
+        # but consistently harder or softer than asked. Useful for
+        # spotting clients who need explicit RPE coaching.
+        if (
+            row.matched_slots >= 3
+            and row.load_delta_pct is not None
+            and abs(row.load_delta_pct) >= 30
+        ):
+            direction = "over" if row.load_delta_pct > 0 else "under"
+            suggestions.append(CalibrationSuggestion(
+                kind="plan_adherence",
+                severity="info",
+                message=(
+                    f"{row.name} is consistently training {direction} plan "
+                    f"({row.load_delta_pct:+.0f}% load across {row.matched_slots} executed sessions). "
+                    f"Consider explicit RPE coaching."
+                ),
+                target=row.client_id,
+            ))
+
+    # Stable sort: keep insertion order within each severity, warn-first.
+    suggestions.sort(key=lambda s: 0 if s.severity == "warn" else 1)
     return suggestions

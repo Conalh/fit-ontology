@@ -137,7 +137,7 @@ export interface PerClientAgreement {
 }
 
 export interface CalibrationSuggestion {
-  kind: "threshold_tune" | "per_client_drift";
+  kind: "threshold_tune" | "per_client_drift" | "plan_adherence";
   severity: "info" | "warn";
   message: string;
   target: string | null;

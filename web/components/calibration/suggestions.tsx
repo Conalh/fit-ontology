@@ -55,7 +55,7 @@ export function Suggestions({ items }: { items: CalibrationSuggestion[] }) {
               {s.severity}
             </span>
             <span style={{ flex: 1, color: "var(--text)", lineHeight: 1.5 }}>{s.message}</span>
-            {s.kind === "per_client_drift" && s.target && (
+            {(s.kind === "per_client_drift" || s.kind === "plan_adherence") && s.target && (
               <Link
                 href={`/clients/?id=${s.target}`}
                 style={{ fontSize: 11.5, color: "var(--accent)", textDecoration: "none", whiteSpace: "nowrap" }}
