@@ -84,7 +84,12 @@ export function TrendChart({
 }: TrendChartProps) {
   const uid = useId().replace(/:/g, "");
   const gradId = `grad-${uid}`;
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  // hover.y is the cursor's Y in SVG coords so the bubble can ride the
+  // cursor (vs. being pinned to the data point's Y, which left the
+  // bubble far from the user's eye on tall charts). idx stays so the
+  // vertical guide + dot still snap to the nearest data point.
+  const [hover, setHover] = useState<{ idx: number; y: number } | null>(null);
+  const hoverIdx = hover?.idx ?? null;
 
   if (!data || data.length === 0) {
     return (
@@ -289,28 +294,24 @@ export function TrendChart({
             stroke="var(--surface)"
             strokeWidth="1.5"
           />
-          {showBubble && (() => {
+          {showBubble && hover && (() => {
             const pt = data[hoverIdx];
             const valueText = `${pt.value.toFixed(pt.value < 10 ? 1 : 0)}${unit}`;
             const dayText = pt.day === 0 ? "today" : `${Math.abs(pt.day)}d ago`;
-            // Tight value bubble — only the number, sized to fit. The day
-            // offset rides at the bottom of the chart as a small muted
-            // label aligned with the guide line, so the bubble doesn't
-            // have to grow to contain both.
             const charW = 5.4;
             const padX = 6;
             const bubbleW = valueText.length * charW + padX * 2;
             const bubbleH = 15;
             const dotX = x(hoverIdx);
-            const dotY = y(pt.value);
             const bubbleCx = Math.max(
               padL + bubbleW / 2 + 2,
               Math.min(padL + innerW - bubbleW / 2 - 2, dotX),
             );
-            const above = dotY - bubbleH - 8 >= padT;
-            const bubbleY = above ? dotY - bubbleH - 6 : dotY + 6;
-            // Day label: clamped same way, sits at the bottom of the
-            // inner chart area where axis text normally lives.
+            // Bubble rides ~26px above the cursor so it stays out from
+            // under a finger on touch. Clamp to the top of the inner
+            // chart area so it doesn't escape the SVG.
+            const desiredY = hover.y - 26 - bubbleH;
+            const bubbleY = Math.max(padT - 4, desiredY);
             const dayCx = Math.max(padL + 16, Math.min(padL + innerW - 16, dotX));
             return (
               <g>
@@ -349,10 +350,11 @@ export function TrendChart({
         </g>
       )}
 
-      {/* Pointer-capture overlay. Transparent rect over the plot area
-          maps pointer x → nearest data index. ``touchAction: none``
-          prevents the page from scrolling while the user drags across
-          the chart on a touchscreen. */}
+      {/* Pointer-capture overlay. Maps pointer x → nearest data index
+          for the dot/guide; tracks pointer y so the bubble can ride the
+          cursor (better with a finger covering the touch point).
+          ``touchAction: none`` prevents the page from scrolling while
+          the user drags across the chart on a touchscreen. */}
       <rect
         x={padL}
         y={padT}
@@ -363,22 +365,22 @@ export function TrendChart({
         onPointerMove={(e: ReactPointerEvent<SVGRectElement>) => {
           const rect = e.currentTarget.getBoundingClientRect();
           if (rect.width === 0) return;
-          // Map screen pixels back into SVG viewBox units, then into the
-          // data index for this point.
           const svgX = ((e.clientX - rect.left) / rect.width) * innerW;
+          const svgY = ((e.clientY - rect.top) / rect.height) * innerH;
           const t = svgX / innerW;
           const idx = Math.max(0, Math.min(data.length - 1, Math.round(t * (data.length - 1))));
-          if (idx !== hoverIdx) {
-            setHoverIdx(idx);
-            onHover?.(idx);
+          const cursorY = padT + svgY;
+          if (!hover || idx !== hover.idx || Math.abs(cursorY - hover.y) > 1) {
+            setHover({ idx, y: cursorY });
+            if (!hover || idx !== hover.idx) onHover?.(idx);
           }
         }}
         onPointerLeave={() => {
-          setHoverIdx(null);
+          setHover(null);
           onHover?.(null);
         }}
         onPointerCancel={() => {
-          setHoverIdx(null);
+          setHover(null);
           onHover?.(null);
         }}
       />
@@ -409,7 +411,8 @@ export function LoadBars({
    * load AU. Off by default. */
   showBubble?: boolean;
 }) {
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [hover, setHover] = useState<{ idx: number; y: number } | null>(null);
+  const hoverIdx = hover?.idx ?? null;
 
   if (!data || data.length === 0) {
     return (
@@ -469,23 +472,25 @@ export function LoadBars({
             strokeDasharray="3 3"
             opacity="0.6"
           />
-          {showBubble && (() => {
+          {showBubble && hover && (() => {
             const pt = data[hoverIdx];
             const dayText = pt.day === 0 ? "today" : `${Math.abs(pt.day)}d ago`;
-            const valueText = `${pt.load.toLocaleString()} AU`;
+            // LoadBars chart is wider than the trend cells, so the bubble
+            // carries both pieces of info ("450 AU · 21d ago"). Avoids
+            // colliding with the static axis day labels at the bottom of
+            // the chart.
+            const label = `${pt.load.toLocaleString()} AU · ${dayText}`;
             const charW = 5.4;
-            const padX = 6;
-            const bubbleW = valueText.length * charW + padX * 2;
-            const bubbleH = 15;
+            const padX = 7;
+            const bubbleW = label.length * charW + padX * 2;
+            const bubbleH = 17;
             const cx = padL + (hoverIdx + 0.5) * (innerW / data.length);
-            const barTop = padT + innerH - (pt.load / Math.max(...data.map((d) => d.load), 100)) * innerH;
             const bubbleCx = Math.max(
               padL + bubbleW / 2 + 2,
               Math.min(padL + innerW - bubbleW / 2 - 2, cx),
             );
-            const above = barTop - bubbleH - 6 >= padT;
-            const bubbleY = above ? barTop - bubbleH - 4 : barTop + 4;
-            const dayCx = Math.max(padL + 16, Math.min(padL + innerW - 16, cx));
+            const desiredY = hover.y - 26 - bubbleH;
+            const bubbleY = Math.max(padT - 4, desiredY);
             return (
               <g>
                 <rect
@@ -495,27 +500,17 @@ export function LoadBars({
                   height={bubbleH}
                   rx="3"
                   fill="var(--text)"
-                  opacity="0.92"
+                  opacity="0.94"
                 />
                 <text
                   x={bubbleCx}
-                  y={bubbleY + bubbleH / 2 + 3.2}
-                  fontSize="9.5"
+                  y={bubbleY + bubbleH / 2 + 3.6}
+                  fontSize="10"
                   textAnchor="middle"
                   fill="var(--surface)"
                   style={{ fontVariantNumeric: "tabular-nums", fontWeight: 500 }}
                 >
-                  {valueText}
-                </text>
-                <text
-                  x={dayCx}
-                  y={padT + innerH + 16}
-                  fontSize="9"
-                  textAnchor="middle"
-                  fill="var(--text-muted)"
-                  style={{ fontVariantNumeric: "tabular-nums" }}
-                >
-                  {dayText}
+                  {label}
                 </text>
               </g>
             );
@@ -553,19 +548,21 @@ export function LoadBars({
           const rect = e.currentTarget.getBoundingClientRect();
           if (rect.width === 0) return;
           const svgX = ((e.clientX - rect.left) / rect.width) * innerW;
+          const svgY = ((e.clientY - rect.top) / rect.height) * innerH;
           const t = svgX / innerW;
           const idx = Math.max(0, Math.min(data.length - 1, Math.floor(t * data.length)));
-          if (idx !== hoverIdx) {
-            setHoverIdx(idx);
-            onHover?.(idx);
+          const cursorY = padT + svgY;
+          if (!hover || idx !== hover.idx || Math.abs(cursorY - hover.y) > 1) {
+            setHover({ idx, y: cursorY });
+            if (!hover || idx !== hover.idx) onHover?.(idx);
           }
         }}
         onPointerLeave={() => {
-          setHoverIdx(null);
+          setHover(null);
           onHover?.(null);
         }}
         onPointerCancel={() => {
-          setHoverIdx(null);
+          setHover(null);
           onHover?.(null);
         }}
       />
