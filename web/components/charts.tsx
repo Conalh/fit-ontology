@@ -336,7 +336,7 @@ export function TrendChart({
                 </text>
                 <text
                   x={dayCx}
-                  y={padT + innerH + 16}
+                  y={padT + innerH + 13}
                   fontSize="9"
                   textAnchor="middle"
                   fill="var(--text-muted)"
