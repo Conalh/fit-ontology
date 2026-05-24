@@ -12,6 +12,7 @@ import { OverrideDrawer } from "@/components/client-detail/override-drawer";
 import { RecommendationCard } from "@/components/client-detail/recommendation-card";
 import { RecoveryGauge } from "@/components/client-detail/recovery-gauge";
 import { SendToClient } from "@/components/client-detail/send-to-client";
+import { SyncStatus } from "@/components/client-detail/sync-status";
 import { SessionsTable } from "@/components/client-detail/sessions-table";
 import { TrendsGrid } from "@/components/client-detail/trends-grid";
 import { ThresholdsPanel } from "@/components/thresholds-panel";
@@ -159,6 +160,8 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
           accentHex={accentHex}
           onAccentChange={setAccentHex}
         />
+
+        <SyncStatus metrics={metricsQ.data ?? []} />
 
         <div className="fit-page-body fit-fade-in-up" style={{ padding: "8px 28px 36px", display: "flex", flexDirection: "column", gap: 22 }}>
           {!metricsQ.isLoading && !sessionsQ.isLoading &&
