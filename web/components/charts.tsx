@@ -288,26 +288,27 @@ export function TrendChart({
           />
           {showBubble && (() => {
             const pt = data[hoverIdx];
-            const dayText = pt.day === 0 ? "today" : `${Math.abs(pt.day)}d ago`;
             const valueText = `${pt.value.toFixed(pt.value < 10 ? 1 : 0)}${unit}`;
-            const label = `${valueText} · ${dayText}`;
-            // Estimate width from char count — SVG <text> can't auto-size
-            // a backing rect, so we approximate at ~5.6px per char for
-            // the 10px font we're using.
-            const charW = 5.6;
-            const padX = 7;
-            const bubbleW = label.length * charW + padX * 2;
-            const bubbleH = 18;
+            const dayText = pt.day === 0 ? "today" : `${Math.abs(pt.day)}d ago`;
+            // Tight value bubble — only the number, sized to fit. The day
+            // offset rides at the bottom of the chart as a small muted
+            // label aligned with the guide line, so the bubble doesn't
+            // have to grow to contain both.
+            const charW = 5.4;
+            const padX = 6;
+            const bubbleW = valueText.length * charW + padX * 2;
+            const bubbleH = 15;
             const dotX = x(hoverIdx);
             const dotY = y(pt.value);
-            // Clamp horizontally so the bubble never leaves the chart.
             const bubbleCx = Math.max(
               padL + bubbleW / 2 + 2,
               Math.min(padL + innerW - bubbleW / 2 - 2, dotX),
             );
-            // Default above the dot; if there isn't room, flip below.
-            const above = dotY - bubbleH - 10 >= padT;
-            const bubbleY = above ? dotY - bubbleH - 8 : dotY + 8;
+            const above = dotY - bubbleH - 8 >= padT;
+            const bubbleY = above ? dotY - bubbleH - 6 : dotY + 6;
+            // Day label: clamped same way, sits at the bottom of the
+            // inner chart area where axis text normally lives.
+            const dayCx = Math.max(padL + 16, Math.min(padL + innerW - 16, dotX));
             return (
               <g>
                 <rect
@@ -321,13 +322,23 @@ export function TrendChart({
                 />
                 <text
                   x={bubbleCx}
-                  y={bubbleY + bubbleH / 2 + 3.5}
-                  fontSize="10"
+                  y={bubbleY + bubbleH / 2 + 3.2}
+                  fontSize="9.5"
                   textAnchor="middle"
                   fill="var(--surface)"
                   style={{ fontVariantNumeric: "tabular-nums", fontWeight: 500 }}
                 >
-                  {label}
+                  {valueText}
+                </text>
+                <text
+                  x={dayCx}
+                  y={padT + innerH - 2}
+                  fontSize="9"
+                  textAnchor="middle"
+                  fill="var(--text-muted)"
+                  style={{ fontVariantNumeric: "tabular-nums" }}
+                >
+                  {dayText}
                 </text>
               </g>
             );
@@ -452,19 +463,20 @@ export function LoadBars({
           {showBubble && (() => {
             const pt = data[hoverIdx];
             const dayText = pt.day === 0 ? "today" : `${Math.abs(pt.day)}d ago`;
-            const label = `${pt.load.toLocaleString()} AU · ${dayText}`;
-            const charW = 5.6;
-            const padX = 7;
-            const bubbleW = label.length * charW + padX * 2;
-            const bubbleH = 18;
+            const valueText = `${pt.load.toLocaleString()} AU`;
+            const charW = 5.4;
+            const padX = 6;
+            const bubbleW = valueText.length * charW + padX * 2;
+            const bubbleH = 15;
             const cx = padL + (hoverIdx + 0.5) * (innerW / data.length);
             const barTop = padT + innerH - (pt.load / Math.max(...data.map((d) => d.load), 100)) * innerH;
             const bubbleCx = Math.max(
               padL + bubbleW / 2 + 2,
               Math.min(padL + innerW - bubbleW / 2 - 2, cx),
             );
-            const above = barTop - bubbleH - 8 >= padT;
-            const bubbleY = above ? barTop - bubbleH - 6 : barTop + 6;
+            const above = barTop - bubbleH - 6 >= padT;
+            const bubbleY = above ? barTop - bubbleH - 4 : barTop + 4;
+            const dayCx = Math.max(padL + 16, Math.min(padL + innerW - 16, cx));
             return (
               <g>
                 <rect
@@ -478,13 +490,23 @@ export function LoadBars({
                 />
                 <text
                   x={bubbleCx}
-                  y={bubbleY + bubbleH / 2 + 3.5}
-                  fontSize="10"
+                  y={bubbleY + bubbleH / 2 + 3.2}
+                  fontSize="9.5"
                   textAnchor="middle"
                   fill="var(--surface)"
                   style={{ fontVariantNumeric: "tabular-nums", fontWeight: 500 }}
                 >
-                  {label}
+                  {valueText}
+                </text>
+                <text
+                  x={dayCx}
+                  y={padT + innerH - 2}
+                  fontSize="9"
+                  textAnchor="middle"
+                  fill="var(--text-muted)"
+                  style={{ fontVariantNumeric: "tabular-nums" }}
+                >
+                  {dayText}
                 </text>
               </g>
             );
