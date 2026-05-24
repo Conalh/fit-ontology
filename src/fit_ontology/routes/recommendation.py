@@ -19,7 +19,7 @@ from ..db import (
     sessions_for_client,
     thresholds_for_client,
 )
-from ..reasoning import compute_recovery_score, generate_recommendation
+from ..reasoning import FLAG_CITATIONS, compute_recovery_score, generate_recommendation
 from .deps import read_only_conn
 from .schemas import ContraindicationItem, RecommendationResponse, RecoveryScoreResponse
 
@@ -105,6 +105,7 @@ def get_recommendation(client_id: str) -> RecommendationResponse:
         generated_at=rec.generated_at,
         contraindications=contras,
         recovery_score=recovery,
+        flag_citations=FLAG_CITATIONS,
     )
 
 

@@ -101,16 +101,36 @@ DELOAD_LOAD_CUT = 0.20              # 20% cut; more aggressive than 15% reflects
                                     # recent autoregulation literature for clearly stressed states
 
 
-# Inline citations the detectors append to their summary strings. Keeping
-# these as a single dict means the source authority each rule cites is
-# auditable in one place — and if a paper gets superseded, we change the
-# citation here rather than chasing it through six summary strings.
+# Source authority for each rule. Kept as a dict so the API can serve
+# it to the UI (chip tooltips + a methodology footer) rather than each
+# rationale string carrying the citation inline — that interrupted the
+# reading flow without buying the trainer anything they couldn't see in
+# a static reference list.
 CITATIONS = {
     "hrv":   "Plews & Laursen 2017",
     "rhr":   "Buchheit 2014",
     "sleep": "ACSM 11e §7",
     "acwr":  "Gabbett 2016",
     "rpe":   "Foster sRPE 1995",
+}
+
+# Map each emitted flag kind to its citation key. Used by the API so
+# the front-end can show "Source: Plews & Laursen 2017" as a tooltip
+# on the corresponding flag chip without needing its own copy of this
+# routing logic.
+FLAG_CITATIONS: dict[str, str] = {
+    "hrv_below_baseline":     CITATIONS["hrv"],
+    "hrv_trend_down":         CITATIONS["hrv"],
+    "rhr_above_baseline":     CITATIONS["rhr"],
+    "rhr_trend_up":           CITATIONS["rhr"],
+    "sleep_deficit":          CITATIONS["sleep"],
+    "sleep_trend_down":       CITATIONS["sleep"],
+    "rpe_rising":             CITATIONS["rpe"],
+    "acwr_high":              CITATIONS["acwr"],
+    "acwr_low":               CITATIONS["acwr"],
+    # training_readiness_low is a Garmin proprietary composite, not an
+    # academic source — left out of the citations map. The flag still
+    # renders, the chip just has no tooltip source.
 }
 
 
@@ -305,7 +325,7 @@ def detect_hrv_signal(
         summary=(
             f"HRV averaged {acute:.0f} ms over the last {HRV_ACUTE_DAYS} days "
             f"vs. a {baseline_days}-day baseline of {baseline_mean:.0f} ms "
-            f"(-{drop_sd:.1f} SD; {CITATIONS['hrv']})."
+            f"(-{drop_sd:.1f} SD)."
         ),
         source_metric_ids=list({*acute_ids, *baseline_ids}),
     )
@@ -343,7 +363,7 @@ def detect_rhr_signal(
         summary=(
             f"Resting HR averaged {acute:.0f} bpm over the last {HRV_ACUTE_DAYS} days "
             f"vs. a {baseline_days}-day baseline of {baseline_mean:.0f} bpm "
-            f"(+{rise:.0f} bpm; {CITATIONS['rhr']})."
+            f"(+{rise:.0f} bpm)."
         ),
         source_metric_ids=list({*acute_ids, *baseline_ids}),
     )
@@ -398,7 +418,7 @@ def detect_sleep_signal(
     return Signal(
         kind="sleep_deficit",
         severity=severity,
-        summary=f"Sleep {'; '.join(parts)} ({CITATIONS['sleep']}).",
+        summary=f"Sleep {'; '.join(parts)}.",
         source_metric_ids=list({*hour_ids, *score_ids}),
     )
 
@@ -479,7 +499,7 @@ def detect_acwr_signal(
             summary=(
                 f"ACWR {ratio:.2f} (acute {acute_total:,.0f} AU vs. weekly chronic "
                 f"{weekly_chronic:,.0f} AU) — below the 0.8–1.3 safe zone, possible "
-                f"detraining ({CITATIONS['acwr']})."
+                f"detraining."
             ),
             source_metric_ids=contributing_ids,
         )
@@ -492,8 +512,7 @@ def detect_acwr_signal(
         severity=severity,
         summary=(
             f"ACWR {ratio:.2f} (acute {acute_total:,.0f} AU vs. weekly chronic "
-            f"{weekly_chronic:,.0f} AU) — above the 0.8–1.3 safe zone "
-            f"({CITATIONS['acwr']})."
+            f"{weekly_chronic:,.0f} AU) — above the 0.8–1.3 safe zone."
         ),
         source_metric_ids=contributing_ids,
     )
@@ -533,7 +552,7 @@ def detect_rpe_signal(
         severity=severity,
         summary=(
             f"Session RPE rose from {prior_mean:.1f} to {last_mean:.1f} across the last "
-            f"two weeks (+{rise:.1f}; {CITATIONS['rpe']})."
+            f"two weeks (+{rise:.1f})."
         ),
         source_metric_ids=contributing_ids,
     )
@@ -580,7 +599,7 @@ def detect_hrv_trend_signal(
         severity=severity,
         summary=(
             f"HRV trending down: {slope:+.1f} ms/day across the last {HRV_ACUTE_DAYS} days "
-            f"({sd_per_day:.2f} SD/day; {CITATIONS['hrv']})."
+            f"({sd_per_day:.2f} SD/day)."
         ),
         source_metric_ids=ids,
     )
@@ -613,7 +632,7 @@ def detect_rhr_trend_signal(
         severity=severity,
         summary=(
             f"Resting HR trending up: {slope:+.1f} bpm/day across the last {HRV_ACUTE_DAYS} days "
-            f"({sd_per_day:.2f} SD/day; {CITATIONS['rhr']})."
+            f"({sd_per_day:.2f} SD/day)."
         ),
         source_metric_ids=ids,
     )
@@ -645,7 +664,7 @@ def detect_sleep_trend_signal(
         severity=severity,
         summary=(
             f"Sleep trending down: {slope:+.2f} h/day across the last {HRV_ACUTE_DAYS} days "
-            f"({sd_per_day:.2f} SD/day; {CITATIONS['sleep']})."
+            f"({sd_per_day:.2f} SD/day)."
         ),
         source_metric_ids=ids,
     )

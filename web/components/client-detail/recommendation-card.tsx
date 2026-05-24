@@ -62,6 +62,20 @@ export function RecommendationCard({
 
   const verdictColor = verdictColorFor(verdict);
 
+  // Sources to surface as a small methodology footer — only those that
+  // actually fed *this* recommendation, deduped. Cited mid-sentence used
+  // to break reading flow; this puts them where the trainer can see
+  // them when curious without crowding the rationale.
+  const sources = useMemo(() => {
+    if (!rec?.flag_citations) return [] as string[];
+    const seen = new Set<string>();
+    for (const flag of flags) {
+      const s = rec.flag_citations[flag];
+      if (s) seen.add(s);
+    }
+    return [...seen];
+  }, [rec, flags]);
+
   return (
     <section
       style={{
@@ -247,6 +261,22 @@ export function RecommendationCard({
         )}
       </div>
 
+      {sources.length > 0 && (
+        <div
+          style={{
+            padding: "8px 28px",
+            borderTop: "1px solid var(--border)",
+            fontSize: 10.5,
+            color: "var(--text-muted)",
+            letterSpacing: "0.02em",
+          }}
+        >
+          <span style={{ textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 500, marginRight: 8 }}>
+            Methodology
+          </span>
+          {sources.join(" · ")}
+        </div>
+      )}
       {flags.length > 0 && (
         <div
           style={{
@@ -265,23 +295,27 @@ export function RecommendationCard({
           </span>
           <span>·</span>
           <span style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-            {flags.map((f) => (
-              <span
-                key={f}
-                title={f}
-                style={{
-                  fontSize: 11.5,
-                  padding: "2px 8px",
-                  background: "var(--surface)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 999,
-                  color: "var(--text)",
-                  fontWeight: 500,
-                }}
-              >
-                {flagDisplay(f)}
-              </span>
-            ))}
+            {flags.map((f) => {
+              const source = rec?.flag_citations?.[f];
+              return (
+                <span
+                  key={f}
+                  title={source ? `${flagDisplay(f)} — source: ${source}` : flagDisplay(f)}
+                  style={{
+                    fontSize: 11.5,
+                    padding: "2px 8px",
+                    background: "var(--surface)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 999,
+                    color: "var(--text)",
+                    fontWeight: 500,
+                    cursor: source ? "help" : "default",
+                  }}
+                >
+                  {flagDisplay(f)}
+                </span>
+              );
+            })}
           </span>
         </div>
       )}

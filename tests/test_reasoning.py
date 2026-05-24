@@ -249,21 +249,38 @@ def test_rpe_signal_carries_session_source_ids():
 
 # --- Rationale upgrade: specifics + inline citations -------------------
 
-def test_signal_summaries_include_their_citations():
-    """Each rule's source authority should appear inline in the rationale —
-    not just in a module docstring — so the trainer reading the rec
-    sees which paper drives each call."""
+def test_flag_citation_map_covers_every_emitted_flag_kind():
+    """Citations are no longer baked into the rationale text — the trainer
+    sees clean prose on the dashboard, and the front-end pulls source
+    authority from FLAG_CITATIONS for chip tooltips + a methodology
+    footer. The map should cover every flag kind the engine can emit
+    (except training_readiness_low, which is Garmin proprietary)."""
+    from fit_ontology.reasoning import FLAG_CITATIONS
+
     today = date.today()
-    # HRV crash + sleep deficit + ACWR spike + RPE rise, all at once.
+    # Fire every flag we can with this stressor cocktail.
     m = _metrics("c1", today=today, hrv_baseline=55, hrv_acute=40,
                  rhr_baseline=58, rhr_acute=65, sleep_acute=5.5)
     s = _sessions("c1", today=today, rpe_baseline=5, rpe_acute=9, duration_min=90)
     r = generate_recommendation("c1", m, s, today=today)
 
-    # Every citation that *could* have fired should be present given this
-    # cocktail of stressors. TR isn't fed by the fixture so we skip it.
-    for key in ("hrv", "rhr", "sleep", "acwr", "rpe"):
-        assert CITATIONS[key] in r.rationale, f"missing {key} citation in rationale"
+    # Each emitted flag (parsed from the "Flags: ..." suffix) must have
+    # a citation mapped — except training_readiness_low which is
+    # intentionally absent because it's not an academic source.
+    flags_part = r.rationale.split("Flags:", 1)[1].rstrip(".").strip()
+    flags = [f.strip() for f in flags_part.split(",") if f.strip()]
+    for f in flags:
+        if f == "training_readiness_low":
+            continue
+        assert f in FLAG_CITATIONS, f"missing citation map for flag kind {f!r}"
+
+    # And the citations themselves should NOT be in the rationale text
+    # anymore — that's the whole point of this refactor.
+    for source in CITATIONS.values():
+        assert source not in r.rationale, (
+            f"rationale still carries inline citation {source!r}; "
+            f"it should live in FLAG_CITATIONS for the UI to surface"
+        )
 
 
 # --- Trend slope detection ---------------------------------------------
@@ -296,7 +313,10 @@ def test_hrv_trend_signal_fires_when_falling():
     assert sig is not None
     assert sig.kind == "hrv_trend_down"
     assert "trending down" in sig.summary.lower()
-    assert CITATIONS["hrv"] in sig.summary
+    # Citation is no longer inline — assert it's mapped in FLAG_CITATIONS
+    # for the UI to surface as a chip tooltip instead.
+    from fit_ontology.reasoning import FLAG_CITATIONS
+    assert FLAG_CITATIONS[sig.kind] == CITATIONS["hrv"]
 
 
 def test_hrv_trend_signal_does_not_fire_when_rising():

@@ -110,6 +110,11 @@ class RecommendationResponse(BaseModel):
     contraindications: list[ContraindicationItem] = []
     # Live recovery gauge (None on history rows — see RecoveryScoreResponse).
     recovery_score: RecoveryScoreResponse | None = None
+    # Map of flag kind -> source authority for that signal (e.g.
+    # ``hrv_below_baseline`` -> "Plews & Laursen 2017"). The front-end
+    # surfaces these on flag chip tooltips + a methodology footer
+    # rather than embedding the citations in the rationale text itself.
+    flag_citations: dict[str, str] = {}
 
 
 # ─── Overrides ──────────────────────────────────────────────────────

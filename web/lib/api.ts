@@ -85,6 +85,8 @@ export interface Recommendation {
   generated_at: string;
   contraindications: Contraindication[];
   recovery_score?: RecoveryScore | null;
+  /** Flag kind -> source authority (e.g. "Plews & Laursen 2017"). */
+  flag_citations?: Record<string, string>;
 }
 
 export interface MetricRow {
