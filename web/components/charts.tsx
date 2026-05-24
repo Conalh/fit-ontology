@@ -335,7 +335,7 @@ export function TrendChart({
                 </text>
                 <text
                   x={dayCx}
-                  y={padT + innerH + 11}
+                  y={padT + innerH + 16}
                   fontSize="9"
                   textAnchor="middle"
                   fill="var(--text-muted)"
@@ -509,7 +509,7 @@ export function LoadBars({
                 </text>
                 <text
                   x={dayCx}
-                  y={padT + innerH + 11}
+                  y={padT + innerH + 16}
                   fontSize="9"
                   textAnchor="middle"
                   fill="var(--text-muted)"

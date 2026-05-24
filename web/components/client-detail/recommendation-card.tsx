@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Donut } from "@/components/charts";
 import { Skeleton } from "@/components/skeleton";
 import type { OverrideRow, Recommendation } from "@/lib/api";
+import { flagDisplay } from "@/lib/flag-display";
 import type { Verdict } from "./verdict-utils";
 
 /**
@@ -265,20 +266,21 @@ export function RecommendationCard({
           <span>·</span>
           <span style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
             {flags.map((f) => (
-              <code
+              <span
                 key={f}
+                title={f}
                 style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11,
-                  padding: "1px 6px",
+                  fontSize: 11.5,
+                  padding: "2px 8px",
                   background: "var(--surface)",
                   border: "1px solid var(--border)",
-                  borderRadius: 4,
+                  borderRadius: 999,
                   color: "var(--text)",
+                  fontWeight: 500,
                 }}
               >
-                {f}
-              </code>
+                {flagDisplay(f)}
+              </span>
             ))}
           </span>
         </div>

@@ -7,6 +7,7 @@ import { Sidebar, TopBar, VerdictBadge, labelToVerdict } from "@/components/chro
 import { Skeleton } from "@/components/skeleton";
 import { defaultAccentForClient, initialsFor, withAlpha } from "@/lib/accent";
 import { api, type RosterRow } from "@/lib/api";
+import { flagDisplay } from "@/lib/flag-display";
 
 /**
  * Roster — Monday-morning triage. Same chrome as the client detail
@@ -291,7 +292,7 @@ function RosterTable({ rows }: { rows: RosterRow[] }) {
                 whiteSpace: "nowrap",
               }}
             >
-              {row.flags.length === 0 ? "—" : row.flags.join(", ")}
+              {row.flags.length === 0 ? "—" : row.flags.map(flagDisplay).join(" · ")}
             </div>
 
             <div
