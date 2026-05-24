@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { LoadBars, TrendChart } from "@/components/charts";
 import type { MetricRow, SessionRow } from "@/lib/api";
 import { acwrSeries, baseline, dailySeries, loadSeries, recentMean } from "@/lib/series";
@@ -53,8 +53,6 @@ export function TrendsGrid({
   }, [sessions, today]);
 
   const loadData = useMemo(() => loadSeries(sessions, today), [sessions, today]);
-  const [loadHoverIdx, setLoadHoverIdx] = useState<number | null>(null);
-  const hoveredLoad = loadHoverIdx !== null ? loadData[loadHoverIdx] : null;
 
   return (
     <section>
@@ -110,30 +108,18 @@ export function TrendsGrid({
             </div>
           </div>
           <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-            {hoveredLoad ? (
-              <>
-                {hoveredLoad.day === 0 ? "today" : `${Math.abs(hoveredLoad.day)}d ago`}{" "}
-                <span style={{ color: "var(--text)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
-                  {hoveredLoad.load.toLocaleString()}
-                </span>{" "}
-                AU
-              </>
-            ) : (
-              <>
-                7d sum{" "}
-                <span style={{ color: "var(--text)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
-                  {totalLoad7.toLocaleString()}
-                </span>{" "}
-                · 28d sum{" "}
-                <span style={{ color: "var(--text)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
-                  {totalLoad28.toLocaleString()}
-                </span>
-              </>
-            )}
+            7d sum{" "}
+            <span style={{ color: "var(--text)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+              {totalLoad7.toLocaleString()}
+            </span>{" "}
+            · 28d sum{" "}
+            <span style={{ color: "var(--text)", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+              {totalLoad28.toLocaleString()}
+            </span>
           </div>
         </div>
         <div style={{ marginTop: 6 }}>
-          <LoadBars data={loadData} height={80} accent="var(--accent)" onHover={setLoadHoverIdx} />
+          <LoadBars data={loadData} height={80} accent="var(--accent)" showBubble />
         </div>
       </div>
 
@@ -155,8 +141,6 @@ function TrendCell({
     threshold?: { value: number; label: string };
   };
 }) {
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-
   if (item.data.length === 0) {
     return (
       <div style={{ background: "var(--surface)", padding: "14px 14px", minHeight: 152 }}>
@@ -168,23 +152,16 @@ function TrendCell({
       </div>
     );
   }
+  // Header stays as the static "current state" reference — current value
+  // + 7-day mean delta vs baseline. Per-day inspection happens via a
+  // floating bubble on the chart (TrendChart's onHover with showBubble),
+  // so the trainer can compare a single day against the persistent
+  // "vs base" baseline without the header flickering.
   const last = item.data[item.data.length - 1].value;
   const last7 = (recentMean(item.data, 7) ?? last) - item.base.mean;
   const deltaPct = item.base.mean > 0 ? (last7 / item.base.mean) * 100 : 0;
   const isBad = item.invert ? last7 > 0 : last7 < 0;
   const isFlag = Math.abs(last7) > item.base.sd * 0.5;
-
-  // When the user is hovering a point, the header swaps from "current
-  // value + delta vs base" to "hovered value + day offset". This keeps
-  // the readout in the same spot rather than overlaying a tooltip on
-  // top of the line — which would clip on the narrow cells.
-  const hovered = hoverIdx !== null ? item.data[hoverIdx] : null;
-  const displayValue = hovered ? hovered.value : last;
-  const subline = hovered
-    ? hovered.day === 0
-      ? "today"
-      : `${Math.abs(hovered.day)}d ago`
-    : `${last7 > 0 ? "+" : ""}${deltaPct.toFixed(1)}% vs base`;
 
   return (
     <div style={{ background: "var(--surface)", padding: "14px 14px 8px" }}>
@@ -206,7 +183,7 @@ function TrendCell({
               lineHeight: 1,
             }}
           >
-            {displayValue.toFixed(displayValue < 10 ? 1 : 0)}
+            {last.toFixed(last < 10 ? 1 : 0)}
             <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)", marginLeft: 2 }}>
               {item.unit}
             </span>
@@ -215,18 +192,13 @@ function TrendCell({
             style={{
               fontSize: 10.5,
               marginTop: 3,
-              color: hovered
-                ? "var(--text-muted)"
-                : isFlag
-                ? isBad
-                  ? "var(--danger)"
-                  : "var(--ok)"
-                : "var(--text-muted)",
+              color: isFlag ? (isBad ? "var(--danger)" : "var(--ok)") : "var(--text-muted)",
               fontVariantNumeric: "tabular-nums",
               fontWeight: 500,
             }}
           >
-            {subline}
+            {last7 > 0 ? "+" : ""}
+            {deltaPct.toFixed(1)}% vs base
           </div>
         </div>
       </div>
@@ -241,7 +213,7 @@ function TrendCell({
           showAxis={false}
           showLastValue={false}
           threshold={item.threshold}
-          onHover={setHoverIdx}
+          showBubble
         />
       </div>
     </div>

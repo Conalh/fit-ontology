@@ -61,6 +61,10 @@ interface TrendChartProps {
    * use this to swap the surrounding header to show the hovered day's
    * value rather than the current value. */
   onHover?: (idx: number | null) => void;
+  /** Render a small floating SVG bubble near the hovered point showing
+   * the day offset and value. Off by default so callers that wire
+   * onHover to swap their own header don't get a duplicate readout. */
+  showBubble?: boolean;
 }
 
 export function TrendChart({
@@ -76,6 +80,7 @@ export function TrendChart({
   showLastValue = true,
   threshold,
   onHover,
+  showBubble = false,
 }: TrendChartProps) {
   const uid = useId().replace(/:/g, "");
   const gradId = `grad-${uid}`;
@@ -258,9 +263,9 @@ export function TrendChart({
       )}
 
       {/* Hover indicator — vertical guide + dot at nearest data point.
-          Visual only; the tooltip text is delegated to the parent via
-          onHover so the cell's existing header can swap rather than
-          stacking another floating box that would clip on small cells. */}
+          The bubble (day + value) renders when ``showBubble`` is set;
+          otherwise the visual is just the guide line so the parent can
+          delegate the text to its own header via onHover. */}
       {hoverIdx !== null && (
         <g pointerEvents="none">
           <line
@@ -281,6 +286,52 @@ export function TrendChart({
             stroke="var(--surface)"
             strokeWidth="1.5"
           />
+          {showBubble && (() => {
+            const pt = data[hoverIdx];
+            const dayText = pt.day === 0 ? "today" : `${Math.abs(pt.day)}d ago`;
+            const valueText = `${pt.value.toFixed(pt.value < 10 ? 1 : 0)}${unit}`;
+            const label = `${valueText} · ${dayText}`;
+            // Estimate width from char count — SVG <text> can't auto-size
+            // a backing rect, so we approximate at ~5.6px per char for
+            // the 10px font we're using.
+            const charW = 5.6;
+            const padX = 7;
+            const bubbleW = label.length * charW + padX * 2;
+            const bubbleH = 18;
+            const dotX = x(hoverIdx);
+            const dotY = y(pt.value);
+            // Clamp horizontally so the bubble never leaves the chart.
+            const bubbleCx = Math.max(
+              padL + bubbleW / 2 + 2,
+              Math.min(padL + innerW - bubbleW / 2 - 2, dotX),
+            );
+            // Default above the dot; if there isn't room, flip below.
+            const above = dotY - bubbleH - 10 >= padT;
+            const bubbleY = above ? dotY - bubbleH - 8 : dotY + 8;
+            return (
+              <g>
+                <rect
+                  x={bubbleCx - bubbleW / 2}
+                  y={bubbleY}
+                  width={bubbleW}
+                  height={bubbleH}
+                  rx="3"
+                  fill="var(--text)"
+                  opacity="0.92"
+                />
+                <text
+                  x={bubbleCx}
+                  y={bubbleY + bubbleH / 2 + 3.5}
+                  fontSize="10"
+                  textAnchor="middle"
+                  fill="var(--surface)"
+                  style={{ fontVariantNumeric: "tabular-nums", fontWeight: 500 }}
+                >
+                  {label}
+                </text>
+              </g>
+            );
+          })()}
         </g>
       )}
 
@@ -331,6 +382,7 @@ export function LoadBars({
   accent = "var(--accent)",
   showAxis = true,
   onHover,
+  showBubble = false,
 }: {
   data: { day: number; load: number }[];
   height?: number;
@@ -339,6 +391,9 @@ export function LoadBars({
   showAxis?: boolean;
   /** Same callback contract as TrendChart — null on leave. */
   onHover?: (idx: number | null) => void;
+  /** Render a small floating bubble at the hovered bar showing day +
+   * load AU. Off by default. */
+  showBubble?: boolean;
 }) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
@@ -383,17 +438,58 @@ export function LoadBars({
         );
       })}
       {hoverIdx !== null && (
-        <line
-          x1={padL + (hoverIdx + 0.5) * (innerW / data.length)}
-          x2={padL + (hoverIdx + 0.5) * (innerW / data.length)}
-          y1={padT}
-          y2={padT + innerH}
-          stroke="var(--text-muted)"
-          strokeWidth="1"
-          strokeDasharray="3 3"
-          opacity="0.6"
-          pointerEvents="none"
-        />
+        <g pointerEvents="none">
+          <line
+            x1={padL + (hoverIdx + 0.5) * (innerW / data.length)}
+            x2={padL + (hoverIdx + 0.5) * (innerW / data.length)}
+            y1={padT}
+            y2={padT + innerH}
+            stroke="var(--text-muted)"
+            strokeWidth="1"
+            strokeDasharray="3 3"
+            opacity="0.6"
+          />
+          {showBubble && (() => {
+            const pt = data[hoverIdx];
+            const dayText = pt.day === 0 ? "today" : `${Math.abs(pt.day)}d ago`;
+            const label = `${pt.load.toLocaleString()} AU · ${dayText}`;
+            const charW = 5.6;
+            const padX = 7;
+            const bubbleW = label.length * charW + padX * 2;
+            const bubbleH = 18;
+            const cx = padL + (hoverIdx + 0.5) * (innerW / data.length);
+            const barTop = padT + innerH - (pt.load / Math.max(...data.map((d) => d.load), 100)) * innerH;
+            const bubbleCx = Math.max(
+              padL + bubbleW / 2 + 2,
+              Math.min(padL + innerW - bubbleW / 2 - 2, cx),
+            );
+            const above = barTop - bubbleH - 8 >= padT;
+            const bubbleY = above ? barTop - bubbleH - 6 : barTop + 6;
+            return (
+              <g>
+                <rect
+                  x={bubbleCx - bubbleW / 2}
+                  y={bubbleY}
+                  width={bubbleW}
+                  height={bubbleH}
+                  rx="3"
+                  fill="var(--text)"
+                  opacity="0.92"
+                />
+                <text
+                  x={bubbleCx}
+                  y={bubbleY + bubbleH / 2 + 3.5}
+                  fontSize="10"
+                  textAnchor="middle"
+                  fill="var(--surface)"
+                  style={{ fontVariantNumeric: "tabular-nums", fontWeight: 500 }}
+                >
+                  {label}
+                </text>
+              </g>
+            );
+          })()}
+        </g>
       )}
       {showAxis &&
         [-27, -21, -14, -7, 0].map((d) => {
