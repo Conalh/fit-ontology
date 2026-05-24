@@ -155,3 +155,122 @@ def test_contraindications_roundtrip_through_json():
     assert parse_contraindications(None) == []
     assert parse_contraindications("") == []
     assert parse_contraindications("not json") == []
+
+
+# --- Plan-vs-execution matcher ---------------------------------------------
+
+def _seed_db(tmp_path):
+    """Seed a tmp DuckDB with a client, a generated plan, and some
+    sessions for matcher tests to chew on."""
+    from fit_ontology.db import connect, ensure_client, insert_plan, insert_sessions
+    db_path = tmp_path / "test.duckdb"
+    today = date.today()
+    week_of = today - timedelta(days=today.weekday())
+
+    con = connect(db_path)
+    ensure_client(con, "c1", name="Test")
+
+    # Plan with 3 slots — strength, cardio, mobility
+    sessions_for_load = _sessions_df(today, per_week=3)
+    plan = generate_plan("c1", week_of, "STANDARD", sessions_for_load, today=today)
+    insert_plan(con, plan)
+
+    # Logged sessions — one strength this week, one cardio this week
+    sessions_rows = pd.DataFrame([
+        {"id": "s_strength", "client_id": "c1", "date": week_of + timedelta(days=1),
+         "type": "strength", "duration_min": 60, "rpe": 7, "notes": ""},
+        {"id": "s_cardio", "client_id": "c1", "date": week_of + timedelta(days=3),
+         "type": "cardio", "duration_min": 40, "rpe": 6, "notes": ""},
+    ])
+    insert_sessions(con, sessions_rows)
+    con.close()
+    return db_path, week_of
+
+
+def test_matcher_links_same_type_session_to_same_type_slot(tmp_path):
+    """A logged strength session should bind to the strength slot of the
+    week, not the mobility or cardio slot."""
+    from fit_ontology.db import connect, match_planned_sessions, plan_for_week
+    db_path, week_of = _seed_db(tmp_path)
+
+    with connect(db_path, read_only=False) as con:
+        linked = match_planned_sessions(con, "c1")
+    assert linked == 2  # both seeded sessions match a slot
+
+    with connect(db_path, read_only=True) as con:
+        plan = plan_for_week(con, "c1", week_of)
+
+    strength_slot = next(p for p in plan if p.type.value == "strength")
+    cardio_slot = next(p for p in plan if p.type.value == "cardio")
+    assert strength_slot.executed_session_id == "s_strength"
+    assert cardio_slot.executed_session_id == "s_cardio"
+
+
+def test_matcher_is_idempotent(tmp_path):
+    """Running the matcher twice doesn't relink or break anything —
+    already-matched sessions are skipped on the second pass."""
+    from fit_ontology.db import connect, match_planned_sessions
+    db_path, _ = _seed_db(tmp_path)
+    with connect(db_path, read_only=False) as con:
+        first = match_planned_sessions(con, "c1")
+        second = match_planned_sessions(con, "c1")
+    assert first == 2
+    assert second == 0  # nothing new to link the second time
+
+
+def test_matcher_falls_back_to_any_unmatched_slot(tmp_path):
+    """If no same-type slot exists, the matcher should still bind the
+    session to the lowest unmatched slot rather than dropping it on the
+    floor."""
+    from fit_ontology.db import connect, ensure_client, insert_plan, insert_sessions, match_planned_sessions, plan_for_week
+    db_path = tmp_path / "fallback.duckdb"
+    today = date.today()
+    week_of = today - timedelta(days=today.weekday())
+
+    con = connect(db_path)
+    ensure_client(con, "c1", name="Test")
+    sessions_seed = _sessions_df(today, per_week=2)
+    plan = generate_plan("c1", week_of, "STANDARD", sessions_seed, today=today)
+    insert_plan(con, plan)
+
+    # Log a "mixed" session — no matching slot type in the standard plan
+    insert_sessions(con, pd.DataFrame([
+        {"id": "s_mixed", "client_id": "c1", "date": week_of + timedelta(days=2),
+         "type": "mixed", "duration_min": 45, "rpe": 6, "notes": ""},
+    ]))
+
+    linked = match_planned_sessions(con, "c1")
+    assert linked == 1
+
+    plan_after = plan_for_week(con, "c1", week_of)
+    bound = [p for p in plan_after if p.executed_session_id == "s_mixed"]
+    assert len(bound) == 1
+    # Should have bound to slot 1 (lowest available)
+    assert bound[0].slot == 1
+    con.close()
+
+
+def test_matcher_ignores_sessions_outside_planned_weeks(tmp_path):
+    """A session from a week with no plan should NOT silently bind to a
+    plan in a different week. The matcher computes week_of from the
+    session date and only looks at that week's slots."""
+    from fit_ontology.db import connect, ensure_client, insert_plan, insert_sessions, match_planned_sessions
+    db_path = tmp_path / "isolated.duckdb"
+    today = date.today()
+    this_week = today - timedelta(days=today.weekday())
+    last_week = this_week - timedelta(days=7)
+
+    con = connect(db_path)
+    ensure_client(con, "c1", name="Test")
+    sessions_seed = _sessions_df(today, per_week=2)
+    # Plan exists ONLY for this week.
+    insert_plan(con, generate_plan("c1", this_week, "STANDARD", sessions_seed, today=today))
+
+    # Logged session for last week — no plan, shouldn't match anything.
+    insert_sessions(con, pd.DataFrame([
+        {"id": "s_lastweek", "client_id": "c1", "date": last_week + timedelta(days=1),
+         "type": "strength", "duration_min": 60, "rpe": 7, "notes": ""},
+    ]))
+    linked = match_planned_sessions(con, "c1")
+    assert linked == 0
+    con.close()

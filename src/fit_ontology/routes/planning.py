@@ -11,6 +11,7 @@ from ..db import (
     DEFAULT_DB_PATH,
     connect,
     insert_plan,
+    match_planned_sessions,
     metrics_for_client,
     plan_for_week,
     recommendation_for_week,
@@ -94,9 +95,26 @@ def get_plan(client_id: str) -> PlanResponse:
         try:
             with connect(DEFAULT_DB_PATH, read_only=False) as wcon:
                 insert_plan(wcon, new_plan)
-            plan = new_plan
+                # Plan just got created — any sessions already logged
+                # this week should retroactively link to their slots.
+                match_planned_sessions(wcon, client_id)
+                # Re-read to pick up executed_session_id values the
+                # matcher just wrote.
+                plan = plan_for_week(wcon, client_id, week_of)
         except duckdb.IOException as e:
             raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
+    else:
+        # Plan already existed — opportunistically run the matcher in
+        # case sessions landed since last fetch. Cheap (LEFT JOIN with an
+        # index) and ensures the UI always shows current execution status.
+        try:
+            with connect(DEFAULT_DB_PATH, read_only=False) as wcon:
+                linked = match_planned_sessions(wcon, client_id)
+                if linked > 0:
+                    plan = plan_for_week(wcon, client_id, week_of)
+        except duckdb.IOException:
+            # Background match failed — not fatal, just skip the refresh.
+            pass
 
     return PlanResponse(
         week_of=week_of,

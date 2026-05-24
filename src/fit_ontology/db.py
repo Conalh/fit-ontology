@@ -360,6 +360,77 @@ def insert_plan(con, planned_sessions) -> None:
         upsert_planned_session(con, ps)
 
 
+def match_planned_sessions(con, client_id: str) -> int:
+    """Link unmatched sessions to unmatched planned_sessions slots.
+
+    For each session belonging to ``client_id`` that isn't yet linked to
+    a planned slot, look up the slots for that session's week and pick
+    one: prefer same ``type`` first, then lowest ``slot`` number. If a
+    match is found, write the session id into the slot's
+    ``executed_session_id``. Idempotent — sessions already linked are
+    skipped. Returns the number of new links made.
+
+    Closes the plan-vs-execution telemetry loop: once a real session
+    lands (via Garmin sync, upload, manual entry), the matcher records
+    "this session executed slot X of week Y" so future calibration can
+    ask "did the deload week actually get followed?" without re-deriving
+    the link.
+    """
+    from datetime import timedelta
+
+    try:
+        # LEFT JOIN tells us which sessions don't yet have any planned
+        # slot pointing back at them. ORDER BY date keeps the linking
+        # deterministic on a fresh run.
+        rows = con.execute(
+            """
+            SELECT s.id, s.date, s.type
+            FROM sessions s
+            LEFT JOIN planned_sessions ps ON ps.executed_session_id = s.id
+            WHERE s.client_id = ? AND ps.id IS NULL
+            ORDER BY s.date
+            """,
+            [client_id],
+        ).fetchall()
+    except duckdb.CatalogException:
+        # planned_sessions table doesn't exist yet (pre-migration)
+        return 0
+
+    linked = 0
+    for session_id, session_date, session_type in rows:
+        # Normalize the date — DuckDB returns Python ``date`` for DATE
+        # columns, but be defensive in case a caller hands in a Timestamp.
+        if hasattr(session_date, "weekday"):
+            sd = session_date
+        else:
+            sd = pd.to_datetime(session_date).date()
+        week_of = sd - timedelta(days=sd.weekday())
+
+        # Same-type slots come first (CASE ... THEN 0 ELSE 1), then
+        # ascending slot number among the remaining candidates.
+        match = con.execute(
+            """
+            SELECT id FROM planned_sessions
+            WHERE client_id = ?
+              AND week_of = ?
+              AND executed_session_id IS NULL
+            ORDER BY
+                CASE WHEN type = ? THEN 0 ELSE 1 END,
+                slot
+            LIMIT 1
+            """,
+            [client_id, week_of, session_type],
+        ).fetchone()
+
+        if match:
+            con.execute(
+                "UPDATE planned_sessions SET executed_session_id = ? WHERE id = ?",
+                [session_id, match[0]],
+            )
+            linked += 1
+    return linked
+
+
 def plan_for_week(con, client_id: str, week_of):
     """Return the list of PlannedSession rows for ``(client_id, week_of)``,
     ordered by slot. Empty list if no plan persisted yet."""

@@ -153,6 +153,7 @@ function PlannedSessionDisplay({
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
           <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{session.title}</span>
           <SessionTypeChip type={session.type} />
+          {session.executed_session_id && <ExecutedChip />}
           {session.source === "trainer" && <TrainerEditedChip />}
         </div>
         <p
@@ -485,6 +486,30 @@ function SessionTypeChip({ type }: { type: string }) {
       }}
     >
       {label}
+    </span>
+  );
+}
+
+function ExecutedChip() {
+  return (
+    <span
+      title="This session has been logged. Plan-vs-execution telemetry is now closed for this slot."
+      style={{
+        fontSize: 9.5,
+        padding: "1px 7px",
+        background: "var(--ok-bg)",
+        color: "var(--ok)",
+        border: "1px solid var(--ok)",
+        borderRadius: 3,
+        fontWeight: 600,
+        textTransform: "uppercase",
+        letterSpacing: "0.06em",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+      }}
+    >
+      ✓ Done
     </span>
   );
 }

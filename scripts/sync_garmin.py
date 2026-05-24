@@ -22,7 +22,13 @@ import sys
 from getpass import getpass
 
 from fit_ontology.config import load_env
-from fit_ontology.db import connect, ensure_client, insert_metrics, insert_sessions
+from fit_ontology.db import (
+    connect,
+    ensure_client,
+    insert_metrics,
+    insert_sessions,
+    match_planned_sessions,
+)
 from fit_ontology.garmin import fetch_activities, fetch_daily_metrics, make_garmin_client
 
 load_env()
@@ -66,6 +72,12 @@ def main() -> int:
         insert_metrics(con, metrics_df)
     if not sessions_df.empty:
         insert_sessions(con, sessions_df)
+        # Newly-synced sessions can retroactively bind to planned slots
+        # for the same week — closes the plan-vs-execution telemetry
+        # loop without the trainer having to do anything.
+        linked = match_planned_sessions(con, client_id)
+        if linked:
+            print(f"  linked {linked} session(s) to planned slots")
     con.close()
 
     print(f"Synced for client_id={client_id} (last {lookback} days):")
