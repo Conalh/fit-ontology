@@ -54,7 +54,7 @@ export function useTheme(): [Theme, (next: Theme) => void] {
       applyToDom(t);
       return t;
     },
-    () => "dark",
+    () => "dark" as Theme,
   );
 
   const setTheme = (next: Theme) => {

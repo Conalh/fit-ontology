@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import duckdb
@@ -9,7 +10,17 @@ import pandas as pd
 
 from .ontology import SCHEMA_DDL
 
-DEFAULT_DB_PATH = Path("data/fit_ontology.duckdb")
+# Anchor the DB path to the repo root rather than the caller's working
+# directory. Previously this was a bare ``Path("data/...")``, which meant
+# launching ``fit-ontology-serve`` from a different folder silently
+# created a fresh empty DB at the wrong location (DuckDB write-mode
+# happily creates a missing file). Now the path resolves the same
+# regardless of cwd. The env var ``FIT_ONTOLOGY_DB`` overrides for
+# Docker / custom deployments that store the DB elsewhere.
+_PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_DB_PATH = Path(
+    os.environ.get("FIT_ONTOLOGY_DB", str(_PACKAGE_ROOT / "data" / "fit_ontology.duckdb"))
+)
 
 
 def connect(db_path: Path = DEFAULT_DB_PATH, *, read_only: bool = False) -> duckdb.DuckDBPyConnection:

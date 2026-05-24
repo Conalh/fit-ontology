@@ -1,13 +1,22 @@
 /**
  * Tiny fetch wrapper over the FastAPI backend.
  *
- * Base URL comes from NEXT_PUBLIC_API_URL — when the Next dev server
- * runs on :3000 and FastAPI on :8000 this routes cross-origin (CORS is
- * enabled on the API). In a bundled deploy the Next.js static export
- * is served by the same FastAPI process, so NEXT_PUBLIC_API_URL is
- * empty and we hit relative `/api/...` paths same-origin.
+ * Base URL selection:
+ *   - explicit NEXT_PUBLIC_API_URL wins (escape hatch for unusual setups)
+ *   - else: cross-port localhost in dev (Next on :3000, FastAPI on :8000)
+ *   - else: empty string in production builds (relative /api/... paths
+ *           served same-origin by the FastAPI process that hosts the
+ *           static export — required for deploys behind a tunnel).
+ *
+ * Defaulting via NODE_ENV instead of an env file avoids the deploy
+ * footgun where a dev-only ``NEXT_PUBLIC_API_URL=http://localhost:8000``
+ * in ``.env.local`` gets baked into the production bundle and breaks
+ * cross-device access (browsers on the user's phone would try to fetch
+ * the user's own localhost, not the server's).
  */
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL
+  ?? (process.env.NODE_ENV === "development" ? "http://127.0.0.1:8000" : "");
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
