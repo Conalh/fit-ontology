@@ -1,6 +1,7 @@
 "use client";
 
-import { useId } from "react";
+import { useId, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 
 /**
  * Chart primitives ported from design/ui/charts.jsx. SVG-based, no
@@ -55,6 +56,11 @@ interface TrendChartProps {
   showLastValue?: boolean;
   /** Fixed-threshold band (e.g. ACWR danger > 1.5). */
   threshold?: { value: number; label: string };
+  /** Fires when the user hovers (mouse or touch) over a data point.
+   * idx is the index into ``data`` (or null on leave). Parents typically
+   * use this to swap the surrounding header to show the hovered day's
+   * value rather than the current value. */
+  onHover?: (idx: number | null) => void;
 }
 
 export function TrendChart({
@@ -69,9 +75,11 @@ export function TrendChart({
   showRibbon = true,
   showLastValue = true,
   threshold,
+  onHover,
 }: TrendChartProps) {
   const uid = useId().replace(/:/g, "");
   const gradId = `grad-${uid}`;
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   if (!data || data.length === 0) {
     return (
@@ -235,7 +243,7 @@ export function TrendChart({
         })}
 
       {/* Last-value badge */}
-      {showLastValue && (
+      {showLastValue && hoverIdx === null && (
         <g transform={`translate(${pts[pts.length - 1][0] + 8}, ${pts[pts.length - 1][1] - 12})`}>
           <text
             fontSize="10.5"
@@ -249,6 +257,67 @@ export function TrendChart({
         </g>
       )}
 
+      {/* Hover indicator — vertical guide + dot at nearest data point.
+          Visual only; the tooltip text is delegated to the parent via
+          onHover so the cell's existing header can swap rather than
+          stacking another floating box that would clip on small cells. */}
+      {hoverIdx !== null && (
+        <g pointerEvents="none">
+          <line
+            x1={x(hoverIdx)}
+            x2={x(hoverIdx)}
+            y1={padT}
+            y2={padT + innerH}
+            stroke="var(--text-muted)"
+            strokeWidth="1"
+            strokeDasharray="3 3"
+            opacity="0.7"
+          />
+          <circle
+            cx={x(hoverIdx)}
+            cy={y(data[hoverIdx].value)}
+            r="3.5"
+            fill={accent}
+            stroke="var(--surface)"
+            strokeWidth="1.5"
+          />
+        </g>
+      )}
+
+      {/* Pointer-capture overlay. Transparent rect over the plot area
+          maps pointer x → nearest data index. ``touchAction: none``
+          prevents the page from scrolling while the user drags across
+          the chart on a touchscreen. */}
+      <rect
+        x={padL}
+        y={padT}
+        width={innerW}
+        height={innerH}
+        fill="transparent"
+        style={{ cursor: "crosshair", touchAction: "none" }}
+        onPointerMove={(e: ReactPointerEvent<SVGRectElement>) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          if (rect.width === 0) return;
+          // Map screen pixels back into SVG viewBox units, then into the
+          // data index for this point.
+          const svgX = ((e.clientX - rect.left) / rect.width) * innerW;
+          const t = svgX / innerW;
+          const idx = Math.max(0, Math.min(data.length - 1, Math.round(t * (data.length - 1))));
+          if (idx !== hoverIdx) {
+            setHoverIdx(idx);
+            onHover?.(idx);
+          }
+        }}
+        onPointerLeave={() => {
+          setHoverIdx(null);
+          onHover?.(null);
+        }}
+        onPointerCancel={() => {
+          setHoverIdx(null);
+          onHover?.(null);
+        }}
+      />
+
       {/* Reference so the invert prop is touched (intentional) */}
       {invert ? null : null}
     </svg>
@@ -261,13 +330,18 @@ export function LoadBars({
   width = 600,
   accent = "var(--accent)",
   showAxis = true,
+  onHover,
 }: {
   data: { day: number; load: number }[];
   height?: number;
   width?: number;
   accent?: string;
   showAxis?: boolean;
+  /** Same callback contract as TrendChart — null on leave. */
+  onHover?: (idx: number | null) => void;
 }) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+
   if (!data || data.length === 0) {
     return (
       <svg viewBox={`0 0 ${width} ${height}`} width="100%" style={{ display: "block" }}>
@@ -294,6 +368,7 @@ export function LoadBars({
         const h = (d.load / maxLoad) * innerH;
         const cx = padL + (i + 0.5) * (innerW / data.length);
         const isHot = d.load > 800;
+        const isHovered = hoverIdx === i;
         return (
           <rect
             key={d.day}
@@ -302,11 +377,24 @@ export function LoadBars({
             width={barW}
             height={h}
             fill={isHot ? "var(--danger)" : accent}
-            opacity={d.load === 0 ? 0 : 0.85}
+            opacity={d.load === 0 ? 0 : isHovered ? 1 : 0.85}
             rx="1"
           />
         );
       })}
+      {hoverIdx !== null && (
+        <line
+          x1={padL + (hoverIdx + 0.5) * (innerW / data.length)}
+          x2={padL + (hoverIdx + 0.5) * (innerW / data.length)}
+          y1={padT}
+          y2={padT + innerH}
+          stroke="var(--text-muted)"
+          strokeWidth="1"
+          strokeDasharray="3 3"
+          opacity="0.6"
+          pointerEvents="none"
+        />
+      )}
       {showAxis &&
         [-27, -21, -14, -7, 0].map((d) => {
           const idx = data.findIndex((p) => p.day === d);
@@ -326,6 +414,34 @@ export function LoadBars({
             </text>
           );
         })}
+
+      <rect
+        x={padL}
+        y={padT}
+        width={innerW}
+        height={innerH}
+        fill="transparent"
+        style={{ cursor: "crosshair", touchAction: "none" }}
+        onPointerMove={(e: ReactPointerEvent<SVGRectElement>) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          if (rect.width === 0) return;
+          const svgX = ((e.clientX - rect.left) / rect.width) * innerW;
+          const t = svgX / innerW;
+          const idx = Math.max(0, Math.min(data.length - 1, Math.floor(t * data.length)));
+          if (idx !== hoverIdx) {
+            setHoverIdx(idx);
+            onHover?.(idx);
+          }
+        }}
+        onPointerLeave={() => {
+          setHoverIdx(null);
+          onHover?.(null);
+        }}
+        onPointerCancel={() => {
+          setHoverIdx(null);
+          onHover?.(null);
+        }}
+      />
     </svg>
   );
 }
