@@ -13,6 +13,7 @@ from .schemas import (
     CalibrationSuggestion,
     ConfidenceBucket,
     PerClientAgreement,
+    PlanAdherenceRow,
     WeeklyAgreement,
 )
 
@@ -47,6 +48,7 @@ def get_calibration(con=Depends(read_only_conn)) -> CalibrationResponse:
     by_client = _build_per_client_agreement(con, df)
     suggestions = _build_suggestions(df)
     confidence_audit = _build_confidence_audit(con)
+    plan_adherence = _build_plan_adherence(con)
 
     return CalibrationResponse(
         total=total,
@@ -59,7 +61,93 @@ def get_calibration(con=Depends(read_only_conn)) -> CalibrationResponse:
         by_client=by_client,
         suggestions=suggestions,
         confidence_audit=confidence_audit,
+        plan_adherence=plan_adherence,
     )
+
+
+def _build_plan_adherence(con) -> list[PlanAdherenceRow]:
+    """Per-client plan-vs-execution telemetry.
+
+    LEFT JOIN gives us every planned slot regardless of whether it was
+    executed; the JOIN to sessions on executed_session_id pulls actual
+    duration_min × rpe when a match exists. Aggregate per client into:
+      - match_rate         matched / total slots
+      - load_delta_pct     mean ((actual_load - planned_load) / planned_load)
+                           where planned_load > 0 — null when no matched
+                           rows have a planned target to compare against
+      - rpe_delta          mean (actual_rpe - planned_rpe) where both
+                           are non-null
+
+    Sorts worst-adherence-first so the trainer scans for clients
+    drifting from the plan without filtering.
+    """
+    try:
+        df = con.execute(
+            """
+            SELECT
+                ps.client_id,
+                ps.target_load_au,
+                ps.target_rpe,
+                s.duration_min,
+                s.rpe AS actual_rpe,
+                CASE WHEN s.id IS NULL THEN 0 ELSE 1 END AS matched
+            FROM planned_sessions ps
+            LEFT JOIN sessions s ON s.id = ps.executed_session_id
+            """,
+        ).df()
+    except duckdb.CatalogException:
+        return []
+
+    if df.empty:
+        return []
+
+    # Pull client names once so we don't N+1 the per-client tally.
+    name_rows = con.execute("SELECT id, name FROM clients").fetchall()
+    name_map = {cid: name for cid, name in name_rows}
+
+    rows: list[PlanAdherenceRow] = []
+    for client_id, group in df.groupby("client_id"):
+        total = len(group)
+        matched = int(group["matched"].sum())
+        match_rate = matched / total if total else 0.0
+
+        # Deltas only meaningful where both planned and actual exist.
+        matched_rows = group[group["matched"] == 1].copy()
+
+        load_delta_pct: float | None = None
+        rpe_delta: float | None = None
+        if not matched_rows.empty:
+            actual_load = matched_rows["duration_min"] * matched_rows["actual_rpe"]
+            planned_load = matched_rows["target_load_au"]
+            # Only compare where planned_load > 0 (None / 0 are skipped).
+            load_pairs = matched_rows.assign(
+                actual_load=actual_load,
+                planned_load=planned_load,
+            ).dropna(subset=["planned_load", "actual_load"])
+            load_pairs = load_pairs[load_pairs["planned_load"] > 0]
+            if not load_pairs.empty:
+                deltas = (load_pairs["actual_load"] - load_pairs["planned_load"]) / load_pairs["planned_load"]
+                load_delta_pct = float(deltas.mean() * 100)
+
+            # RPE delta — actual vs planned where both present.
+            rpe_pairs = matched_rows.dropna(subset=["target_rpe", "actual_rpe"])
+            if not rpe_pairs.empty:
+                rpe_delta = float((rpe_pairs["actual_rpe"] - rpe_pairs["target_rpe"]).mean())
+
+        rows.append(PlanAdherenceRow(
+            client_id=str(client_id),
+            name=name_map.get(str(client_id), str(client_id)),
+            total_slots=total,
+            matched_slots=matched,
+            match_rate=match_rate,
+            load_delta_pct=load_delta_pct,
+            rpe_delta=rpe_delta,
+        ))
+
+    # Worst adherence first; ties broken by larger total_slots (more
+    # data = more confident signal worth surfacing first).
+    rows.sort(key=lambda r: (r.match_rate, -r.total_slots))
+    return rows
 
 
 def _build_confidence_audit(con) -> list[ConfidenceBucket]:

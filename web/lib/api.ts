@@ -151,6 +151,16 @@ export interface ConfidenceBucket {
   accept_rate: number;
 }
 
+export interface PlanAdherenceRow {
+  client_id: string;
+  name: string;
+  total_slots: number;
+  matched_slots: number;
+  match_rate: number;
+  load_delta_pct: number | null;
+  rpe_delta: number | null;
+}
+
 export interface CalibrationResponse {
   total: number;
   accept_rate: number;
@@ -163,6 +173,7 @@ export interface CalibrationResponse {
   by_client: PerClientAgreement[];
   suggestions: CalibrationSuggestion[];
   confidence_audit: ConfidenceBucket[];
+  plan_adherence: PlanAdherenceRow[];
 }
 
 export interface AskTrace {

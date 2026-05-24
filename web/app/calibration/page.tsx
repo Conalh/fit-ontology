@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/calibration/empty-state";
 import { Headline } from "@/components/calibration/headline";
 import { Matrix } from "@/components/calibration/matrix";
 import { PerClient } from "@/components/calibration/per-client";
+import { PlanAdherence } from "@/components/calibration/plan-adherence";
 import { Recent } from "@/components/calibration/recent";
 import { Suggestions } from "@/components/calibration/suggestions";
 import { WeeklyTrend } from "@/components/calibration/weekly-trend";
@@ -76,6 +77,9 @@ export default function CalibrationPage() {
               <Matrix data={calQ.data} />
               {calQ.data.confidence_audit && calQ.data.confidence_audit.length > 0 && (
                 <ConfidenceAudit buckets={calQ.data.confidence_audit} />
+              )}
+              {calQ.data.plan_adherence && calQ.data.plan_adherence.length > 0 && (
+                <PlanAdherence rows={calQ.data.plan_adherence} />
               )}
               {calQ.data.by_client.length > 0 && (
                 <PerClient rows={calQ.data.by_client} />

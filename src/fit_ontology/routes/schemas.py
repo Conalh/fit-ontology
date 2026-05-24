@@ -184,6 +184,25 @@ class PerClientAgreement(BaseModel):
     accept_rate: float
 
 
+class PlanAdherenceRow(BaseModel):
+    """Per-client plan-vs-execution telemetry.
+
+    Computed from the (planned_sessions ⋈ sessions) join the matcher
+    populates. ``match_rate`` tells the trainer how often the client
+    actually shows up for the prescribed work; ``load_delta_pct`` and
+    ``rpe_delta`` tell them whether the client systematically trains
+    harder or softer than the plan called for. Null delta values mean
+    too few matched sessions to compute a stable deviation.
+    """
+    client_id: str
+    name: str
+    total_slots: int          # planned slots across all weeks for this client
+    matched_slots: int        # of which, how many have an executed session
+    match_rate: float         # matched_slots / total_slots (0 if no slots)
+    load_delta_pct: float | None  # (actual - planned) / planned, mean across matched slots
+    rpe_delta: float | None       # mean(actual_rpe - planned_rpe) across matched slots
+
+
 class CalibrationSuggestion(BaseModel):
     """Actionable tuning prompt derived from the override history.
     The frontend renders these as a single "consider tuning" card so the
@@ -264,6 +283,7 @@ class CalibrationResponse(BaseModel):
     by_client: list[PerClientAgreement]
     suggestions: list[CalibrationSuggestion]
     confidence_audit: list[ConfidenceBucket] = []
+    plan_adherence: list[PlanAdherenceRow] = []
 
 
 # ─── Thresholds ─────────────────────────────────────────────────────
