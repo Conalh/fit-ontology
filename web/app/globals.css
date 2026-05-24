@@ -169,6 +169,93 @@ button {
   50% { opacity: 1; }
 }
 
+/* Motion. The principle: motion confirms or explains, never decorates.
+   The chart line draws in once on mount to acknowledge data arrival; the
+   page body fades up gently so the layout doesn't snap into place; the
+   accent color transitions when the trainer swaps swatches so the chart
+   reacts in step with the picker. All animations honor
+   ``prefers-reduced-motion: reduce`` — users who've opted out get the
+   final state immediately. */
+
+.fit-chart-line {
+  /* pathLength="1" on the path normalizes its total length so we can
+     express the dasharray as a simple "1" regardless of actual SVG path
+     length. Without it we'd have to measure each path. */
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: fit-chart-draw 700ms cubic-bezier(0.4, 0, 0.2, 1) 80ms forwards;
+}
+@keyframes fit-chart-draw {
+  to { stroke-dashoffset: 0; }
+}
+
+.fit-chart-area {
+  opacity: 0;
+  animation: fit-fade-in 500ms ease-out 280ms forwards;
+}
+
+.fit-chart-bar {
+  /* Bars animate up from the baseline rather than fading. transform-box
+     keeps the origin at the bar's bottom (the x-axis line) so the
+     transform anchors there, not at the SVG origin. */
+  transform-box: fill-box;
+  transform-origin: bottom;
+  transform: scaleY(0);
+  animation: fit-bar-grow 500ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes fit-bar-grow {
+  to { transform: scaleY(1); }
+}
+
+.fit-fade-in-up {
+  opacity: 0;
+  transform: translateY(6px);
+  animation: fit-fade-up 350ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes fit-fade-up {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fit-fade-in {
+  to { opacity: 1; }
+}
+
+/* Accent color transitions on SVG primitives. When the trainer flips
+   the per-client accent swatch, every chart line/fill/ribbon reacts
+   together — without this transition each one snaps to the new color
+   independently and the change reads as a flicker rather than a
+   coordinated swap. The 220ms feels purposeful without dragging. */
+svg path,
+svg circle,
+svg rect,
+svg line,
+svg polyline {
+  transition: stroke 220ms ease, fill 220ms ease, opacity 220ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fit-chart-line,
+  .fit-chart-area,
+  .fit-chart-bar,
+  .fit-fade-in-up {
+    animation: none;
+  }
+  .fit-chart-line { stroke-dashoffset: 0; }
+  .fit-chart-area { opacity: 1; }
+  .fit-chart-bar { transform: scaleY(1); }
+  .fit-fade-in-up { opacity: 1; transform: none; }
+  svg path,
+  svg circle,
+  svg rect,
+  svg line,
+  svg polyline {
+    transition: none;
+  }
+}
+
 /* Responsive overrides — the layout's inline styles handle the desktop
    shape; these media queries selectively override the layout-only bits
    (display, grid columns, flex direction) at narrower viewports. */

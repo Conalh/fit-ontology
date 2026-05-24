@@ -160,7 +160,7 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
           onAccentChange={setAccentHex}
         />
 
-        <div className="fit-page-body" style={{ padding: "8px 28px 36px", display: "flex", flexDirection: "column", gap: 22 }}>
+        <div className="fit-page-body fit-fade-in-up" style={{ padding: "8px 28px 36px", display: "flex", flexDirection: "column", gap: 22 }}>
           {!metricsQ.isLoading && !sessionsQ.isLoading &&
             (metricsQ.data ?? []).length === 0 && (sessionsQ.data ?? []).length === 0 && (
               <NoDataBanner clientId={clientId} />

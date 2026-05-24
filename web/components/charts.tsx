@@ -189,9 +189,10 @@ export function TrendChart({
           <stop offset="100%" stopColor={accent} stopOpacity="0" />
         </linearGradient>
       </defs>
-      <path d={areaPath} fill={`url(#${gradId})`} />
+      <path d={areaPath} fill={`url(#${gradId})`} className="fit-chart-area" />
 
-      {/* Line */}
+      {/* Line. ``pathLength="1"`` lets the draw-in animation use a
+          dasharray of 1 regardless of the actual path length. */}
       <path
         d={linePath}
         fill="none"
@@ -199,6 +200,8 @@ export function TrendChart({
         strokeWidth="1.75"
         strokeLinejoin="round"
         strokeLinecap="round"
+        className="fit-chart-line"
+        pathLength="1"
       />
 
       {/* Last point */}
@@ -435,6 +438,10 @@ export function LoadBars({
         const cx = padL + (i + 0.5) * (innerW / data.length);
         const isHot = d.load > 800;
         const isHovered = hoverIdx === i;
+        // Each bar gets the grow animation; the small per-bar delay
+        // makes it sweep left-to-right rather than every bar popping
+        // at once.
+        const delay = `${i * 14}ms`;
         return (
           <rect
             key={d.day}
@@ -445,6 +452,8 @@ export function LoadBars({
             fill={isHot ? "var(--danger)" : accent}
             opacity={d.load === 0 ? 0 : isHovered ? 1 : 0.85}
             rx="1"
+            className="fit-chart-bar"
+            style={{ animationDelay: delay }}
           />
         );
       })}
