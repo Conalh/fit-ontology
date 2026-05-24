@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import load_env
-from .routes import ask, calibration, clients, metrics, overrides, pdf, recommendation, roster, thresholds
+from .routes import ask, calibration, clients, metrics, overrides, pdf, planning, recommendation, roster, thresholds
 from .routes.deps import read_only_conn
 
 # Re-export the connection dependency so existing test code that does
@@ -65,6 +65,7 @@ app.include_router(recommendation.router)
 app.include_router(overrides.router)
 app.include_router(calibration.router)
 app.include_router(thresholds.router)
+app.include_router(planning.router)
 app.include_router(pdf.router)
 app.include_router(ask.router)
 app.include_router(roster.router)

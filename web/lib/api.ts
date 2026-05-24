@@ -204,6 +204,32 @@ export interface ThresholdsResponse {
   baseline_window_suggestion?: BaselineWindowSuggestion | null;
 }
 
+export interface PlannedSession {
+  id: string;
+  client_id: string;
+  week_of: string;
+  slot: number;
+  /** SessionType — "strength" | "cardio" | "mobility" | "mixed". */
+  type: string;
+  title: string;
+  description: string;
+  target_duration_min: number | null;
+  target_load_au: number | null;
+  target_rpe: number | null;
+  contraindications: string[];
+  /** "engine" on initial generation, "trainer" once any field is patched. */
+  source: "engine" | "trainer" | string;
+  generated_at: string;
+  executed_session_id: string | null;
+}
+
+export interface PlanResponse {
+  week_of: string;
+  /** Uppercase verdict — "DELOAD" | "CONSERVATIVE" | "STANDARD". */
+  verdict: string;
+  sessions: PlannedSession[];
+}
+
 export interface AskResponse {
   answer: string;
   traces: AskTrace[];
@@ -247,6 +273,23 @@ export const api = {
   }) =>
     request<OverrideRow>(`/api/clients/${clientId}/overrides`, {
       method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  plan: (clientId: string) => request<PlanResponse>(`/api/clients/${clientId}/plan`),
+  patchPlannedSession: (
+    clientId: string,
+    slot: number,
+    payload: Partial<{
+      type: string;
+      title: string;
+      description: string;
+      target_duration_min: number;
+      target_load_au: number;
+      target_rpe: number;
+    }>,
+  ) =>
+    request<PlannedSession>(`/api/clients/${clientId}/plan/${slot}`, {
+      method: "PATCH",
       body: JSON.stringify(payload),
     }),
   calibration: () => request<CalibrationResponse>("/api/calibration"),

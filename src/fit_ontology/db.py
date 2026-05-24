@@ -317,3 +317,87 @@ def all_overrides(con, limit: int = 1000) -> pd.DataFrame:
         ).df()
     except duckdb.CatalogException:
         return _empty_overrides_df()
+
+
+# ─── Planned sessions (weekly plan) ──────────────────────────────────
+
+def upsert_planned_session(con, ps) -> None:
+    """Insert or replace a single planned-session row. Used both during
+    initial engine generation and for trainer edits (a PATCH on a slot).
+    Source string and contraindications JSON live in the row alongside
+    the structured fields so a reload doesn't need to re-derive them."""
+    from .planning import serialize_contraindications
+
+    con.execute(
+        """
+        INSERT OR REPLACE INTO planned_sessions VALUES
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            ps.id,
+            ps.client_id,
+            ps.week_of,
+            ps.slot,
+            ps.type.value if hasattr(ps.type, "value") else str(ps.type),
+            ps.title,
+            ps.description,
+            ps.target_duration_min,
+            ps.target_load_au,
+            ps.target_rpe,
+            serialize_contraindications(ps.contraindications),
+            ps.source.value if hasattr(ps.source, "value") else str(ps.source),
+            ps.generated_at,
+            ps.executed_session_id,
+        ],
+    )
+
+
+def insert_plan(con, planned_sessions) -> None:
+    """Persist a freshly-generated plan (list of PlannedSession). Wraps
+    individual upserts so a partial failure leaves the DB in a usable
+    state — each slot is independent."""
+    for ps in planned_sessions:
+        upsert_planned_session(con, ps)
+
+
+def plan_for_week(con, client_id: str, week_of):
+    """Return the list of PlannedSession rows for ``(client_id, week_of)``,
+    ordered by slot. Empty list if no plan persisted yet."""
+    from .ontology import PlannedSession, PlanSource, SessionType
+    from .planning import parse_contraindications
+
+    try:
+        rows = con.execute(
+            """
+            SELECT id, client_id, week_of, slot, type, title, description,
+                   target_duration_min, target_load_au, target_rpe,
+                   contraindications, source, generated_at, executed_session_id
+            FROM planned_sessions
+            WHERE client_id = ? AND week_of = ?
+            ORDER BY slot
+            """,
+            [client_id, week_of],
+        ).fetchall()
+    except duckdb.CatalogException:
+        # Pre-migration DB
+        return []
+
+    out = []
+    for r in rows:
+        out.append(PlannedSession(
+            id=r[0],
+            client_id=r[1],
+            week_of=r[2],
+            slot=r[3],
+            type=SessionType(r[4]),
+            title=r[5],
+            description=r[6],
+            target_duration_min=r[7],
+            target_load_au=r[8],
+            target_rpe=r[9],
+            contraindications=parse_contraindications(r[10]),
+            source=PlanSource(r[11]),
+            generated_at=r[12],
+            executed_session_id=r[13],
+        ))
+    return out

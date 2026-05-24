@@ -9,6 +9,7 @@ import { ContraindicationsCard } from "@/components/client-detail/contraindicati
 import { DecisionHistory } from "@/components/client-detail/decision-history";
 import { NoDataBanner } from "@/components/client-detail/no-data-banner";
 import { OverrideDrawer } from "@/components/client-detail/override-drawer";
+import { PlanPanel } from "@/components/client-detail/plan-panel";
 import { RecommendationCard } from "@/components/client-detail/recommendation-card";
 import { RecoveryGauge } from "@/components/client-detail/recovery-gauge";
 import { SendToClient } from "@/components/client-detail/send-to-client";
@@ -180,6 +181,8 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
           {recQ.data && recQ.data.contraindications.length > 0 && (
             <ContraindicationsCard items={recQ.data.contraindications} />
           )}
+
+          <PlanPanel clientId={clientId} />
 
           <SendToClient
             clientId={clientId}

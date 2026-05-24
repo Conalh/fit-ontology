@@ -194,6 +194,48 @@ class CalibrationSuggestion(BaseModel):
     target: str | None = None  # client_id or threshold name when relevant
 
 
+class PlannedSessionResponse(BaseModel):
+    """One slot of the weekly plan. ``contraindications`` is a list of
+    short warning phrases the engine attached (e.g. "avoid deep
+    bilateral squats"); the frontend renders them as small chips below
+    the session description. ``source`` is "engine" on initial
+    generation and flips to "trainer" once any field is PATCH'd."""
+    id: str
+    client_id: str
+    week_of: date
+    slot: int = Field(ge=1)
+    type: str
+    title: str
+    description: str
+    target_duration_min: int | None = None
+    target_load_au: int | None = None
+    target_rpe: float | None = None
+    contraindications: list[str] = []
+    source: str
+    generated_at: datetime
+    executed_session_id: str | None = None
+
+
+class PlanResponse(BaseModel):
+    """The whole week's plan in a single payload — slot-ordered."""
+    week_of: date
+    verdict: str  # 'DELOAD' | 'CONSERVATIVE' | 'STANDARD' — what drove this plan
+    sessions: list[PlannedSessionResponse]
+
+
+class PlannedSessionPatch(BaseModel):
+    """Partial-update payload. Every field optional — the SQL UPDATE only
+    touches what the trainer changed. Patching anything flips the row's
+    ``source`` to "trainer" so future engine regeneration knows not to
+    overwrite it."""
+    type: str | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=80)
+    description: str | None = Field(default=None, max_length=2000)
+    target_duration_min: int | None = Field(default=None, ge=5, le=300)
+    target_load_au: int | None = Field(default=None, ge=0)
+    target_rpe: float | None = Field(default=None, ge=1, le=10)
+
+
 class ConfidenceBucket(BaseModel):
     """One row of the engine-confidence-vs-trainer-acceptance audit.
 
