@@ -158,57 +158,90 @@ def seed_demo_data_if_needed(con) -> None:
     if not get_trainer(con, DEMO_TRAINER_ID):
         insert_trainer(con, DEMO_TRAINER_ID, DEMO_TRAINER_EMAIL, DEMO_TRAINER_NAME)
 
-    # Short-circuit: if the demo trainer already has clients, the
-    # seed already ran. Idempotent — safe on every connect().
-    if not list_clients(con, DEMO_TRAINER_ID).empty:
-        return
+    # Two-phase idempotence:
+    #
+    #   (a) clients/sessions/metrics: short-circuit if the demo
+    #       trainer already has clients — these are bulk loads and
+    #       re-running is expensive even when it's a no-op.
+    #   (b) override history: re-check independently because earlier
+    #       deploys seeded clients+sessions but not history (the
+    #       history seeder landed later than demo mode itself). Those
+    #       existing volumes need a backfill, not a full reseed.
+    #
+    # Combined into one ``seeded_clients`` flag rather than two
+    # separate early returns so the operator log line below still
+    # fires with accurate counts in both the fresh-seed and the
+    # backfill-only paths.
+    existing_clients_df = list_clients(con, DEMO_TRAINER_ID)
+    seeded_clients = existing_clients_df.empty
 
-    # Clients — load the intake CSV, then stamp it onto the demo
-    # trainer via insert_clients (which adds the trainer_id column
-    # to the df before INSERT OR REPLACE).
-    clients_df = from_intake_csv(synth / "clients.csv")
-    insert_clients(con, DEMO_TRAINER_ID, clients_df)
+    if seeded_clients:
+        # Clients — load the intake CSV, then stamp it onto the demo
+        # trainer via insert_clients (which adds the trainer_id column
+        # to the df before INSERT OR REPLACE).
+        clients_df = from_intake_csv(synth / "clients.csv")
+        insert_clients(con, DEMO_TRAINER_ID, clients_df)
 
-    # Sessions — same shape. ensure_client first so the FK passes
-    # (insert_clients already created the rows, but the FK check is
-    # belt-and-suspenders against a partial seed).
-    for client_id in clients_df["id"]:
-        ensure_client(con, DEMO_TRAINER_ID, client_id)
+        # Sessions — same shape. ensure_client first so the FK passes
+        # (insert_clients already created the rows, but the FK check is
+        # belt-and-suspenders against a partial seed).
+        for client_id in clients_df["id"]:
+            ensure_client(con, DEMO_TRAINER_ID, client_id)
 
-    sessions_df = from_session_log_csv(synth / "sessions.csv")
-    insert_sessions(con, DEMO_TRAINER_ID, sessions_df)
+        sessions_df = from_session_log_csv(synth / "sessions.csv")
+        insert_sessions(con, DEMO_TRAINER_ID, sessions_df)
 
-    # Metrics — one Whoop + one Strava per client. Iterate the
-    # client_id column rather than hardcoding so adding a fourth
-    # synthetic client doesn't require touching this code.
-    metric_frames = []
-    for client_id in clients_df["id"]:
-        whoop_path = synth / f"whoop_{client_id}.json"
-        strava_path = synth / f"strava_{client_id}.csv"
-        if whoop_path.exists():
-            metric_frames.append(from_whoop_json(whoop_path, client_id))
-        if strava_path.exists():
-            metric_frames.append(from_strava_export(strava_path, client_id))
-    if metric_frames:
-        all_metrics = pd.concat(metric_frames, ignore_index=True)
-        insert_metrics(con, DEMO_TRAINER_ID, all_metrics)
+        # Metrics — one Whoop + one Strava per client. Iterate the
+        # client_id column rather than hardcoding so adding a fourth
+        # synthetic client doesn't require touching this code.
+        metric_frames = []
+        for client_id in clients_df["id"]:
+            whoop_path = synth / f"whoop_{client_id}.json"
+            strava_path = synth / f"strava_{client_id}.csv"
+            if whoop_path.exists():
+                metric_frames.append(from_whoop_json(whoop_path, client_id))
+            if strava_path.exists():
+                metric_frames.append(from_strava_export(strava_path, client_id))
+        if metric_frames:
+            all_metrics = pd.concat(metric_frames, ignore_index=True)
+            insert_metrics(con, DEMO_TRAINER_ID, all_metrics)
+        client_ids = clients_df["id"].tolist()
+        sessions_count = len(sessions_df)
+        metrics_count = sum(len(f) for f in metric_frames)
+    else:
+        # Backfill path: clients already exist from an earlier deploy.
+        # Skip the heavy reloads, just feed the existing ids into the
+        # history seeder. _seed_demo_history is itself idempotent
+        # (per-client overrides-exist check) so the no-op case stays
+        # cheap on every connect.
+        client_ids = existing_clients_df["id"].tolist()
+        sessions_count = 0
+        metrics_count = 0
 
     # Synthesise ~4 weeks of past recommendations + trainer overrides
     # per client so the calibration page lands on real content (system-
     # vs-trainer agreement matrix, weekly trend, per-client breakdown,
     # tuning suggestions) instead of an empty-state placeholder. Without
     # this the demo's most data-rich screen is the most empty.
-    history_n = _seed_demo_history(con, clients_df["id"].tolist())
+    history_n = _seed_demo_history(con, client_ids)
 
     # Record-keeping for the operator who tail-fs the logs on first
     # deploy: one line, not a stack of inserts. Stays out of audit
     # log because record_audit needs a trainer that performed an
-    # action and "the seeder" isn't that.
+    # action and "the seeder" isn't that. On the warm path (only
+    # history backfill happened) sessions_count + metrics_count are
+    # zero — the log line still fires so the operator sees the
+    # backfill landed.
+    if not seeded_clients and history_n == 0:
+        # Nothing to do — fully-seeded warm boot. Skip the log noise.
+        return
+
     import sys
+    label = "Seeded" if seeded_clients else "Backfilled history for"
     print(
-        f"[fit_ontology.demo] Seeded {len(clients_df)} demo clients + "
-        f"{len(sessions_df)} sessions + "
-        f"{sum(len(f) for f in metric_frames)} metric rows + "
+        f"[fit_ontology.demo] {label} {len(client_ids)} demo clients + "
+        f"{sessions_count} sessions + "
+        f"{metrics_count} metric rows + "
         f"{history_n} historical overrides "
         f"under {DEMO_TRAINER_ID} at {datetime.utcnow().isoformat()}Z",
         file=sys.stderr,
