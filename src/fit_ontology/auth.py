@@ -65,6 +65,9 @@ def _session_secret() -> str:
     secret = os.environ.get("FIT_ONTOLOGY_SESSION_SECRET", "").strip()
     if secret:
         return secret
+    cached = getattr(_session_secret, "_cached", None)
+    if cached:
+        return cached
     # Dev fallback. ``secrets.token_urlsafe`` is cryptographically
     # strong; the warning is only because restarting the process
     # invalidates every active session.

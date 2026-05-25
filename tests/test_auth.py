@@ -38,12 +38,19 @@ from fit_ontology.db import (
 )
 from fit_ontology.routes import (
     clients as clients_routes,
+)
+from fit_ontology.routes import (
     metrics as metrics_routes,
+)
+from fit_ontology.routes import (
     overrides as overrides_routes,
+)
+from fit_ontology.routes import (
     recommendation as recommendation_routes,
+)
+from fit_ontology.routes import (
     thresholds as thresholds_routes,
 )
-
 
 # ─── Fixture ──────────────────────────────────────────────────────────
 
@@ -132,15 +139,23 @@ def test_me_returns_trainer_when_cookie_valid(auth_app):
     assert r.json()["id"] == "t_test"
 
 
-def test_me_returns_401_without_cookie(auth_app):
-    """/me is the endpoint the SPA uses to choose login-screen vs.
-    dashboard — it must answer honestly regardless of dev-mode
-    fallbacks elsewhere."""
+def test_me_returns_default_trainer_without_cookie_when_auth_not_required(auth_app):
+    """/me drives the SPA auth guard. In dev / single-trainer mode it
+    should return the default trainer so a synthetic-data run does not
+    strand the user on /login with no password-backed account."""
+    r = auth_app.get("/api/auth/me")
+    assert r.status_code == 200
+    assert r.json()["id"] == DEFAULT_TRAINER_ID
+
+
+def test_me_returns_401_without_cookie_when_auth_required(auth_app, monkeypatch):
+    monkeypatch.setenv("FIT_ONTOLOGY_REQUIRE_AUTH", "1")
     r = auth_app.get("/api/auth/me")
     assert r.status_code == 401
 
 
-def test_logout_clears_cookie(auth_app):
+def test_logout_clears_cookie(auth_app, monkeypatch):
+    monkeypatch.setenv("FIT_ONTOLOGY_REQUIRE_AUTH", "1")
     auth_app.post("/api/auth/login", json={"email": "conal@example.com", "password": "letmein"})
     # Sanity: /me sees the trainer
     assert auth_app.get("/api/auth/me").status_code == 200
@@ -197,6 +212,19 @@ def test_require_auth_still_lets_cookie_through(auth_app, monkeypatch):
 
 def test_session_roundtrip_with_known_secret(monkeypatch):
     monkeypatch.setenv("FIT_ONTOLOGY_SESSION_SECRET", "unit-test-secret")
+    token = encode_session("t_x")
+    assert decode_session(token) == "t_x"
+
+
+def test_session_roundtrip_with_generated_dev_secret(monkeypatch):
+    """The no-env dev fallback should be stable for the process. A
+    token signed on login must decode on the next request."""
+    import fit_ontology.auth as auth_mod
+
+    monkeypatch.delenv("FIT_ONTOLOGY_SESSION_SECRET", raising=False)
+    if hasattr(auth_mod._session_secret, "_cached"):
+        delattr(auth_mod._session_secret, "_cached")
+
     token = encode_session("t_x")
     assert decode_session(token) == "t_x"
 

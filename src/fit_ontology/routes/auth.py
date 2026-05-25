@@ -11,6 +11,8 @@ centrally alongside the limits on /ask and /share-mint.
 """
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from ..auth import COOKIE_NAME, cookie_kwargs, decode_session, encode_session
@@ -118,7 +120,9 @@ def get_me(
     token = request.cookies.get(COOKIE_NAME, "")
     trainer_id = decode_session(token)
     if not trainer_id:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        if os.environ.get("FIT_ONTOLOGY_REQUIRE_AUTH", "").strip() in {"1", "true", "yes"}:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        trainer_id = DEFAULT_TRAINER_ID
     row = get_trainer(con, trainer_id)
     if not row:
         # Cookie signed a trainer that no longer exists (deleted account).
