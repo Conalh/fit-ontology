@@ -1,0 +1,80 @@
+# Fly.io deployment manifest for FitOntology.
+#
+# Single-region single-machine deployment. DuckDB is single-writer
+# and the workload is tiny (one-trainer-plus-demo); horizontal scale
+# is the wrong tool for ages yet. When the day comes, the migration
+# story is "move to Postgres + Fly Postgres cluster" — schema swap,
+# not a deployment shape change.
+#
+# Run-cost shape:
+#   - shared-cpu-1x @ 256MB: ~free-tier-friendly
+#   - 1GB volume: $0.15/mo
+#   - auto-stop/auto-start: scales to zero when idle, cold-starts
+#     in ~2s on the first request after a quiet period
+#
+# First deploy:
+#   fly volumes create fit_data --region iad --size 1
+#   fly secrets set FIT_ONTOLOGY_SESSION_SECRET=$(openssl rand -base64 48)
+#   fly secrets set FIT_ONTOLOGY_DEFAULT_TRAINER_PASSWORD=...
+#   fly secrets set ANTHROPIC_API_KEY=sk-ant-...
+#   fly deploy
+#
+# Subsequent deploys: fly deploy.
+
+app = "fit-ontology"
+primary_region = "iad"        # change to your closest region
+
+# ─── Build ───────────────────────────────────────────────────────────
+[build]
+  dockerfile = "Dockerfile"
+
+# ─── Runtime env ─────────────────────────────────────────────────────
+# Non-secret values that should be visible in the deploy spec. Real
+# secrets (SESSION_SECRET, ANTHROPIC_API_KEY, etc.) go through
+# ``fly secrets set`` so they live in Fly's encrypted store and never
+# appear in this file.
+[env]
+  FIT_ONTOLOGY_DB = "/data/fit.duckdb"
+  FIT_ONTOLOGY_SESSION_SECURE = "1"       # HSTS + cookie Secure flag
+  FIT_ONTOLOGY_REQUIRE_AUTH = "1"         # /me 401s without a cookie
+  FIT_ONTOLOGY_DEMO_MODE = "1"            # public demo content
+  PORT = "8000"
+
+# ─── Persistent volume ───────────────────────────────────────────────
+# Mounted at /data inside the container. The Dockerfile points
+# FIT_ONTOLOGY_DB at /data/fit.duckdb so the DuckDB file survives
+# deploys. Auto-snapshot daily, retain 5 — Fly's built-in volume
+# backup is enough for this workload until a future Litestream /
+# Postgres swap.
+[mounts]
+  source = "fit_data"
+  destination = "/data"
+  initial_size = "1gb"
+  auto_extend_size_threshold = 80
+  auto_extend_size_increment = "1gb"
+  auto_extend_size_limit = "5gb"
+
+# ─── HTTP service ────────────────────────────────────────────────────
+[http_service]
+  internal_port = 8000
+  force_https = true
+  # auto_stop with min_machines_running = 0 = scales to zero when
+  # idle. Visitor hits the URL → Fly cold-starts the machine, ~2s
+  # latency on the first request. Trade-off: free-tier-friendly,
+  # acceptable for portfolio traffic.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/api/health"
+
+# ─── Machine sizing ──────────────────────────────────────────────────
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

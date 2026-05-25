@@ -1,0 +1,61 @@
+# What stays OUT of the Docker build context. Smaller context = faster
+# uploads to remote builders + no accidental secret leakage.
+
+# Python bytecode / packaging artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Real secrets — must never enter the image.
+.env
+.env.local
+.envrc
+
+# Local data — the runtime mounts a Fly volume at /data; we don't
+# want a developer's DuckDB sneaking in.
+data/*.duckdb
+data/*.duckdb.wal
+data/clients/
+data/wearables/
+# data/synthetic stays IN — demo mode needs it.
+
+# Node / Next.js artifacts (the node-builder stage rebuilds these
+# fresh; shipping a stale .next would just confuse the build).
+web/node_modules/
+web/.next/
+web/out/
+
+# Git history doesn't belong in the runtime image
+.git/
+.github/
+.gitignore
+.gitattributes
+
+# Editor / OS / Claude state
+.vscode/
+.idea/
+.claude/
+.qodo/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Tests + their fixtures don't ship to production
+tests/
+
+# Docs that aren't useful inside the container
+docs/
+ROADMAP.md
+CHANGELOG.md
+
+# Build/CI artifacts
+build/
+dist/
+*.log
