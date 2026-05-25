@@ -439,7 +439,6 @@ export function LoadBars({
   data,
   height = 100,
   width = 600,
-  accent = "var(--accent)",
   showAxis = true,
   onHover,
   showBubble = false,
@@ -447,7 +446,6 @@ export function LoadBars({
   data: { day: number; load: number }[];
   height?: number;
   width?: number;
-  accent?: string;
   showAxis?: boolean;
   /** Same callback contract as TrendChart — null on leave. */
   onHover?: (idx: number | null) => void;
@@ -455,6 +453,16 @@ export function LoadBars({
    * load AU. Off by default. */
   showBubble?: boolean;
 }) {
+  // Regular bars deliberately use the neutral muted token rather than
+  // the per-client --accent. The chart's legend says "Red = high-stress
+  // session" and ``var(--danger)`` is the red being referred to — but
+  // if regular bars inherit a red-ish per-client accent (Ben Okafor's
+  // BO chip is exactly such an accent), the two reds collide and the
+  // legend stops being readable. Decoupling means the red high-stress
+  // bars always contrast against the neutral baseline regardless of
+  // who's on screen. The ``accent`` prop was removed entirely — no
+  // caller customised it productively.
+  const regularBarFill = "var(--text-muted)";
   const [hover, setHover] = useState<{ idx: number; y: number } | null>(null);
   // Tap-to-pin for touch users — same contract as TrendChart.
   const [pinned, setPinned] = useState<number | null>(null);
@@ -498,8 +506,11 @@ export function LoadBars({
             y={padT + innerH - h}
             width={barW}
             height={h}
-            fill={isHot ? "var(--danger)" : accent}
-            opacity={d.load === 0 ? 0 : isHovered ? 1 : 0.85}
+            fill={isHot ? "var(--danger)" : regularBarFill}
+            // Regular bars dimmed further (0.55) so the red high-stress
+            // bars feel like clear callouts; danger fill stays at 0.85
+            // so the colour reads as saturated, not muted-red.
+            opacity={d.load === 0 ? 0 : isHovered ? 1 : isHot ? 0.85 : 0.55}
             rx="1"
             className="fit-chart-bar"
             style={{ animationDelay: delay }}

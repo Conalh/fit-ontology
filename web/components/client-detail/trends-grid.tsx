@@ -119,7 +119,7 @@ export function TrendsGrid({
           </div>
         </div>
         <div style={{ marginTop: 6 }}>
-          <LoadBars data={loadData} height={80} accent="var(--accent)" showBubble />
+          <LoadBars data={loadData} height={80} showBubble />
         </div>
       </div>
 
