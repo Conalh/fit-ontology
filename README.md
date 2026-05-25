@@ -2,6 +2,8 @@
 
 **A client intelligence layer for personal trainers.** Three messy data sources — wearables, trainer intake, and exercise-science guidelines — unified into one queryable ontology, with an explainable rules-based reasoning layer that produces a weekly training recommendation and the full data trail behind it.
 
+> **Live demo →** [fit-ontology.fly.dev](https://fit-ontology.fly.dev) — no signup. Pre-seeded with three synthetic clients. All write actions return a friendly read-only notice; clone the repo to save changes.
+
 ```
 wearables (Garmin / Apple Health / Strava / Whoop)  ─┐
 trainer intake (CSV)                                  ├─► ontology (DuckDB) ─► reasoning ─► dashboard
@@ -198,8 +200,33 @@ pip install -e .[dev]
 pytest -q
 ```
 
-118 tests covering the reasoning branches (level + trend detectors, recovery score, baseline-window auto-fit, per-client threshold overrides), the planning templates and plan-vs-execution matcher, contraindications routing, the override log roundtrip, the assistant tool routing, the Apple Health and Garmin activity parsers, the PDF report, the deterministic metric-ID dedup, and every FastAPI route. CI runs the same suite on Python 3.11 and 3.12 for every push and PR
+209 tests covering the reasoning branches (level + trend detectors, recovery score, baseline-window auto-fit, per-client threshold overrides), the planning templates and plan-vs-execution matcher, contraindications routing, the override log roundtrip, the assistant tool routing, the Apple Health and Garmin activity parsers, the PDF report, the deterministic metric-ID dedup, multi-tenant isolation across reads + writes, the audit log + rate-limit + security-header + CSP middleware, the share-token surface, the Coach Assistant draft endpoint, demo-mode write-rejection, and every FastAPI route. CI runs the same suite on Python 3.11 and 3.12 for every push and PR
 ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)).
+
+## Deploy
+
+A live deploy runs on Fly.io ([deploy runbook](docs/deploy.md)). The
+`Dockerfile` is multi-stage (Node builds the Next export, Python
+runs uvicorn) and the `fly.toml` provisions a single-machine
+shared-cpu-1x with a 1 GB persistent volume for the DuckDB file.
+
+The hosted instance has `FIT_ONTOLOGY_DEMO_MODE=1` set, so
+unauthenticated visitors land on the demo trainer's pre-seeded
+synthetic dashboard. All mutating endpoints return HTTP 403 with a
+"Demo mode — read-only. Run locally to save changes." message for
+demo-trainer requests; the actual single-trainer auth surface
+(`/login` + `FIT_ONTOLOGY_REQUIRE_AUTH=1`) coexists alongside.
+
+```bash
+fly volumes create fit_data --region iad --size 1
+fly secrets set FIT_ONTOLOGY_SESSION_SECRET="$(openssl rand -base64 48)"
+fly secrets set FIT_ONTOLOGY_DEFAULT_TRAINER_PASSWORD=...
+fly secrets set ANTHROPIC_API_KEY=...
+fly deploy
+```
+
+Full instructions in [`docs/deploy.md`](docs/deploy.md): secret
+rotation, custom domain, volume snapshots, demo mode removal.
 
 ## Architecture
 
