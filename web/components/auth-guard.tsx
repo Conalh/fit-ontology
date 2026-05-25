@@ -38,7 +38,10 @@ function normalizePath(p: string | null): string {
   return p;
 }
 
-const PUBLIC_PATHS = new Set(["/login"]);
+// Routes that don't require authentication. /share is the public
+// client-portal view (Phase 3a) — the bearer of a valid share token
+// can see one client's read-only view without any login.
+const PUBLIC_PATHS = new Set(["/login", "/share"]);
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();

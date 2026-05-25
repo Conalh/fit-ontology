@@ -52,6 +52,39 @@ export interface TrainerProfile {
   name: string;
 }
 
+export interface SharePlannedSession {
+  slot: number;
+  type: string;
+  title: string;
+  description: string;
+  target_duration_min: number | null;
+  target_rpe: number | null;
+  done: boolean;
+}
+
+export interface ShareView {
+  client_first_name: string;
+  week_of: string;
+  recommendation: string;
+  rationale: string;
+  confidence: number;
+  recovery_score: {
+    composite: number | null;
+    hrv: number | null;
+    sleep: number | null;
+    rhr: number | null;
+    acwr: number | null;
+  };
+  plan: SharePlannedSession[];
+  trainer_message: string | null;
+  expires_at: string;
+}
+
+export interface ShareCreate {
+  token: string;
+  expires_at: string;
+}
+
 export interface ClientSummary {
   id: string;
   name: string;
@@ -271,6 +304,14 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
+  // Phase 3a share-link surface. createShare is trainer-scoped (carries
+  // the session cookie); shareView is the public client-portal read.
+  createShare: (clientId: string, trainerMessage: string | null) =>
+    request<ShareCreate>(`/api/clients/${clientId}/share`, {
+      method: "POST",
+      body: JSON.stringify({ trainer_message: trainerMessage }),
+    }),
+  shareView: (token: string) => request<ShareView>(`/api/share/${encodeURIComponent(token)}`),
   clients: () => request<ClientSummary[]>("/api/clients"),
   client: (clientId: string) => request<ClientFull>(`/api/clients/${clientId}`),
   createClient: (payload: ClientFormPayload) =>

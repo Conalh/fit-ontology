@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+import secrets
+import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import bcrypt
@@ -744,3 +746,127 @@ def plan_for_week(con, trainer_id: str, client_id: str, week_of):
             executed_session_id=r[13],
         ))
     return out
+
+
+# ─── Share tokens (Phase 3a) ─────────────────────────────────────────
+#
+# Opaque token → read-only client view, no login. Three helpers:
+#   create_share_token   trainer-scoped write — mints a fresh token
+#                        for one of the trainer's clients
+#   share_lookup         public read — resolves a token to the data
+#                        needed to render the client view, or None if
+#                        the token is unknown/expired/wrong-trainer
+#   revoke_share_token   trainer-scoped delete — invalidates a live
+#                        token before its natural expiry
+#
+# Tokens themselves are 32-byte URL-safe random strings (~256 bits).
+# We store them in cleartext: the security model is "guessing this
+# token is computationally infeasible," not "the DB is the secret."
+# If/when the threat model tightens, store SHA-256(token) instead and
+# compare hashed — a one-file change here, no schema change required
+# (token field stays VARCHAR).
+
+
+SHARE_TTL_DAYS_DEFAULT = 14
+
+
+def create_share_token(
+    con,
+    trainer_id: str,
+    client_id: str,
+    trainer_message: str | None = None,
+    ttl_days: int = SHARE_TTL_DAYS_DEFAULT,
+) -> tuple[str, datetime]:
+    """Mint a fresh share token for ``(trainer_id, client_id)``.
+
+    Verifies the client actually belongs to the trainer before
+    writing — otherwise a trainer could mint a public link to
+    another trainer's client just by knowing their client_id.
+    Returns (token, expires_at). The caller (route layer) is
+    responsible for turning the token into a full URL.
+    """
+    owns = con.execute(
+        "SELECT 1 FROM clients WHERE id = ? AND trainer_id = ?",
+        [client_id, trainer_id],
+    ).fetchone()
+    if not owns:
+        # Same error shape as a missing client — don't leak the
+        # difference between "doesn't exist" and "exists but isn't yours."
+        raise ValueError(f"No client with id {client_id}")
+
+    token = secrets.token_urlsafe(32)
+    now = datetime.utcnow()
+    expires_at = now + timedelta(days=ttl_days)
+    con.execute(
+        """
+        INSERT INTO client_share_tokens
+          (id, token, client_id, trainer_id, trainer_message, created_at, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            f"st_{uuid.uuid4().hex[:12]}",
+            token,
+            client_id,
+            trainer_id,
+            (trainer_message or None),
+            now,
+            expires_at,
+        ],
+    )
+    return token, expires_at
+
+
+def share_lookup(con, token: str):
+    """Resolve a token to ``(trainer_id, client_id, trainer_message,
+    expires_at)`` or None.
+
+    Tolerates a missing table (pre-Phase-3a DB on a read-only
+    connection): returns None. The route layer maps None → 404.
+    Distinguishes expired tokens from unknown ones in the return
+    type so the route can emit 410 (Gone) for expired rather than
+    404, giving the client a slightly more useful error.
+    """
+    try:
+        row = con.execute(
+            """
+            SELECT trainer_id, client_id, trainer_message, expires_at
+            FROM client_share_tokens
+            WHERE token = ?
+            """,
+            [token],
+        ).fetchone()
+    except duckdb.CatalogException:
+        return None
+    if not row:
+        return None
+    trainer_id, client_id, msg, expires_at = row
+    return {
+        "trainer_id": trainer_id,
+        "client_id": client_id,
+        "trainer_message": msg,
+        "expires_at": expires_at,
+        "expired": expires_at < datetime.utcnow(),
+    }
+
+
+def revoke_share_token(con, trainer_id: str, token: str) -> bool:
+    """Delete a token if it belongs to ``trainer_id``. Returns True if
+    a row was removed, False if the token didn't exist or belonged to
+    another trainer. The boolean lets the route distinguish "your
+    link is now dead" from "no such link" for the audit log.
+
+    SELECT-then-DELETE rather than relying on cursor.rowcount because
+    DuckDB's Python connector doesn't update rowcount after DML in a
+    way we can depend on across versions.
+    """
+    exists = con.execute(
+        "SELECT 1 FROM client_share_tokens WHERE token = ? AND trainer_id = ?",
+        [token, trainer_id],
+    ).fetchone()
+    if not exists:
+        return False
+    con.execute(
+        "DELETE FROM client_share_tokens WHERE token = ? AND trainer_id = ?",
+        [token, trainer_id],
+    )
+    return True

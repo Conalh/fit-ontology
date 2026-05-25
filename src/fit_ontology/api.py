@@ -34,6 +34,7 @@ from .routes import (
     planning,
     recommendation,
     roster,
+    share,
     thresholds,
 )
 from .routes.deps import read_only_conn
@@ -72,6 +73,7 @@ def health() -> dict:
 # surface (clients → metrics → rec → overrides → calibration → tuning
 # → exports → assistant → roster).
 app.include_router(auth.router)
+app.include_router(share.router)
 app.include_router(clients.router)
 app.include_router(metrics.router)
 app.include_router(recommendation.router)

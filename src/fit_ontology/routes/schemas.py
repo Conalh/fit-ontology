@@ -14,6 +14,55 @@ from pydantic import BaseModel, Field
 from ..ontology import OverrideAction, Sex
 
 
+# ─── Share tokens (Phase 3a) ────────────────────────────────────────
+
+class ShareCreateRequest(BaseModel):
+    """Trainer POST body. trainer_message is the optional inline note
+    the client sees alongside the verdict — kept short on purpose so
+    it nudges trainers toward "training observation," not "wall of
+    text the client won't read on their phone."""
+    trainer_message: str | None = Field(default=None, max_length=500)
+
+
+class ShareCreateResponse(BaseModel):
+    """Returns just the token (the front-end builds the full URL —
+    the server doesn't know what hostname the trainer is using) plus
+    the expiry so the UI can show "expires in N days"."""
+    token: str
+    expires_at: datetime
+
+
+class SharePlannedSession(BaseModel):
+    """Per-slot fields the client portal renders. Mirrors the
+    trainer-side PlannedSessionResponse but strips fields the client
+    has no reason to see (id, generated_at, contraindications,
+    executed_session_id) and adds a boolean ``done`` so the UI can
+    check off completed slots without needing the FK."""
+    slot: int
+    type: str
+    title: str
+    description: str
+    target_duration_min: int | None
+    target_rpe: float | None
+    done: bool
+
+
+class ShareViewResponse(BaseModel):
+    """Public client-portal payload. Deliberately omits intake PII
+    (sex, age, height, weight, injury history), other clients'
+    anything, raw wearable rows, override history, and per-client
+    thresholds. Only what the client needs to read this week."""
+    client_first_name: str
+    week_of: date
+    recommendation: str
+    rationale: str
+    confidence: float
+    recovery_score: dict
+    plan: list[SharePlannedSession]
+    trainer_message: str | None
+    expires_at: datetime
+
+
 # ─── Auth (Phase 2b-α) ──────────────────────────────────────────────
 
 class LoginRequest(BaseModel):

@@ -344,6 +344,26 @@ CREATE TABLE IF NOT EXISTS client_thresholds (
     PRIMARY KEY (client_id, name)
 );
 
+CREATE TABLE IF NOT EXISTS client_share_tokens (
+    -- Phase 3a: opaque token → read-only client view, no login. The
+    -- trainer mints one of these per "send link" action; the client
+    -- opens /share?t=<token> on their phone and sees this week's
+    -- verdict + plan + an optional note from the trainer. Tokens
+    -- expire (default 14 days) so a leaked link goes stale on its own
+    -- without admin action. Multiple live tokens per client are fine
+    -- — the trainer can re-issue without revoking the old one.
+    id              VARCHAR PRIMARY KEY,
+    token           VARCHAR NOT NULL UNIQUE,
+    client_id       VARCHAR NOT NULL REFERENCES clients(id),
+    trainer_id      VARCHAR NOT NULL,
+    trainer_message VARCHAR,
+    created_at      TIMESTAMP NOT NULL,
+    expires_at      TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_share_tokens_token ON client_share_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_share_tokens_trainer_client
+    ON client_share_tokens(trainer_id, client_id);
+
 -- ─── Phase 2a multi-tenant scoping ──────────────────────────────────
 -- Add trainer_id to every client-data table. ADD COLUMN IF NOT EXISTS
 -- so a fresh DB and an existing DB both end up with the column. The
