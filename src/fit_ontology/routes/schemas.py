@@ -14,6 +14,25 @@ from pydantic import BaseModel, Field
 from ..ontology import OverrideAction, Sex
 
 
+# ─── Auth (Phase 2b-α) ──────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    """POST /api/auth/login body. Email is normalized to lowercase by
+    the verifier; password is whatever the user typed (the helper
+    handles trim + bcrypt's 72-byte cap)."""
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class AuthMeResponse(BaseModel):
+    """Trainer profile returned by /login and /me. Deliberately omits
+    hashed_password and created_at — the front-end only needs to render
+    a name and route between login/dashboard."""
+    id: str
+    email: str
+    name: str
+
+
 # ─── Clients ────────────────────────────────────────────────────────
 
 class ClientSummary(BaseModel):

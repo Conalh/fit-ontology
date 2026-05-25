@@ -6,6 +6,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+import bcrypt
 import duckdb
 import pandas as pd
 
@@ -89,6 +90,24 @@ def _run_migrations(con: duckdb.DuckDBPyConnection) -> None:
             [DEFAULT_TRAINER_ID, DEFAULT_TRAINER_EMAIL, DEFAULT_TRAINER_NAME, datetime.utcnow()],
         )
 
+    # Step 1b (Phase 2b-α): seed the default trainer's password from
+    # FIT_ONTOLOGY_DEFAULT_TRAINER_PASSWORD if (and only if) the row
+    # currently has no hash. Lets a deployment set the bootstrap
+    # password once via env var without re-applying it on every restart
+    # (which would let an operator who lost the env var lock themselves
+    # out). To rotate, clear the env var, set a new value, restart.
+    bootstrap_pw = os.environ.get("FIT_ONTOLOGY_DEFAULT_TRAINER_PASSWORD", "").strip()
+    if bootstrap_pw:
+        row = con.execute(
+            "SELECT id, hashed_password FROM trainers WHERE id = ?",
+            [DEFAULT_TRAINER_ID],
+        ).fetchone()
+        if row and not row[1]:
+            con.execute(
+                "UPDATE trainers SET hashed_password = ? WHERE id = ?",
+                [_hash_password(bootstrap_pw), DEFAULT_TRAINER_ID],
+            )
+
     # Step 2: resolve which trainer to assign legacy rows to. If a
     # deployment-supplied DEFAULT_TRAINER_ID matches an existing row,
     # use it; otherwise fall back to whichever trainer is in the
@@ -122,6 +141,42 @@ def _run_migrations(con: duckdb.DuckDBPyConnection) -> None:
         )
 
 
+# ─── Password hashing (Phase 2b-α) ───────────────────────────────────
+#
+# bcrypt directly rather than via passlib — passlib 1.7.4's bcrypt
+# loader broke against bcrypt 5.x (missing ``__about__``), and bcrypt's
+# bare API is small enough that the abstraction wasn't earning its
+# place. Cost factor 12 is the bcrypt default in 4.x+ and the right
+# balance for an interactive login (a few hundred ms on a modern CPU).
+
+
+def _hash_password(plaintext: str) -> str:
+    """Return a bcrypt hash suitable for storage in trainers.hashed_password.
+
+    bcrypt operates on bytes and silently truncates at 72; we strip and
+    cap here so a paste with a trailing newline or an unusually long
+    passphrase produces the same hash on every run rather than
+    different ones depending on what fell off the end.
+    """
+    pw_bytes = plaintext.strip().encode("utf-8")[:72]
+    return bcrypt.hashpw(pw_bytes, bcrypt.gensalt()).decode("utf-8")
+
+
+def _verify_password(plaintext: str, hashed: str) -> bool:
+    """Constant-time comparison of a candidate password against the
+    stored hash. Returns False (rather than raising) on a malformed
+    hash so the login route can give a uniform 401."""
+    if not hashed:
+        return False
+    try:
+        return bcrypt.checkpw(
+            plaintext.strip().encode("utf-8")[:72],
+            hashed.encode("utf-8"),
+        )
+    except (ValueError, TypeError):
+        return False
+
+
 # ─── Trainer-scoped helpers ───────────────────────────────────────────
 #
 # Every helper that reads or writes client-data takes ``trainer_id`` as
@@ -144,6 +199,14 @@ def get_trainer_by_email(con, email: str):
     ).fetchone()
 
 
+def get_trainer(con, trainer_id: str):
+    """Return (id, email, name, created_at) for a trainer, or None."""
+    return con.execute(
+        "SELECT id, email, name, created_at FROM trainers WHERE id = ?",
+        [trainer_id],
+    ).fetchone()
+
+
 def insert_trainer(con, trainer_id: str, email: str, name: str,
                    hashed_password: str | None = None) -> None:
     """Create a trainer row. Used by tests and by the eventual sign-up
@@ -156,6 +219,38 @@ def insert_trainer(con, trainer_id: str, email: str, name: str,
         """,
         [trainer_id, email, name, hashed_password, datetime.utcnow()],
     )
+
+
+def set_trainer_password(con, trainer_id: str, plaintext: str) -> None:
+    """Hash and store a new password for ``trainer_id``. Used by the
+    sign-up flow and by tests; the migration seeds the default
+    trainer's bootstrap password through a different path."""
+    con.execute(
+        "UPDATE trainers SET hashed_password = ? WHERE id = ?",
+        [_hash_password(plaintext), trainer_id],
+    )
+
+
+def verify_trainer_login(con, email: str, plaintext: str) -> str | None:
+    """Return the trainer's id on a successful email+password match, or
+    None on any failure (unknown email, no password set, wrong
+    password). The single bool result keeps timing/error shape uniform
+    so the login route can return one 401 for every failure mode
+    without leaking which one occurred."""
+    row = con.execute(
+        "SELECT id, hashed_password FROM trainers WHERE email = ?",
+        [email.strip().lower()] if "@" in email else [email.strip()],
+    ).fetchone()
+    if not row:
+        # Run a dummy verify against a fixed hash so an attacker can't
+        # time the difference between "no such email" and "wrong
+        # password." The hash here is for the string "x" — irrelevant.
+        _verify_password(plaintext, "$2b$12$AbcdefghijklmnopqrstuOZJjMz4uHJlBjzy/0Z6E3W5cFvKZqcVe")
+        return None
+    trainer_id, hashed = row
+    if _verify_password(plaintext, hashed):
+        return trainer_id
+    return None
 
 
 def insert_clients(con, trainer_id: str, df: pd.DataFrame) -> None:

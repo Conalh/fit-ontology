@@ -29,6 +29,14 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "python-multipart>=0.0.9",
+    # Phase 2b-α auth: bcrypt for password hashing and itsdangerous for
+    # signing the session cookie. Using bcrypt directly rather than
+    # passlib — passlib 1.7.4 broke against bcrypt 5.x (missing
+    # ``__about__``), and bcrypt's bare API (hashpw / checkpw) is
+    # already the entire surface we need. itsdangerous keeps the
+    # cookie code to a few lines rather than pulling in a full framework.
+    "bcrypt>=4.0.0",
+    "itsdangerous>=2.1.0",
 ]
 
 [project.scripts]

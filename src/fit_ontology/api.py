@@ -23,7 +23,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import load_env
-from .routes import ask, calibration, clients, metrics, overrides, pdf, planning, recommendation, roster, thresholds
+from .routes import (
+    ask,
+    auth,
+    calibration,
+    clients,
+    metrics,
+    overrides,
+    pdf,
+    planning,
+    recommendation,
+    roster,
+    thresholds,
+)
 from .routes.deps import read_only_conn
 
 # Re-export the connection dependency so existing test code that does
@@ -59,6 +71,7 @@ def health() -> dict:
 # union of all routers' route tables. Grouped roughly by ontology
 # surface (clients → metrics → rec → overrides → calibration → tuning
 # → exports → assistant → roster).
+app.include_router(auth.router)
 app.include_router(clients.router)
 app.include_router(metrics.router)
 app.include_router(recommendation.router)
