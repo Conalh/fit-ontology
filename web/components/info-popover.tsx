@@ -116,6 +116,24 @@ export function InfoPopover({
   // already closes on pointer-leave.
   const openedByTouchRef = useRef(false);
   const autoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Delayed-close timer for mouse pointer-leave. The popover sits 6px
+  // below the trigger, and that gap is dead space — the mouse leaves
+  // the trigger before it reaches the popover content. Without a
+  // close delay the popover dismisses mid-traversal and the user
+  // never gets a chance to click the View paper / Copy link / Source
+  // links inside (Conal's report: "they don't hold so I am never
+  // able to click over TO the study"). 180ms is enough to cover a
+  // deliberate cursor move from chip to popover content without
+  // making the dismiss feel sluggish on incidental hover-aways.
+  const hoverCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const HOVER_CLOSE_DELAY_MS = 180;
+
+  const cancelHoverClose = useCallback(() => {
+    if (hoverCloseTimerRef.current) {
+      clearTimeout(hoverCloseTimerRef.current);
+      hoverCloseTimerRef.current = null;
+    }
+  }, []);
 
   const close = useCallback(() => {
     setOpen(false);
@@ -125,7 +143,16 @@ export function InfoPopover({
       clearTimeout(autoCloseTimerRef.current);
       autoCloseTimerRef.current = null;
     }
+    if (hoverCloseTimerRef.current) {
+      clearTimeout(hoverCloseTimerRef.current);
+      hoverCloseTimerRef.current = null;
+    }
   }, []);
+
+  const scheduleHoverClose = useCallback(() => {
+    cancelHoverClose();
+    hoverCloseTimerRef.current = setTimeout(close, HOVER_CLOSE_DELAY_MS);
+  }, [close, cancelHoverClose]);
 
   // Compute the popover's screen position from the trigger's rect.
   // Two phases:
@@ -241,6 +268,7 @@ export function InfoPopover({
   useEffect(() => {
     return () => {
       if (autoCloseTimerRef.current) clearTimeout(autoCloseTimerRef.current);
+      if (hoverCloseTimerRef.current) clearTimeout(hoverCloseTimerRef.current);
     };
   }, []);
 
@@ -248,13 +276,22 @@ export function InfoPopover({
     // Real mouse only — touch devices synthesize a hover event right
     // before the tap, which would race with the click handler.
     if (e.pointerType !== "mouse") return;
+    // Cursor came back to the trigger before the close timer fired —
+    // user changed their mind, or made a quick out-and-back motion.
+    cancelHoverClose();
     setOpen(true);
     openedByTouchRef.current = false;
   };
 
   const handlePointerLeave = (e: React.PointerEvent) => {
     if (e.pointerType !== "mouse") return;
-    if (!openedByTouchRef.current) close();
+    if (openedByTouchRef.current) return;
+    // The trigger and popover have a 6px gap between them — closing
+    // immediately on leave makes the popover unreachable for the
+    // user trying to click into it. Schedule the close instead; the
+    // popover's onPointerEnter cancels the timer if the cursor lands
+    // inside the popover within the window.
+    scheduleHoverClose();
   };
 
   const handleClick = (e: React.MouseEvent) => {
@@ -354,22 +391,34 @@ export function InfoPopover({
               whiteSpace: "normal",
               textAlign: "left",
             }}
-            // Stop the auto-close timer from firing while the user is
-            // reading — any pointermove inside the popover restarts it.
+            // Mouse arrived in the popover from the trigger — cancel
+            // any pending hover-close timer so the popover stays open
+            // for as long as the cursor is inside it. This is the
+            // "intent latch" that makes the View paper / Copy link
+            // / Source row actually clickable on desktop.
+            onPointerEnter={(e) => {
+              if (e.pointerType !== "mouse") return;
+              cancelHoverClose();
+            }}
+            // Stop the touch auto-close timer from firing while the
+            // user is reading — any pointermove inside the popover
+            // restarts the 5s timer for tap-opened popovers.
             onPointerMove={() => {
               if (!openedByTouchRef.current) return;
               if (autoCloseTimerRef.current) clearTimeout(autoCloseTimerRef.current);
               autoCloseTimerRef.current = setTimeout(close, TOUCH_AUTOCLOSE_MS);
             }}
-            // Mouse leaving the popover dismisses it (for the
-            // hover-opened case), unless the cursor went back over
-            // the trigger (which would just keep it open).
+            // Mouse leaving the popover schedules a delayed close
+            // (same delay as the trigger's leave) so the cursor can
+            // sweep back to the trigger or jiggle on the popover
+            // border without losing the open state. Skipped when
+            // moving back into the trigger.
             onPointerLeave={(e) => {
               if (e.pointerType !== "mouse") return;
               if (openedByTouchRef.current) return;
               const next = e.relatedTarget as Node | null;
               if (next && triggerRef.current?.contains(next)) return;
-              close();
+              scheduleHoverClose();
             }}
           >
             <div
