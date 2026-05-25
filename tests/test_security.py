@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from fastapi.responses import HTMLResponse
 from fastapi.testclient import TestClient
 
 import fit_ontology.api as api_mod
@@ -48,6 +49,30 @@ from fit_ontology.routes import (
 )
 from fit_ontology.routes import (
     thresholds as thresholds_routes,
+)
+
+
+# CSP only attaches to HTML responses (see _is_html_response in api.py).
+# In a dev environment with ``web/out/`` present the static mount catches
+# ``GET /`` and returns index.html — HTML, CSP fires. On CI runners that
+# haven't built the Next.js export, the same request falls through to
+# FastAPI's default 404 handler which returns JSON — CSP correctly
+# skips it, and the CSP assertion in test_csp_present_on_html_responses
+# fails because there's no HTML response to attach to. Registering this
+# probe route once at module load time gives the CSP tests a
+# deterministic HTML target regardless of whether ``web/out/`` is
+# bundled in the test environment. ``include_in_schema=False`` keeps it
+# out of the OpenAPI doc; the path is namespaced so it can't collide
+# with a real route.
+def _csp_html_probe() -> HTMLResponse:
+    return HTMLResponse("<!doctype html><html><body>csp probe</body></html>")
+
+
+api_mod.app.add_api_route(
+    "/_test_csp_html_probe",
+    _csp_html_probe,
+    include_in_schema=False,
+    methods=["GET"],
 )
 
 
@@ -337,8 +362,11 @@ def test_hsts_present_when_secure_flag_set(app, monkeypatch):
 
 def _csp_response(client: TestClient):
     """Force an HTML response so the CSP middleware actually attaches
-    the header — /api/health returns JSON and skips CSP by design."""
-    return client.get("/", headers={"Accept": "text/html"})
+    the header — /api/health returns JSON and skips CSP by design.
+    Hits the test-only HTML probe route registered at module load so
+    we're independent of whether ``web/out/`` is bundled (see the
+    module-level comment for why this matters on CI)."""
+    return client.get("/_test_csp_html_probe")
 
 
 def test_csp_present_on_html_responses(app):
