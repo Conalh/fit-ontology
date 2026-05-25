@@ -1,9 +1,12 @@
 "use client";
 
+import { useMutation } from "@tanstack/react-query";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { defaultAccentForClient, getStoredAccent, initialsFor, withAlpha } from "@/lib/accent";
-import type { RosterRow } from "@/lib/api";
+import { api, type RosterRow } from "@/lib/api";
+import { useAuth, useInvalidateAuth } from "@/lib/use-auth";
 import { VerdictDot, labelToVerdict } from "./verdict";
 
 type IconName = "grid" | "user" | "check" | "chat" | "inbox" | "cal";
@@ -50,6 +53,9 @@ export function Sidebar({
         display: "flex",
         flexDirection: "column",
         fontSize: 13.5,
+        // Sticky-tall so the trainer chip at the bottom anchors to the
+        // viewport bottom even when the roster is short.
+        minHeight: "100vh",
       }}
     >
       {/* Logo */}
@@ -205,7 +211,123 @@ export function Sidebar({
           })}
         </div>
       </div>
+
+      <TrainerChip />
     </aside>
+  );
+}
+
+/**
+ * Logged-in-trainer chip pinned to the bottom of the sidebar.
+ *
+ * Shows the trainer's initials + name + email, with a logout button on
+ * the right. Hidden entirely when no one is logged in — the only time
+ * that happens is the brief moment between AuthGuard's loading state
+ * and the redirect to /login, and the chip flashing into a blank
+ * sidebar would be more distracting than helpful.
+ */
+function TrainerChip() {
+  const { trainer } = useAuth();
+  const router = useRouter();
+  const invalidateAuth = useInvalidateAuth();
+
+  const logout = useMutation({
+    mutationFn: () => api.logout(),
+    onSettled: async () => {
+      // Whether the server logout succeeded or 503'd, clear the local
+      // /me cache and bounce to /login — the cookie may already be
+      // gone client-side. AuthGuard would also catch this but the
+      // explicit push avoids a one-frame flash of "you're logged in
+      // but the API thinks you're not."
+      await invalidateAuth();
+      router.replace("/login");
+    },
+  });
+
+  if (!trainer) return null;
+
+  return (
+    <div
+      style={{
+        marginTop: "auto",
+        padding: "10px 10px 12px",
+        borderTop: "1px solid var(--border)",
+        display: "flex",
+        alignItems: "center",
+        gap: 9,
+      }}
+    >
+      <div
+        style={{
+          width: 26,
+          height: 26,
+          borderRadius: 6,
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          color: "var(--text)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: "-0.02em",
+          flexShrink: 0,
+        }}
+        aria-hidden
+      >
+        {initialsFor(trainer.name)}
+      </div>
+      <div style={{ flex: 1, minWidth: 0, lineHeight: 1.2 }}>
+        <div
+          style={{
+            fontSize: 12.5,
+            fontWeight: 500,
+            color: "var(--text)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {trainer.name}
+        </div>
+        <div
+          title={trainer.email}
+          style={{
+            fontSize: 10.5,
+            color: "var(--text-muted)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {trainer.email}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => logout.mutate()}
+        disabled={logout.isPending}
+        title="Log out"
+        aria-label="Log out"
+        style={{
+          background: "transparent",
+          border: "1px solid var(--border)",
+          borderRadius: 5,
+          padding: "4px 6px",
+          color: "var(--text-muted)",
+          cursor: logout.isPending ? "wait" : "pointer",
+          opacity: logout.isPending ? 0.6 : 1,
+          display: "flex",
+          alignItems: "center",
+        }}
+      >
+        <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M12 4h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-3" />
+          <polyline points="8,7 4,10 8,13" />
+          <line x1="4" y1="10" x2="13" y2="10" />
+        </svg>
+      </button>
+    </div>
   );
 }
 

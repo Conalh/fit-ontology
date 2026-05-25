@@ -27,6 +27,11 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
+    // credentials: "include" is essential for the Phase 2b-α session
+    // cookie to flow on cross-origin dev calls (Next on :3000 →
+    // FastAPI on :8000). Same-origin production deploys send cookies
+    // anyway, but the flag is harmless there.
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
@@ -39,6 +44,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // 204 No Content / empty body.
   const text = await res.text();
   return text ? (JSON.parse(text) as T) : (undefined as T);
+}
+
+export interface TrainerProfile {
+  id: string;
+  email: string;
+  name: string;
 }
 
 export interface ClientSummary {
@@ -251,6 +262,15 @@ export interface AskResponse {
 
 export const api = {
   health: () => request<{ ok: boolean }>("/api/health"),
+  // Phase 2b-β auth surface — the only routes that intentionally
+  // return 401 without redirecting (the SPA's auth-guard does that).
+  me: () => request<TrainerProfile>("/api/auth/me"),
+  login: (email: string, password: string) =>
+    request<TrainerProfile>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    }),
+  logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   clients: () => request<ClientSummary[]>("/api/clients"),
   client: (clientId: string) => request<ClientFull>(`/api/clients/${clientId}`),
   createClient: (payload: ClientFormPayload) =>
@@ -314,10 +334,15 @@ export const api = {
   upload: async (clientId: string, file: File): Promise<{ inserted: number; kinds: string[] }> => {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL ?? ""}/api/clients/${clientId}/upload`,
-      { method: "POST", body: form },
-    );
+    // Use API_BASE (which has the localhost dev fallback) rather than
+    // reading the env var directly — otherwise dev calls would post to
+    // the relative path and miss the FastAPI server. credentials:
+    // "include" carries the session cookie cross-origin.
+    const res = await fetch(`${API_BASE}/api/clients/${clientId}/upload`, {
+      method: "POST",
+      body: form,
+      credentials: "include",
+    });
     if (!res.ok) {
       const detail = await res.text().catch(() => res.statusText);
       throw new ApiError(res.status, detail || `HTTP ${res.status}`);
@@ -327,14 +352,12 @@ export const api = {
   ask: (payload: { question: string; history: Record<string, unknown>[]; model?: string }) =>
     request<AskResponse>("/api/ask", { method: "POST", body: JSON.stringify(payload) }),
   downloadPdf: async (clientId: string, coachMessage: string | null): Promise<Blob> => {
-    const res = await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL ?? ""}/api/clients/${clientId}/pdf`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ coach_message: coachMessage ?? null }),
-      },
-    );
+    const res = await fetch(`${API_BASE}/api/clients/${clientId}/pdf`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ coach_message: coachMessage ?? null }),
+      credentials: "include",
+    });
     if (!res.ok) {
       const detail = await res.text().catch(() => res.statusText);
       throw new ApiError(res.status, detail || `HTTP ${res.status}`);
