@@ -71,7 +71,6 @@ from fit_ontology.routes import (
     thresholds as thresholds_routes,
 )
 
-
 # ─── Module-level helper contract tests ───────────────────────────────
 
 

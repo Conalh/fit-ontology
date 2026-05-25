@@ -57,8 +57,9 @@ def make_garmin_client(
     token_dir.mkdir(parents=True, exist_ok=True)
 
     # The library accepts prompt_mfa starting at 0.2.x; passing it is a no-op
-    # if MFA isn't enabled on the account.
-    kwargs = {"email": email, "password": password}
+    # if MFA isn't enabled on the account. dict[str, Any] because mfa_prompt
+    # is a Callable and the literal init would otherwise narrow to dict[str, str].
+    kwargs: dict[str, object] = {"email": email, "password": password}
     if mfa_prompt is not None:
         kwargs["prompt_mfa"] = mfa_prompt
 

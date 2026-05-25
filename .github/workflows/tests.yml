@@ -32,5 +32,26 @@ jobs:
       - name: Lint with ruff
         run: ruff check src scripts tests
 
-      - name: Run tests
-        run: pytest -q
+      - name: Type-check with mypy
+        # Config lives in pyproject.toml [tool.mypy]. The CI step is
+        # the source of truth for "did types regress" — green here
+        # means `mypy src/fit_ontology` is also green locally.
+        run: mypy
+
+      - name: Run tests with coverage
+        run: |
+          pytest \
+            --cov=src/fit_ontology \
+            --cov-report=term-missing \
+            --cov-report=xml
+
+      # Upload coverage.xml as a build artifact so it can be inspected
+      # from a failed PR run or piped into an external service later
+      # (codecov / coveralls) without re-running the suite.
+      - name: Upload coverage artifact
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          retention-days: 14

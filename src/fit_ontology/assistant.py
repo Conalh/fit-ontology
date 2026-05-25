@@ -318,8 +318,12 @@ def ask(
                 "text": SYSTEM_PROMPT,
                 "cache_control": {"type": "ephemeral"},
             }],
-            tools=TOOLS,
-            messages=messages,
+            # Anthropic's SDK uses elaborate TypedDicts for tools +
+            # messages; our plain-dict shapes round-trip fine but mypy
+            # can't prove that without verbose annotations. The runtime
+            # contract is validated by the SDK's own pydantic parsing.
+            tools=TOOLS,  # type: ignore[arg-type]
+            messages=messages,  # type: ignore[arg-type]
         )
 
         assistant_blocks = [block.model_dump() for block in response.content]

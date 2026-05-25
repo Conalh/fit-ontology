@@ -972,7 +972,15 @@ def generate_recommendation(
     today = today or date.today()
     week_of = today - timedelta(days=today.weekday())  # Monday
 
-    detectors_metric = [
+    # Both detector lists have the same call shape:
+    # ``(data, today, thresholds) -> Signal | None``. mypy infers the
+    # narrowest function type from the first list entry, so without an
+    # explicit Callable annotation the second detector list (with a
+    # different concrete function type) trips an assignment error.
+    from collections.abc import Callable
+    from typing import Any
+    _Detector = Callable[[Any, date, Mapping[str, float] | None], "Signal | None"]
+    detectors_metric: list[_Detector] = [
         detect_hrv_signal,
         detect_hrv_trend_signal,
         detect_rhr_signal,
@@ -981,7 +989,7 @@ def generate_recommendation(
         detect_sleep_trend_signal,
         detect_training_readiness_signal,
     ]
-    detectors_session = [detect_acwr_signal, detect_rpe_signal]
+    detectors_session: list[_Detector] = [detect_acwr_signal, detect_rpe_signal]
 
     signals: list[Signal] = []
     for fn in detectors_metric:

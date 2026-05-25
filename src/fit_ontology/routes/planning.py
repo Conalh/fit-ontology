@@ -20,9 +20,9 @@ from ..db import (
     thresholds_for_client,
     upsert_planned_session,
 )
+from ..demo import is_demo_trainer
 from ..ontology import PlanSource, SessionType
 from ..planning import Verdict, generate_plan
-from ..demo import is_demo_trainer
 from ..reasoning import generate_recommendation
 from .deps import current_trainer_id, forbid_demo_trainer
 from .schemas import PlannedSessionPatch, PlannedSessionResponse, PlanResponse

@@ -45,7 +45,13 @@ fit-ontology-serve = "fit_ontology.serve:main"
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pytest-cov>=5.0",
     "ruff>=0.6",
+    "mypy>=1.10",
+    # Pillow is only used by docs/screenshots/capture.py to generate
+    # placeholder PNGs; not a runtime dep. Pinned at >=10 because the
+    # ImageDraw API got tighter type annotations in that line.
+    "Pillow>=10.0",
 ]
 
 [project.urls]
@@ -54,3 +60,48 @@ Repository = "https://github.com/Conalh/fit-ontology"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["fit_ontology*"]
+
+# ─── Pytest ──────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+# tests/test_trainer_cli.py does ``import scripts.trainer`` so the
+# project root needs to be on sys.path. Pinning it via pythonpath is
+# cleaner than scattering a conftest.py with sys.path hacks.
+pythonpath = ["."]
+
+# ─── Coverage ────────────────────────────────────────────────────────
+# Source = src/fit_ontology (the part we own); skip the routes/__init__
+# (auto-generated re-exports) and any local-dev script paths. The xml
+# report is what GitHub Actions uploads as a build artifact.
+[tool.coverage.run]
+source = ["src/fit_ontology"]
+branch = true
+omit = [
+    "*/__init__.py",
+    "*/serve.py",            # uvicorn entry, exercised by integration
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+precision = 1
+show_missing = true
+
+# ─── Mypy ────────────────────────────────────────────────────────────
+# Permissive on third-party imports without type stubs (anthropic,
+# duckdb, garminconnect, reportlab, etc.) while keeping a real check
+# on the project's own code. check_untyped_defs catches the obvious
+# class of "you forgot to annotate this internal helper" without
+# forcing every type to be explicit.
+[tool.mypy]
+python_version = "3.11"
+files = ["src/fit_ontology"]
+check_untyped_defs = true
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true

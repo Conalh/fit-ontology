@@ -48,7 +48,7 @@ from ..db import (
 )
 from ..rate_limit import SHARE_MINT_LIMIT, enforce
 from ..reasoning import compute_recovery_score, generate_recommendation
-from .deps import current_trainer_id, forbid_demo_trainer, read_only_conn
+from .deps import forbid_demo_trainer, read_only_conn
 from .schemas import (
     ShareCreateRequest,
     ShareCreateResponse,
