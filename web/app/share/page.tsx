@@ -1,7 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import type { CSSProperties } from "react";
 import { ApiError, api, type ShareView } from "@/lib/api";
 
@@ -18,10 +19,8 @@ import { ApiError, api, type ShareView } from "@/lib/api";
  * route segments would force per-token pre-rendering, which we
  * obviously can't do for an unbounded set of tokens.
  *
- * Suspense wraps the contents because we read the token via
- * window.location.search after mount (avoiding useSearchParams,
- * which would force this whole tree into Suspense indefinitely
- * — same gotcha that bit the AuthGuard earlier).
+ * Suspense wraps the contents because useSearchParams reads from the
+ * browser URL at runtime in this exported Next.js app.
  */
 export default function SharePage() {
   return (
@@ -32,13 +31,8 @@ export default function SharePage() {
 }
 
 function ShareInner() {
-  // We can't call useSearchParams inside a client component at the
-  // providers level (it deadlocks Suspense). Read once on mount.
-  const [token, setToken] = useState<string | null>(null);
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    setToken(params.get("t"));
-  }, []);
+  const searchParams = useSearchParams();
+  const token = searchParams.get("t");
 
   const view = useQuery<ShareView, ApiError>({
     queryKey: ["share", token],
@@ -47,10 +41,6 @@ function ShareInner() {
     retry: false,
   });
 
-  if (token === null) {
-    // First render before useEffect has populated the token.
-    return <Scaffold>Loading…</Scaffold>;
-  }
   if (!token) {
     return (
       <Scaffold variant="error">
