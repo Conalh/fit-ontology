@@ -22,8 +22,9 @@ from ..db import (
 )
 from ..ontology import PlanSource, SessionType
 from ..planning import Verdict, generate_plan
+from ..demo import is_demo_trainer
 from ..reasoning import generate_recommendation
-from .deps import current_trainer_id
+from .deps import current_trainer_id, forbid_demo_trainer
 from .schemas import PlannedSessionPatch, PlannedSessionResponse, PlanResponse
 
 router = APIRouter()
@@ -103,6 +104,17 @@ def get_plan(
             )
             needs_persist = True
 
+    # Demo trainer: skip ALL writes. The visitor gets a freshly
+    # generated plan rendered in memory but nothing lands in the DB.
+    # Avoids: writer-lock contention on every demo visitor, audit-log
+    # noise, demo-data drift across visits.
+    if is_demo_trainer(trainer_id):
+        return PlanResponse(
+            week_of=week_of,
+            verdict=verdict,
+            sessions=[_to_response(ps) for ps in (new_plan or plan)],
+        )
+
     if needs_persist and new_plan:
         try:
             with connect(DEFAULT_DB_PATH, read_only=False) as wcon:
@@ -144,7 +156,7 @@ def patch_planned_session(
     slot: int,
     payload: PlannedSessionPatch,
     request: Request,
-    trainer_id: str = Depends(current_trainer_id),
+    trainer_id: str = Depends(forbid_demo_trainer),
 ) -> PlannedSessionResponse:
     """Edit one slot of the current week's plan. Any patch flips the
     row's source to "trainer" — once the trainer has touched a slot,

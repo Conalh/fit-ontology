@@ -21,7 +21,7 @@ from ..ingest import (
     from_strava_export,
     from_whoop_json,
 )
-from .deps import current_trainer_id, read_only_conn
+from .deps import current_trainer_id, forbid_demo_trainer, read_only_conn
 from .schemas import MetricRow, SessionRow
 
 router = APIRouter()
@@ -77,7 +77,7 @@ def get_sessions(
 async def post_upload(
     client_id: str,
     file: UploadFile = File(...),
-    trainer_id: str = Depends(current_trainer_id),
+    trainer_id: str = Depends(forbid_demo_trainer),
 ) -> dict:
     """Accept a wearable export and ingest it for the given client.
 

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..db import DEFAULT_DB_PATH, connect, insert_override, overrides_for_client, record_audit
 from ..ontology import RecommendationOverride
-from .deps import current_trainer_id, read_only_conn
+from .deps import current_trainer_id, forbid_demo_trainer, read_only_conn
 from .helpers import override_response, override_response_from_model
 from .schemas import OverrideCreate, OverrideResponse
 
@@ -34,7 +34,7 @@ def post_override(
     client_id: str,
     payload: OverrideCreate,
     request: Request,
-    trainer_id: str = Depends(current_trainer_id),
+    trainer_id: str = Depends(forbid_demo_trainer),
 ) -> OverrideResponse:
     ov = RecommendationOverride(
         id=f"o_{uuid.uuid4().hex[:12]}",

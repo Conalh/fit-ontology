@@ -48,7 +48,7 @@ from ..db import (
 )
 from ..rate_limit import SHARE_MINT_LIMIT, enforce
 from ..reasoning import compute_recovery_score, generate_recommendation
-from .deps import current_trainer_id, read_only_conn
+from .deps import current_trainer_id, forbid_demo_trainer, read_only_conn
 from .schemas import (
     ShareCreateRequest,
     ShareCreateResponse,
@@ -64,7 +64,7 @@ def post_share(
     client_id: str,
     payload: ShareCreateRequest,
     request: Request,
-    trainer_id: str = Depends(current_trainer_id),
+    trainer_id: str = Depends(forbid_demo_trainer),
 ) -> ShareCreateResponse:
     """Trainer mints a fresh token for one of their clients. Multiple
     live tokens per client are fine — re-issuing doesn't revoke the

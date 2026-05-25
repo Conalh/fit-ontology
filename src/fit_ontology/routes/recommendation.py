@@ -19,6 +19,7 @@ from ..db import (
     sessions_for_client,
     thresholds_for_client,
 )
+from ..demo import is_demo_trainer
 from ..reasoning import FLAG_CITATIONS, compute_recovery_score, generate_recommendation
 from .deps import current_trainer_id, read_only_conn
 from .schemas import ContraindicationItem, RecommendationResponse, RecoveryScoreResponse
@@ -80,7 +81,10 @@ def get_recommendation(
             rec = generate_recommendation(client_id, metrics, sessions, thresholds=overrides)
             needs_persist = True
 
-    if needs_persist:
+    # Demo trainer: skip the persist branch. Visitor gets a freshly
+    # computed verdict rendered in memory, no row lands in the DB,
+    # no writer-lock contention from demo traffic.
+    if needs_persist and not is_demo_trainer(trainer_id):
         try:
             with connect(DEFAULT_DB_PATH, read_only=False) as wcon:
                 insert_recommendation(wcon, trainer_id, rec)

@@ -13,7 +13,7 @@ from ..db import (
     upsert_threshold,
 )
 from ..reasoning import DEFAULT_THRESHOLDS, recommend_baseline_window
-from .deps import current_trainer_id, read_only_conn
+from .deps import current_trainer_id, forbid_demo_trainer, read_only_conn
 from .schemas import BaselineWindowSuggestionResponse, ThresholdsPatch, ThresholdsResponse
 
 router = APIRouter()
@@ -55,7 +55,7 @@ def get_thresholds(
 def patch_thresholds(
     client_id: str,
     payload: ThresholdsPatch,
-    trainer_id: str = Depends(current_trainer_id),
+    trainer_id: str = Depends(forbid_demo_trainer),
 ) -> ThresholdsResponse:
     """Sparse upsert/delete. Keys with a float value are upserted;
     keys with null are deleted (reverting to the global default).

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..db import DEFAULT_DB_PATH, connect, list_clients, record_audit
 from ..ontology import Sex
-from .deps import current_trainer_id, read_only_conn
+from .deps import current_trainer_id, forbid_demo_trainer, read_only_conn
 from .schemas import ClientCreate, ClientSummary, ClientUpdate
 
 router = APIRouter()
@@ -48,7 +48,7 @@ def get_client(
 def post_client(
     payload: ClientCreate,
     request: Request,
-    trainer_id: str = Depends(current_trainer_id),
+    trainer_id: str = Depends(forbid_demo_trainer),
 ) -> dict:
     """Create a new client. Returns the generated id so the front-end
     can navigate straight to the detail page."""
@@ -91,7 +91,7 @@ def post_client(
 def patch_client(
     client_id: str,
     payload: ClientUpdate,
-    trainer_id: str = Depends(current_trainer_id),
+    trainer_id: str = Depends(forbid_demo_trainer),
 ) -> dict:
     """Partial update. Builds the SET clause from only the fields the
     trainer touched so we don't overwrite values they left alone."""

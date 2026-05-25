@@ -58,6 +58,12 @@ def connect(db_path: Path = DEFAULT_DB_PATH, *, read_only: bool = False) -> duck
     if not read_only:
         con.execute(SCHEMA_DDL)
         _run_migrations(con)
+        # Local import keeps demo.py optional: the module's own
+        # is_demo_enabled() check is the gate, so a deployment that
+        # doesn't opt into demo mode pays one env-var lookup and exits.
+        from .demo import is_demo_enabled, seed_demo_data_if_needed
+        if is_demo_enabled():
+            seed_demo_data_if_needed(con)
     return con
 
 

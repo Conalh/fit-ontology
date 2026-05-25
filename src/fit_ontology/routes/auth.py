@@ -112,17 +112,28 @@ def get_me(
 ) -> AuthMeResponse:
     """Returns the trainer associated with the request's session cookie.
 
-    Intentionally does NOT honor FIT_ONTOLOGY_REQUIRE_AUTH's
-    fallback-to-default — /me is the endpoint the front-end calls to
-    decide "show the login form or the dashboard?" and it must answer
-    that honestly regardless of dev-mode shortcuts elsewhere.
+    Resolution mirrors ``current_trainer_id``:
+      - valid cookie → that trainer
+      - no cookie + FIT_ONTOLOGY_DEMO_MODE=1 → demo trainer
+      - no cookie + FIT_ONTOLOGY_REQUIRE_AUTH=1 → 401
+      - no cookie + neither → default trainer (dev / Cloudflare
+        Access posture)
+
+    Demo precedes REQUIRE_AUTH so an unauthenticated visitor to the
+    hosted portfolio deploy gets the demo trainer's profile instead
+    of being asked to log in.
     """
+    from ..demo import DEMO_TRAINER_ID, is_demo_enabled
+
     token = request.cookies.get(COOKIE_NAME, "")
     trainer_id = decode_session(token)
     if not trainer_id:
-        if os.environ.get("FIT_ONTOLOGY_REQUIRE_AUTH", "").strip() in {"1", "true", "yes"}:
+        if is_demo_enabled():
+            trainer_id = DEMO_TRAINER_ID
+        elif os.environ.get("FIT_ONTOLOGY_REQUIRE_AUTH", "").strip() in {"1", "true", "yes"}:
             raise HTTPException(status_code=401, detail="Not authenticated")
-        trainer_id = DEFAULT_TRAINER_ID
+        else:
+            trainer_id = DEFAULT_TRAINER_ID
     row = get_trainer(con, trainer_id)
     if not row:
         # Cookie signed a trainer that no longer exists (deleted account).

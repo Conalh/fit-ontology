@@ -35,7 +35,7 @@ from ..db import (
 )
 from ..rate_limit import COACH_DRAFT_LIMIT, enforce
 from ..reasoning import compute_recovery_score, generate_recommendation
-from .deps import current_trainer_id
+from .deps import forbid_demo_trainer
 from .schemas import CoachDraftResponse
 
 router = APIRouter()
@@ -46,7 +46,7 @@ router = APIRouter()
 def post_coach_draft(
     client_id: str,
     request: Request,
-    trainer_id: str = Depends(current_trainer_id),
+    trainer_id: str = Depends(forbid_demo_trainer),
 ) -> CoachDraftResponse:
     """Draft a 2-3 sentence check-in for this client based on this
     week's data. Returns the draft text — the trainer reviews,

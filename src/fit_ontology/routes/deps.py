@@ -7,15 +7,27 @@ uses doesn't translate to multi-process ASGI. The overhead is
 ~milliseconds, which is fine for this scale.
 
 ``current_trainer_id`` is the single seam that resolves the calling
-trainer's id. In Phase 2b-α it reads the signed session cookie set
-by /api/auth/login. When no cookie is present the behavior is
-controlled by FIT_ONTOLOGY_REQUIRE_AUTH:
+trainer's id. It reads the signed session cookie set by
+/api/auth/login first; when no cookie is present, three modes apply
+in order of precedence:
 
-  - unset / "0" (default): fall back to ``DEFAULT_TRAINER_ID``. This
-    preserves the single-trainer dashboard that ships behind
-    Cloudflare Access — the perimeter is the auth, the app's own
-    login is opt-in. Removes once Phase 2b-β ships the login UI.
-  - "1": raise 401. The production multi-tenant posture.
+  - FIT_ONTOLOGY_DEMO_MODE=1   → return DEMO_TRAINER_ID. Overrides
+                                  REQUIRE_AUTH on purpose: a hosted
+                                  portfolio deploy needs to show
+                                  read-only content to unauthenticated
+                                  visitors even when real-trainer auth
+                                  is gated.
+  - FIT_ONTOLOGY_REQUIRE_AUTH=1 → 401. Production multi-tenant
+                                  posture.
+  - neither                     → return DEFAULT_TRAINER_ID. Dev /
+                                  Cloudflare-Access-only deployment;
+                                  the perimeter is the auth, the app's
+                                  own login is opt-in.
+
+``forbid_demo_trainer`` is a small companion dependency that
+mutating routes use to reject the demo trainer with HTTP 403. It
+runs AFTER ``current_trainer_id`` so the chain is: resolve trainer
+→ check it's not the demo trainer → proceed.
 """
 from __future__ import annotations
 
@@ -23,10 +35,11 @@ import os
 from collections.abc import Iterator
 
 import duckdb
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 
 from ..auth import COOKIE_NAME, decode_session
 from ..db import DEFAULT_DB_PATH, DEFAULT_TRAINER_ID, connect
+from ..demo import DEMO_TRAINER_ID, is_demo_enabled, is_demo_trainer
 
 
 def read_only_conn() -> Iterator[duckdb.DuckDBPyConnection]:
@@ -49,20 +62,45 @@ def current_trainer_id(request: Request) -> str:
     """The trainer the current request acts as.
 
     Order of resolution:
-      1. Signed ``fo_session`` cookie → decoded trainer_id
-      2. No cookie + FIT_ONTOLOGY_REQUIRE_AUTH=1 → 401
-      3. No cookie + auth not required → DEFAULT_TRAINER_ID (Phase
-         2b-α back-compat for the Cloudflare-Access-only deployment)
+      1. Signed ``fo_session`` cookie → decoded trainer_id (any
+         logged-in trainer wins regardless of demo mode).
+      2. No cookie + FIT_ONTOLOGY_DEMO_MODE=1 → DEMO_TRAINER_ID.
+         Demo intentionally precedes REQUIRE_AUTH so a public
+         visitor sees the demo dashboard even on a production
+         deploy where REQUIRE_AUTH is also on.
+      3. No cookie + FIT_ONTOLOGY_REQUIRE_AUTH=1 → 401.
+      4. No cookie + neither flag → DEFAULT_TRAINER_ID
+         (Cloudflare-Access-only deployment).
 
-    A *present-but-invalid* cookie (forged, tampered, or expired) also
-    falls through to step 2/3 — we can't tell legitimate "logged out"
-    from "cookie was rejected" without a state table, and the security
-    impact is the same: the bearer cannot prove an identity.
+    A *present-but-invalid* cookie (forged, tampered, or expired)
+    falls through to step 2/3/4 — we can't tell legitimate "logged
+    out" from "cookie was rejected" without a state table, and the
+    security impact is identical: the bearer cannot prove an
+    identity.
     """
     token = request.cookies.get(COOKIE_NAME, "")
     decoded = decode_session(token)
     if decoded:
         return decoded
+    if is_demo_enabled():
+        return DEMO_TRAINER_ID
     if _require_auth():
         raise HTTPException(status_code=401, detail="Not authenticated")
     return DEFAULT_TRAINER_ID
+
+
+def forbid_demo_trainer(trainer_id: str = Depends(current_trainer_id)) -> str:
+    """Mutating-route guard: 403 if the calling trainer is the demo
+    trainer. Composed with ``current_trainer_id`` so a route only
+    needs ``trainer_id = Depends(forbid_demo_trainer)`` to get both
+    the resolved id and the demo-rejection — no double Depends.
+
+    Returns the trainer_id on success so the route signature is the
+    same shape as Depends(current_trainer_id).
+    """
+    if is_demo_trainer(trainer_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Demo mode is read-only. Run FitOntology locally to save changes.",
+        )
+    return trainer_id
