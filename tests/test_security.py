@@ -27,12 +27,26 @@ from fit_ontology.ontology import MetricKind
 from fit_ontology.rate_limit import reset as rate_limit_reset
 from fit_ontology.routes import (
     auth as auth_routes,
+)
+from fit_ontology.routes import (
     clients as clients_routes,
+)
+from fit_ontology.routes import (
     metrics as metrics_routes,
+)
+from fit_ontology.routes import (
     overrides as overrides_routes,
+)
+from fit_ontology.routes import (
     planning as planning_routes,
+)
+from fit_ontology.routes import (
     recommendation as recommendation_routes,
+)
+from fit_ontology.routes import (
     share as share_routes,
+)
+from fit_ontology.routes import (
     thresholds as thresholds_routes,
 )
 
@@ -152,6 +166,59 @@ def test_override_save_writes_audit_row(app):
     assert saved[0]["details"]["trainer_action"] == "accept"
 
 
+def test_lazy_persist_routes_404_for_cross_trainer_client(app):
+    client, db_path = app
+    with connect(db_path, read_only=False) as con:
+        insert_trainer(con, "t_other", "other@example.com", "Other")
+        ensure_client(con, "t_other", "c_other", name="Other Client")
+
+    assert client.get("/api/clients/c_other/recommendation").status_code == 404
+    assert client.get("/api/clients/c_other/plan").status_code == 404
+    assert client.get("/api/clients/c_other/thresholds").status_code == 404
+    r = client.patch(
+        "/api/clients/c_other/thresholds",
+        json={"overrides": {"hrv_severe_sd": -2.0}},
+    )
+    assert r.status_code == 404
+
+
+def test_plan_patch_rejects_cross_trainer_client_even_if_stale_row_exists(app):
+    client, db_path = app
+    today = date.today()
+    week_of = today - timedelta(days=today.weekday())
+    with connect(db_path, read_only=False) as con:
+        insert_trainer(con, "t_other", "other2@example.com", "Other")
+        ensure_client(con, "t_other", "c_other", name="Other Client")
+        con.execute(
+            """
+            INSERT INTO planned_sessions
+              (id, client_id, week_of, slot, type, title, description,
+               target_duration_min, target_load_au, target_rpe,
+               contraindications, source, generated_at, executed_session_id, trainer_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+            """,
+            [
+                "ps_stale_cross",
+                "c_other",
+                week_of,
+                1,
+                "strength",
+                "Stale row",
+                "Should not be editable",
+                45,
+                None,
+                6.0,
+                "[]",
+                "trainer",
+                None,
+                "t_test",
+            ],
+        )
+
+    r = client.patch("/api/clients/c_other/plan/1", json={"title": "Edited title"})
+    assert r.status_code == 404
+
+
 def test_plan_edit_writes_audit_row(app):
     client, db_path = app
     # Generate the plan first so a slot exists to PATCH.
@@ -263,3 +330,73 @@ def test_hsts_present_when_secure_flag_set(app, monkeypatch):
     client, _ = app
     r = client.get("/api/health")
     assert r.headers.get("Strict-Transport-Security", "").startswith("max-age=")
+
+
+# ─── CSP (Phase 5b) ───────────────────────────────────────────────────
+
+
+def _csp_response(client: TestClient):
+    """Force an HTML response so the CSP middleware actually attaches
+    the header — /api/health returns JSON and skips CSP by design."""
+    return client.get("/", headers={"Accept": "text/html"})
+
+
+def test_csp_present_on_html_responses(app):
+    """CSP should land on the HTML fall-through (when there's no static
+    export mounted, FastAPI returns 404 with text/html — still has the
+    header)."""
+    client, _ = app
+    # Direct route returns JSON — no CSP.
+    json_r = client.get("/api/health")
+    assert "Content-Security-Policy" not in json_r.headers, (
+        "CSP must skip JSON responses — adds bytes, browsers ignore it"
+    )
+
+    # Hit a route that returns HTML (any 404 with default error handler
+    # serves text/html in Starlette).
+    html_r = _csp_response(client)
+    csp = html_r.headers.get("Content-Security-Policy", "")
+    assert csp, "CSP must be set on HTML responses"
+    # Spot-check the directives that actually matter.
+    assert "default-src 'self'" in csp
+    assert "frame-ancestors 'none'" in csp
+    assert "object-src 'none'" in csp
+    assert "base-uri 'self'" in csp
+    assert "form-action 'self'" in csp
+
+
+def test_csp_never_contains_unsafe_eval(app):
+    """Regression guard against a future dep / refactor that introduces
+    eval()-style script execution. unsafe-eval is the single CSP
+    keyword whose absence we want to assert independently of policy
+    iteration."""
+    client, _ = app
+    html_r = _csp_response(client)
+    csp = html_r.headers.get("Content-Security-Policy", "")
+    report = html_r.headers.get("Content-Security-Policy-Report-Only", "")
+    assert "'unsafe-eval'" not in csp
+    assert "'unsafe-eval'" not in report
+
+
+def test_csp_strict_report_only_off_by_default(app):
+    client, _ = app
+    html_r = _csp_response(client)
+    assert "Content-Security-Policy-Report-Only" not in html_r.headers
+
+
+def test_csp_strict_report_only_on_when_flag_set(app, monkeypatch):
+    monkeypatch.setenv("FIT_ONTOLOGY_CSP_STRICT_REPORT", "1")
+    client, _ = app
+    html_r = _csp_response(client)
+    report = html_r.headers.get("Content-Security-Policy-Report-Only", "")
+    assert report, "report-only header must appear when the flag is set"
+    # The strict variant has no 'unsafe-inline' on script-src.
+    # Pulled apart so the assertion error is readable if it fires.
+    script_directives = [
+        d.strip() for d in report.split(";") if d.strip().startswith("script-src")
+    ]
+    assert script_directives, "report-only must include script-src"
+    assert "'unsafe-inline'" not in script_directives[0], (
+        "report-only's whole purpose is to surface what would break "
+        "under strict script-src — 'unsafe-inline' here defeats it"
+    )

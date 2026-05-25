@@ -66,23 +66,99 @@ app.add_middleware(
 )
 
 
-# ─── Security headers (Phase 5a) ─────────────────────────────────────
+# ─── Security headers (Phase 5a + 5b) ────────────────────────────────
 #
-# Adds the cheap, no-risk-of-breakage headers to every response:
-#   X-Frame-Options: DENY                 — clickjacking
-#   X-Content-Type-Options: nosniff       — MIME sniffing
+# Phase 5a baselines (every response):
+#   X-Frame-Options: DENY                — clickjacking (legacy; CSP
+#                                          frame-ancestors supersedes
+#                                          this, kept for old browsers)
+#   X-Content-Type-Options: nosniff      — MIME sniffing
 #   Referrer-Policy: strict-origin-when-cross-origin
-#                                         — privacy on outbound links
+#                                        — privacy on outbound links
+#   Strict-Transport-Security            — gated on
+#                                          FIT_ONTOLOGY_SESSION_SECURE
+#                                          (HSTS on http://localhost
+#                                          would brick dev until the
+#                                          user manually clears HSTS
+#                                          state via chrome://net-internals)
 #
-# Strict-Transport-Security is gated on FIT_ONTOLOGY_SESSION_SECURE
-# (same flag that toggles cookie Secure). HSTS on an http://localhost
-# would tell the browser "only ever talk to this host over HTTPS"
-# and brick the dev loop until the user manually clears HSTS state.
-# Production must set the flag explicitly.
+# Phase 5b CSP (HTML responses only — applies to navigation contexts):
 #
-# CSP is intentionally NOT here yet. The Next.js static-export +
-# inline-style components combination needs a nonce-aware CSP that's
-# its own multi-day project. Phase 5b.
+#   default-src 'self'        Block any external resource by default.
+#                             Every other directive narrows from here.
+#   script-src 'self' 'unsafe-inline'
+#                             'unsafe-inline' is required because the
+#                             Next.js static export injects bootstrap
+#                             scripts inline (self.__next_f.push) and
+#                             we have no per-request server render to
+#                             attach a nonce to them. The XSS surface
+#                             this leaves open is bounded by: React
+#                             escapes by default, no
+#                             dangerouslySetInnerHTML anywhere in the
+#                             codebase, no template injection paths.
+#                             If a future feature needs nonces (third-
+#                             party widgets, embed scripts), we'll
+#                             ship the HTML-rewriting middleware then.
+#   style-src 'self' 'unsafe-inline'
+#                             Every component uses inline style={{}}
+#                             attrs that CSP can't hash. Unavoidable
+#                             without rewriting the front-end to use
+#                             only class-based styling.
+#   img-src 'self' data:      data: for inline SVG icons.
+#   font-src 'self' data:     next/font emits inline font data: URLs.
+#   connect-src 'self'        Same-origin fetches only. The dev cross-
+#                             origin loop (Next :3000 → API :8000) is
+#                             served by Next dev server which sets no
+#                             CSP of its own.
+#   frame-ancestors 'none'    Modern clickjacking defense — supersedes
+#                             X-Frame-Options, applies even when the
+#                             page is iframed from a same-origin parent.
+#   base-uri 'self'           Blocks <base href="evil"> redirects.
+#   form-action 'self'        Blocks credential-stealing <form
+#                             action="evil"> posts.
+#   object-src 'none'         No Flash / Java / similar plugin surface.
+#
+# Optional strict report-only mode (FIT_ONTOLOGY_CSP_STRICT_REPORT=1):
+# emits a second header Content-Security-Policy-Report-Only with
+# script-src 'self' (no 'unsafe-inline'). Browsers report violations
+# in DevTools without enforcing — gives telemetry on what would break
+# if we tightened later. No report-uri yet; a future hardening pass
+# can add a /api/csp-report endpoint to ingest violations server-side.
+
+_CSP_ENFORCING = "; ".join([
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+])
+
+_CSP_STRICT_REPORT_ONLY = "; ".join([
+    "default-src 'self'",
+    "script-src 'self'",  # strict — no 'unsafe-inline'
+    "style-src 'self' 'unsafe-inline'",  # inline style attrs unavoidable
+    "img-src 'self' data:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+])
+
+
+def _is_html_response(response) -> bool:
+    """CSP only affects HTML page contexts. Skip it on JSON / static
+    asset responses where it's noise — the browser would ignore it
+    anyway, but the bytes-on-the-wire add up across hot endpoints."""
+    ctype = response.headers.get("content-type", "").lower()
+    return "html" in ctype
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -92,13 +168,21 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault(
             "Referrer-Policy", "strict-origin-when-cross-origin"
         )
-        # Lazy env read so a test that monkeypatches the flag mid-run
-        # picks it up without reloading the module.
-        if os.environ.get("FIT_ONTOLOGY_SESSION_SECURE", "").strip() in {"1", "true", "yes"}:
+        # Lazy env reads so tests that monkeypatch the flags mid-run
+        # pick them up without reloading the module.
+        env = os.environ
+        if env.get("FIT_ONTOLOGY_SESSION_SECURE", "").strip() in {"1", "true", "yes"}:
             response.headers.setdefault(
                 "Strict-Transport-Security",
                 "max-age=63072000; includeSubDomains",
             )
+        if _is_html_response(response):
+            response.headers.setdefault("Content-Security-Policy", _CSP_ENFORCING)
+            if env.get("FIT_ONTOLOGY_CSP_STRICT_REPORT", "").strip() in {"1", "true", "yes"}:
+                response.headers.setdefault(
+                    "Content-Security-Policy-Report-Only",
+                    _CSP_STRICT_REPORT_ONLY,
+                )
         return response
 
 
