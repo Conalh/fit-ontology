@@ -9,9 +9,9 @@ The signals were chosen to match how trainers and sport scientists
 actually quantify load and recovery, not just what's easy to compute:
 
   - HRV trend is measured against a 28-day rolling baseline in SD units
-    (Plews & Laursen 2017, "Heart rate variability and training intensity
-    distribution in elite rowers"). Week-vs-week alone is too noisy at the
-    individual level.
+    (Plews, Laursen, et al. 2013, "Training Adaptation and Heart Rate
+    Variability in Elite Endurance Athletes," Sports Med 43:773-781).
+    Week-vs-week alone is too noisy at the individual level.
 
   - Acute:Chronic Workload Ratio (ACWR) from session-RPE × duration follows
     Gabbett (2016), "The training-injury prevention paradox." Acute = 7-day
@@ -107,15 +107,26 @@ DELOAD_LOAD_CUT = 0.20              # 20% cut; more aggressive than 15% reflects
 # reading flow without buying the trainer anything they couldn't see in
 # a static reference list.
 CITATIONS = {
-    "hrv":   "Plews & Laursen 2017",
+    # HRV: Plews, Laursen, Stanley, Kilding, Buchheit (2013), Sports Med
+    # 43(9):773-781 — "Training Adaptation and Heart Rate Variability in
+    # Elite Endurance Athletes: Opening the Door to Effective Monitoring."
+    # Earlier copy of this map cited "Plews & Laursen 2017" — the year
+    # was wrong (Conal flagged the link going to an off-topic paper);
+    # the 2013 paper is the methodology source.
+    "hrv":   "Plews & Laursen 2013",
     "rhr":   "Buchheit 2014",
     "sleep": "ACSM 11e §7",
     "acwr":  "Gabbett 2016",
-    "rpe":   "Foster sRPE 1995",
+    # RPE: Foster (1998), Med Sci Sports Exerc 30(7):1164-1168 —
+    # "Monitoring Training in Athletes With Reference to Overtraining
+    # Syndrome." The canonical session-RPE method paper. Earlier copy
+    # cited "Foster sRPE 1995" but there is no canonical 1995 Foster
+    # paper for sRPE; 1998 is the literature reference.
+    "rpe":   "Foster 1998",
 }
 
 # Map each emitted flag kind to its citation key. Used by the API so
-# the front-end can show "Source: Plews & Laursen 2017" as a tooltip
+# the front-end can show "Source: Plews & Laursen 2013" as a tooltip
 # on the corresponding flag chip without needing its own copy of this
 # routing logic.
 FLAG_CITATIONS: dict[str, str] = {
