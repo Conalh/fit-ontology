@@ -29,6 +29,16 @@ from .schemas import PlannedSessionPatch, PlannedSessionResponse, PlanResponse
 router = APIRouter()
 
 
+def _client_injury_history_or_404(con, trainer_id: str, client_id: str) -> str | None:
+    row = con.execute(
+        "SELECT injury_history FROM clients WHERE id = ? AND trainer_id = ?",
+        [client_id, trainer_id],
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No client with id {client_id}")
+    return row[0]
+
+
 def _classify_verdict(rec_text: str) -> Verdict:
     """Map the recommendation's text-prefixed first word to a verdict
     enum. Same shape as routes.helpers.classify_rec but returns the
@@ -64,6 +74,7 @@ def get_plan(
     new_plan = None
 
     with connect(DEFAULT_DB_PATH, read_only=True) as rcon:
+        injury = _client_injury_history_or_404(rcon, trainer_id, client_id)
         plan = plan_for_week(rcon, trainer_id, client_id, week_of)
         # We also need the verdict for the response, regardless of
         # whether the plan is fresh or cached. Look up the persisted
@@ -81,11 +92,6 @@ def get_plan(
             # Generate the initial plan from the verdict + recent
             # sessions + injury-derived contraindications.
             sessions = sessions_for_client(rcon, trainer_id, client_id, days=35)
-            injury_row = rcon.execute(
-                "SELECT injury_history FROM clients WHERE id = ? AND trainer_id = ?",
-                [client_id, trainer_id],
-            ).fetchone()
-            injury = injury_row[0] if injury_row else None
             ci_phrases = [c.advice for c in match_contraindications(injury)]
             new_plan = generate_plan(
                 client_id=client_id,
@@ -148,6 +154,7 @@ def patch_planned_session(
 
     # Load the existing slot so we can apply partial updates.
     with connect(DEFAULT_DB_PATH, read_only=True) as rcon:
+        _client_injury_history_or_404(rcon, trainer_id, client_id)
         plan = plan_for_week(rcon, trainer_id, client_id, week_of)
     existing = next((p for p in plan if p.slot == slot), None)
     if existing is None:

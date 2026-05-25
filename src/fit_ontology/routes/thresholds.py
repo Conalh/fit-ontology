@@ -19,6 +19,15 @@ from .schemas import BaselineWindowSuggestionResponse, ThresholdsPatch, Threshol
 router = APIRouter()
 
 
+def _ensure_client(con, trainer_id: str, client_id: str) -> None:
+    row = con.execute(
+        "SELECT 1 FROM clients WHERE id = ? AND trainer_id = ?",
+        [client_id, trainer_id],
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No client with id {client_id}")
+
+
 @router.get("/api/clients/{client_id}/thresholds", response_model=ThresholdsResponse)
 def get_thresholds(
     client_id: str,
@@ -30,6 +39,7 @@ def get_thresholds(
     each threshold with the override styled distinctly when present, and
     surfaces the suggestion alongside the baseline window row when it
     differs from the active value."""
+    _ensure_client(con, trainer_id, client_id)
     metrics = metrics_for_client(con, trainer_id, client_id, days=70)  # need at least 56d for the longest candidate
     suggestion = recommend_baseline_window(metrics)
     return ThresholdsResponse(
@@ -59,12 +69,15 @@ def patch_thresholds(
         )
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as con:
+            _ensure_client(con, trainer_id, client_id)
             for name, value in payload.overrides.items():
                 if value is None:
                     delete_threshold(con, trainer_id, client_id, name)
                 else:
                     upsert_threshold(con, trainer_id, client_id, name, value)
             new_overrides = thresholds_for_client(con, trainer_id, client_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except duckdb.IOException as e:
         raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
     return ThresholdsResponse(defaults=DEFAULT_THRESHOLDS, overrides=new_overrides)

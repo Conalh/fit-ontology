@@ -27,6 +27,15 @@ from .schemas import MetricRow, SessionRow
 router = APIRouter()
 
 
+def _ensure_client(con, trainer_id: str, client_id: str) -> None:
+    row = con.execute(
+        "SELECT 1 FROM clients WHERE id = ? AND trainer_id = ?",
+        [client_id, trainer_id],
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No client with id {client_id}")
+
+
 @router.get("/api/clients/{client_id}/metrics", response_model=list[MetricRow])
 def get_metrics(
     client_id: str,
@@ -76,6 +85,12 @@ async def post_upload(
     content (matching the Streamlit dashboard's behavior). Returns the
     number of rows inserted and the distinct metric kinds.
     """
+    try:
+        with connect(DEFAULT_DB_PATH, read_only=True) as con:
+            _ensure_client(con, trainer_id, client_id)
+    except duckdb.IOException as e:
+        raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
+
     raw = await file.read()
     suffix = Path(file.filename or "").suffix.lower()
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
@@ -100,6 +115,8 @@ async def post_upload(
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as con:
             insert_metrics(con, trainer_id, df)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except duckdb.IOException as e:
         raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
 

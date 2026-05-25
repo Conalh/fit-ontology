@@ -61,6 +61,8 @@ def post_override(
                 },
                 ip=client_ip,
             )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except duckdb.IOException as e:
         # Cross-process write conflict (Garmin sync holds the writer lock).
         raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e

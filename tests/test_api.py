@@ -20,13 +20,22 @@ from fit_ontology.db import (
     ensure_client,
     insert_metrics,
     insert_sessions,
+    insert_trainer,
 )
 from fit_ontology.ontology import MetricKind
 from fit_ontology.routes import (
     clients as clients_routes,
+)
+from fit_ontology.routes import (
     metrics as metrics_routes,
+)
+from fit_ontology.routes import (
     overrides as overrides_routes,
+)
+from fit_ontology.routes import (
     recommendation as recommendation_routes,
+)
+from fit_ontology.routes import (
     thresholds as thresholds_routes,
 )
 
@@ -381,3 +390,43 @@ def test_upload_apple_health_xml(app_with_db, tmp_path: Path):
     data = r.json()
     assert data["inserted"] == 1
     assert "resting_hr" in data["kinds"]
+
+
+def test_upload_rejects_cross_trainer_client_id(app_with_db):
+    with connect(clients_routes.DEFAULT_DB_PATH, read_only=False) as con:
+        insert_trainer(con, "t_other", "other@example.com", "Other")
+        ensure_client(con, "t_other", "c_other", name="Other Client")
+
+    xml = """<?xml version="1.0"?>
+<HealthData>
+<Record type="HKQuantityTypeIdentifierRestingHeartRate" value="55" startDate="2026-05-22 07:00:00 -0700" endDate="2026-05-22 07:00:01 -0700" unit="count/min"/>
+</HealthData>"""
+    files = {"file": ("export.xml", xml.encode(), "application/xml")}
+    r = app_with_db.post("/api/clients/c_other/upload", files=files)
+    assert r.status_code == 404
+
+
+def test_upload_checks_client_ownership_before_parsing_file(app_with_db):
+    with connect(clients_routes.DEFAULT_DB_PATH, read_only=False) as con:
+        insert_trainer(con, "t_other", "other2@example.com", "Other")
+        ensure_client(con, "t_other", "c_other", name="Other Client")
+
+    files = {"file": ("notes.txt", b"not a wearable export", "text/plain")}
+    r = app_with_db.post("/api/clients/c_other/upload", files=files)
+    assert r.status_code == 404
+
+
+def test_override_rejects_cross_trainer_client_id(app_with_db):
+    with connect(clients_routes.DEFAULT_DB_PATH, read_only=False) as con:
+        insert_trainer(con, "t_other", "other@example.com", "Other")
+        ensure_client(con, "t_other", "c_other", name="Other Client")
+
+    r = app_with_db.post("/api/clients/c_other/overrides", json={
+        "week_of": str(date.today()),
+        "system_recommendation": "Standard progression per ACSM 11e: increase load 5-10%.",
+        "system_confidence": 0.78,
+        "trainer_action": "accept",
+        "applied_load_change_pct": None,
+        "trainer_note": None,
+    })
+    assert r.status_code == 404

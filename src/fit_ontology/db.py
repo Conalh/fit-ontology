@@ -193,6 +193,32 @@ def _verify_password(plaintext: str, hashed: str) -> bool:
 # to the calling trainer.
 
 
+def _assert_clients_owned(con, trainer_id: str, client_ids) -> None:
+    """Raise if any client_id does not belong to trainer_id.
+
+    DuckDB foreign keys only know that ``clients.id`` exists; they do not
+    know that a child row's ``trainer_id`` matches the owning client row.
+    Every client-data write calls this guard before inserting so a leaked
+    client_id cannot create rows under the wrong trainer scope.
+    """
+    ids = sorted({str(cid) for cid in client_ids if cid is not None})
+    if not ids:
+        return
+    placeholders = ", ".join("?" for _ in ids)
+    rows = con.execute(
+        f"""
+        SELECT id FROM clients
+        WHERE trainer_id = ? AND id IN ({placeholders})
+        """,
+        [trainer_id, *ids],
+    ).fetchall()
+    owned = {row[0] for row in rows}
+    missing = [cid for cid in ids if cid not in owned]
+    if missing:
+        target = missing[0] if len(missing) == 1 else ", ".join(missing)
+        raise ValueError(f"No client with id {target}")
+
+
 def get_trainer_by_email(con, email: str):
     """Return (id, email, name, created_at) for an existing trainer, or None."""
     return con.execute(
@@ -294,6 +320,7 @@ def insert_sessions(con, trainer_id: str, df: pd.DataFrame) -> None:
     """Bulk insert of sessions for one trainer. See ``insert_clients``
     for the trainer_id stamping rationale."""
     df = df.copy()
+    _assert_clients_owned(con, trainer_id, df["client_id"].unique().tolist())
     df["trainer_id"] = trainer_id
     con.execute("INSERT OR REPLACE INTO sessions SELECT * FROM df")
 
@@ -302,11 +329,13 @@ def insert_metrics(con, trainer_id: str, df: pd.DataFrame) -> None:
     """Bulk insert of metrics for one trainer. See ``insert_clients``
     for the trainer_id stamping rationale."""
     df = df.copy()
+    _assert_clients_owned(con, trainer_id, df["client_id"].unique().tolist())
     df["trainer_id"] = trainer_id
     con.execute("INSERT OR REPLACE INTO metrics SELECT * FROM df")
 
 
 def insert_recommendation(con, trainer_id: str, rec) -> None:
+    _assert_clients_owned(con, trainer_id, [rec.client_id])
     con.execute(
         """
         INSERT OR REPLACE INTO recommendations
@@ -443,6 +472,7 @@ def recommendations_for_client(con, trainer_id: str, client_id: str, limit: int 
 # IF NOT EXISTS DDL runs as part of connect()).
 
 def insert_override(con, trainer_id: str, ov) -> None:
+    _assert_clients_owned(con, trainer_id, [ov.client_id])
     con.execute(
         """
         INSERT INTO recommendation_overrides
@@ -537,6 +567,7 @@ def thresholds_for_client(con, trainer_id: str, client_id: str) -> dict[str, flo
 
 
 def upsert_threshold(con, trainer_id: str, client_id: str, name: str, value: float) -> None:
+    _assert_clients_owned(con, trainer_id, [client_id])
     # The PK is (client_id, name) — adding trainer_id to the conflict
     # target would change PK semantics (and DuckDB would reject it).
     # We rely on (trainer_id, client_id) being effectively unique:
@@ -557,6 +588,7 @@ def upsert_threshold(con, trainer_id: str, client_id: str, name: str, value: flo
 
 
 def delete_threshold(con, trainer_id: str, client_id: str, name: str) -> None:
+    _assert_clients_owned(con, trainer_id, [client_id])
     con.execute(
         "DELETE FROM client_thresholds WHERE trainer_id = ? AND client_id = ? AND name = ?",
         [trainer_id, client_id, name],
@@ -595,6 +627,7 @@ def upsert_planned_session(con, trainer_id: str, ps) -> None:
     misalign with the table definition."""
     from .planning import serialize_contraindications
 
+    _assert_clients_owned(con, trainer_id, [ps.client_id])
     con.execute(
         """
         INSERT OR REPLACE INTO planned_sessions

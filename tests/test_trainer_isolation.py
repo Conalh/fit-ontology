@@ -20,6 +20,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from fit_ontology.db import (
     all_overrides,
@@ -313,6 +314,63 @@ def test_thresholds_scoped(tmp_path: Path) -> None:
     assert a_thresh == {"hrv_severe_sd": -1.5}
     assert a_peek == {}
     assert b_thresh == {"hrv_severe_sd": -2.0}
+
+
+def test_upsert_threshold_rejects_cross_trainer_client_id(tmp_path: Path) -> None:
+    """A trainer who knows another trainer's client_id must not be able
+    to move or overwrite that client's sparse threshold rows."""
+    db_path = tmp_path / "iso.duckdb"
+    trainer_a, trainer_b, client_a, _client_b, _ = _seed_world(db_path)
+
+    with connect(db_path, read_only=False) as con:
+        before = thresholds_for_client(con, trainer_a, client_a)
+        with pytest.raises(ValueError):
+            upsert_threshold(con, trainer_b, client_a, "hrv_severe_sd", -2.5)
+        after_a = thresholds_for_client(con, trainer_a, client_a)
+        after_b = thresholds_for_client(con, trainer_b, client_a)
+
+    assert before == {"hrv_severe_sd": -1.5}
+    assert after_a == before
+    assert after_b == {}
+
+
+def test_insert_metrics_rejects_cross_trainer_client_id(tmp_path: Path) -> None:
+    db_path = tmp_path / "iso.duckdb"
+    trainer_a, trainer_b, client_a, _client_b, _ = _seed_world(db_path)
+
+    bad = pd.DataFrame([{
+        "id": "m_cross",
+        "client_id": client_a,
+        "date": date.today(),
+        "source": "garmin",
+        "kind": "hrv_rmssd",
+        "value": 50.0,
+        "unit": "ms",
+    }])
+    with connect(db_path, read_only=False) as con:
+        with pytest.raises(ValueError):
+            insert_metrics(con, trainer_b, bad)
+        assert metrics_for_client(con, trainer_b, client_a, days=14).empty
+        assert not metrics_for_client(con, trainer_a, client_a, days=14).empty
+
+
+def test_insert_override_rejects_cross_trainer_client_id(tmp_path: Path) -> None:
+    db_path = tmp_path / "iso.duckdb"
+    trainer_a, trainer_b, client_a, _client_b, week_of = _seed_world(db_path)
+
+    ov = RecommendationOverride(
+        id="o_cross", client_id=client_a, week_of=week_of,
+        system_recommendation="Standard progression: 5-10%.",
+        system_confidence=0.78,
+        trainer_action=OverrideAction.REJECT,
+        applied_load_change_pct=None, trainer_note="not yours",
+        created_at=datetime.now(),
+    )
+    with connect(db_path, read_only=False) as con:
+        with pytest.raises(ValueError):
+            insert_override(con, trainer_b, ov)
+        assert overrides_for_client(con, trainer_b, client_a).empty
+        assert not overrides_for_client(con, trainer_a, client_a).empty
 
 
 def test_upsert_planned_session_preserves_isolation(tmp_path: Path) -> None:

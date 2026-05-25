@@ -66,7 +66,9 @@ def get_recommendation(
             "SELECT injury_history FROM clients WHERE id = ? AND trainer_id = ?",
             [client_id, trainer_id],
         ).fetchone()
-        injury = injury_row[0] if injury_row else None
+        if injury_row is None:
+            raise HTTPException(status_code=404, detail=f"No client with id {client_id}")
+        injury = injury_row[0]
 
         metrics = metrics_for_client(rcon, trainer_id, client_id, days=35)
         sessions = sessions_for_client(rcon, trainer_id, client_id, days=35)
