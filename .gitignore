@@ -12,6 +12,10 @@ data/*.duckdb.wal
 data/clients/
 data/wearables/
 !data/synthetic/
+# Preview-API DB lives under web/data/ when the preview launcher is run
+# from inside the web dir — same intent as data/*.duckdb above, just a
+# different cwd. Always a regenerable test artifact.
+web/data/
 
 # Credentials / private keys — never commit anything that looks like a key
 developer_key
@@ -35,8 +39,21 @@ Thumbs.db
 
 # Internal planning docs — not for public sharing via the repo
 ROADMAP.md
+PRIVATE_BETA.md
 
 # Next.js build artifacts (rebuild via `npm run build --prefix web`)
 web/.next/
 web/out/
 web/node_modules/
+
+# Test runner artifacts. pytest-cov writes .coverage (sqlite) on every
+# test run and coverage.xml when --cov-report=xml is set; CI uploads
+# coverage.xml as a build artifact (see .github/workflows/tests.yml)
+# but neither belongs in the repo. .pytest_cache writes its own inner
+# .gitignore but adding it here keeps `git status` quiet too. htmlcov/
+# is the optional HTML report directory.
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
