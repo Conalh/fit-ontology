@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { Sidebar, TopBar, VerdictBadge, labelToVerdict } from "@/components/chrome";
 import { Skeleton } from "@/components/skeleton";
@@ -173,6 +174,9 @@ function EmptyRoster() {
   );
 }
 
+// Urgency rank: deload at the top of the default sort, no-data
+// at the bottom. Ties broken by confidence (more-confident calls
+// first within the same verdict band).
 const RANK: Record<RosterRow["label"], number> = {
   Deload: 0,
   Conservative: 1,
@@ -180,14 +184,82 @@ const RANK: Record<RosterRow["label"], number> = {
   "No recent data": 3,
 };
 
+// Verdict → CSS color token for the row's left-edge accent strip.
+// Picks the same family as VerdictBadge so the row + badge read as
+// the same call at a glance.
+const VERDICT_ACCENT: Record<RosterRow["label"], string> = {
+  Deload: "var(--accent-warn, #f59e0b)",
+  Conservative: "var(--accent-info, #3b82f6)",
+  Standard: "var(--accent-good, #10b981)",
+  "No recent data": "var(--border)",
+};
+
+type SortKey = "urgency" | "name" | "confidence" | "last_data";
+type SortDir = "asc" | "desc";
+
+// Each column's default direction is what a human expects on the
+// first click — deload-first for urgency, A-Z for name, highest
+// confidence first, most-recent data first.
+const DEFAULT_DIR: Record<SortKey, SortDir> = {
+  urgency: "asc",
+  name: "asc",
+  confidence: "desc",
+  last_data: "asc",
+};
+
+function compareRows(a: RosterRow, b: RosterRow, key: SortKey, dir: SortDir): number {
+  // Nulls always sort to the bottom regardless of direction — a row
+  // with no confidence / no recent data shouldn't be ranked above
+  // one that has signal just because we asked for ascending order.
+  const nullsLast = (av: number | null, bv: number | null): number | null => {
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    return null;
+  };
+
+  let cmp = 0;
+  if (key === "urgency") {
+    cmp = RANK[a.label] - RANK[b.label];
+    if (cmp === 0) cmp = (b.confidence ?? 0) - (a.confidence ?? 0);
+  } else if (key === "name") {
+    cmp = a.name.localeCompare(b.name);
+  } else if (key === "confidence") {
+    const n = nullsLast(a.confidence, b.confidence);
+    if (n !== null) return n;
+    cmp = (a.confidence ?? 0) - (b.confidence ?? 0);
+  } else if (key === "last_data") {
+    const n = nullsLast(a.last_data_days, b.last_data_days);
+    if (n !== null) return n;
+    cmp = (a.last_data_days ?? 0) - (b.last_data_days ?? 0);
+  }
+  return dir === "asc" ? cmp : -cmp;
+}
+
 function RosterTable({ rows }: { rows: RosterRow[] }) {
-  const sorted = [...rows].sort(
-    (a, b) => RANK[a.label] - RANK[b.label] || (b.confidence ?? 0) - (a.confidence ?? 0),
+  const [sortKey, setSortKey] = useState<SortKey>("urgency");
+  const [sortDir, setSortDir] = useState<SortDir>(DEFAULT_DIR.urgency);
+
+  const handleSort = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir(DEFAULT_DIR[key]);
+    }
+  };
+
+  const sorted = useMemo(
+    () => [...rows].sort((a, b) => compareRows(a, b, sortKey, sortDir)),
+    [rows, sortKey, sortDir],
   );
+
   // Grid layout instead of a <table> so we can restructure into a
   // stacked-card shape on phones via CSS grid-template-areas. Same row
   // shape, totally different visual at <720px. See globals.css for the
   // mobile breakpoint rules tied to .fit-roster-row / .fit-roster-header.
+  const gridCols = "1fr 140px 1fr 70px 100px";
+
   return (
     <section
       style={{
@@ -201,7 +273,7 @@ function RosterTable({ rows }: { rows: RosterRow[] }) {
         className="fit-roster-header"
         style={{
           display: "grid",
-          gridTemplateColumns: "1fr 140px 1fr 70px 100px",
+          gridTemplateColumns: gridCols,
           gap: 12,
           alignItems: "center",
           padding: "11px 16px",
@@ -214,15 +286,18 @@ function RosterTable({ rows }: { rows: RosterRow[] }) {
           borderBottom: "1px solid var(--border)",
         }}
       >
-        <span>Client</span>
-        <span>Recommendation</span>
+        <SortHeader label="Client" sortKey="name" active={sortKey} dir={sortDir} onClick={handleSort} />
+        <SortHeader label="Recommendation" sortKey="urgency" active={sortKey} dir={sortDir} onClick={handleSort} />
+        {/* Flags column is not sortable — multi-value, no obvious
+            ordering. Keep it as a static label. */}
         <span>Flags</span>
-        <span style={{ textAlign: "right" }}>Conf</span>
-        <span style={{ textAlign: "right" }}>Last data</span>
+        <SortHeader label="Conf" sortKey="confidence" active={sortKey} dir={sortDir} onClick={handleSort} align="right" />
+        <SortHeader label="Last data" sortKey="last_data" active={sortKey} dir={sortDir} onClick={handleSort} align="right" />
       </div>
 
       {sorted.map((row) => {
         const accent = defaultAccentForClient(row.client_id);
+        const verdictAccent = VERDICT_ACCENT[row.label];
         return (
           <Link
             key={row.client_id}
@@ -230,11 +305,16 @@ function RosterTable({ rows }: { rows: RosterRow[] }) {
             className="fit-roster-row"
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 140px 1fr 70px 100px",
+              gridTemplateColumns: gridCols,
               gap: 12,
               alignItems: "center",
               padding: "12px 16px",
               borderTop: "1px solid var(--border)",
+              // Verdict-coloured left-edge stripe — quick visual scan
+              // for "where are the flagged clients" without changing
+              // layout. Uses box-shadow inset so we don't add a real
+              // border that would shift the grid track widths.
+              boxShadow: `inset 3px 0 0 ${verdictAccent}`,
               color: "var(--text)",
               textDecoration: "none",
               transition: "background 0.15s",
@@ -322,5 +402,86 @@ function RosterTable({ rows }: { rows: RosterRow[] }) {
         );
       })}
     </section>
+  );
+}
+
+/**
+ * Clickable header cell with a sort-direction caret on the active
+ * column. Reset-the-style-on-active design: inactive headers stay
+ * quiet so the active sort is unambiguous at a glance.
+ */
+function SortHeader({
+  label,
+  sortKey: key,
+  active,
+  dir,
+  onClick,
+  align,
+}: {
+  label: string;
+  sortKey: SortKey;
+  active: SortKey;
+  dir: SortDir;
+  onClick: (key: SortKey) => void;
+  align?: "left" | "right";
+}) {
+  const isActive = active === key;
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(key)}
+      title={`Sort by ${label.toLowerCase()}`}
+      style={{
+        appearance: "none",
+        background: "transparent",
+        border: "none",
+        padding: 0,
+        margin: 0,
+        font: "inherit",
+        color: isActive ? "var(--text)" : "var(--text-muted)",
+        fontWeight: isActive ? 600 : 500,
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+        fontSize: 10.5,
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        justifyContent: align === "right" ? "flex-end" : "flex-start",
+        textAlign: align ?? "left",
+        transition: "color 0.12s",
+      }}
+      onMouseEnter={(e) => {
+        if (!isActive) e.currentTarget.style.color = "var(--text)";
+      }}
+      onMouseLeave={(e) => {
+        if (!isActive) e.currentTarget.style.color = "var(--text-muted)";
+      }}
+    >
+      <span>{label}</span>
+      <SortCaret active={isActive} dir={dir} />
+    </button>
+  );
+}
+
+function SortCaret({ active, dir }: { active: boolean; dir: SortDir }) {
+  // Quiet placeholder on inactive columns so the row height doesn't
+  // jump when the active column changes. Opacity rather than absent
+  // element keeps the layout exact.
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 10 10"
+      aria-hidden
+      style={{
+        opacity: active ? 1 : 0.25,
+        transform: active && dir === "desc" ? "rotate(180deg)" : "none",
+        transition: "transform 0.15s, opacity 0.15s",
+        flexShrink: 0,
+      }}
+    >
+      <path d="M5 2 L2 6 L8 6 Z" fill="currentColor" />
+    </svg>
   );
 }
