@@ -17,6 +17,7 @@ served from this same FastAPI process) CORS isn't engaged at all.
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -25,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import load_env
+from .db import DEFAULT_DB_PATH, connect
 from .routes import (
     ask,
     auth,
@@ -50,7 +52,42 @@ _read_only_conn = read_only_conn
 load_env()
 
 
-app = FastAPI(title="FitOntology API", version="0.5.1")
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Open one write-mode connection at startup so the schema DDL +
+    migrations + demo-data seed all land before any request arrives.
+
+    Why this matters: the first request after a cold boot is often
+    ``GET /api/auth/me`` from the SPA's AuthGuard, which goes through
+    a read-only connection. Read-only opens skip migrations + seed
+    (DuckDB can't run DDL there anyway). Without this hook, a fresh
+    deploy with ``FIT_ONTOLOGY_DEMO_MODE=1`` would have no demo
+    trainer in the DB when /me runs, /me would 401, and the guard
+    would bounce the visitor to /login — defeating the whole point
+    of the public demo.
+
+    The hook also covers the same gap for a non-demo deploy: a fresh
+    DB will have its trainers table created + the default trainer
+    seeded before the first read-only query needs it.
+
+    Yields immediately after the bootstrap; no teardown work.
+    """
+    try:
+        with connect(DEFAULT_DB_PATH, read_only=False):
+            pass
+    except Exception as exc:
+        # Don't refuse to start over a bootstrap failure — log and
+        # let the app come up. The first real write request will
+        # surface the actual error with full context.
+        import sys
+        print(
+            f"[fit_ontology.api] WARNING: startup DB bootstrap failed: {exc!r}",
+            file=sys.stderr,
+        )
+    yield
+
+
+app = FastAPI(title="FitOntology API", version="0.5.1", lifespan=_lifespan)
 # NOTE: bumped in lockstep with pyproject.toml; the version string also
 # appears in the OpenAPI doc so SDK consumers can pin against it.
 
