@@ -344,6 +344,33 @@ CREATE TABLE IF NOT EXISTS client_thresholds (
     PRIMARY KEY (client_id, name)
 );
 
+CREATE TABLE IF NOT EXISTS audit_log (
+    -- Phase 5a append-only audit trail. Every sensitive write goes
+    -- through record_audit() which inserts a row here; nobody DELETEs
+    -- from this table during normal operation. The trainer_id makes
+    -- the query "what has trainer X done in the last 7 days" cheap;
+    -- ip + details JSON capture context we'd otherwise have to
+    -- reconstruct from server logs (which on a hosted deploy may
+    -- have ~3 day retention).
+    --
+    -- Schema intentionally narrow: action is a short opaque string
+    -- (e.g. "auth.login", "client.created", "override.saved") with
+    -- no FK to an enum table so adding a new audited action is just
+    -- "call record_audit with a new action name" — no migration.
+    id           VARCHAR PRIMARY KEY,
+    trainer_id   VARCHAR NOT NULL,
+    action       VARCHAR NOT NULL,
+    target_type  VARCHAR,
+    target_id    VARCHAR,
+    details      VARCHAR,  -- JSON for action-specific context
+    ip           VARCHAR,
+    created_at   TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_log_trainer_created
+    ON audit_log(trainer_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_action
+    ON audit_log(action);
+
 CREATE TABLE IF NOT EXISTS client_share_tokens (
     -- Phase 3a: opaque token → read-only client view, no login. The
     -- trainer mints one of these per "send link" action; the client

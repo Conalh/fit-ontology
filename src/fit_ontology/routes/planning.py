@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 
 import duckdb
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..contraindications import match_contraindications
 from ..db import (
@@ -15,6 +15,7 @@ from ..db import (
     metrics_for_client,
     plan_for_week,
     recommendation_for_week,
+    record_audit,
     sessions_for_client,
     thresholds_for_client,
     upsert_planned_session,
@@ -136,6 +137,7 @@ def patch_planned_session(
     client_id: str,
     slot: int,
     payload: PlannedSessionPatch,
+    request: Request,
     trainer_id: str = Depends(current_trainer_id),
 ) -> PlannedSessionResponse:
     """Edit one slot of the current week's plan. Any patch flips the
@@ -181,9 +183,20 @@ def patch_planned_session(
     existing.source = PlanSource.TRAINER
     existing.generated_at = datetime.now()
 
+    client_ip = request.client.host if request.client else None
+    # Capture which fields the trainer actually touched so the audit
+    # row reflects the edit rather than the whole post-edit blob.
+    touched = sorted(payload.model_dump(exclude_none=True).keys())
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as wcon:
             upsert_planned_session(wcon, trainer_id, existing)
+            record_audit(
+                wcon, trainer_id, "plan.edited",
+                target_type="client", target_id=client_id,
+                details={"slot": slot, "week_of": existing.week_of.isoformat(),
+                         "fields": touched},
+                ip=client_ip,
+            )
     except duckdb.IOException as e:
         raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
 

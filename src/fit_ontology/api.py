@@ -16,11 +16,13 @@ served from this same FastAPI process) CORS isn't engaged at all.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import load_env
 from .routes import (
@@ -61,6 +63,45 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ─── Security headers (Phase 5a) ─────────────────────────────────────
+#
+# Adds the cheap, no-risk-of-breakage headers to every response:
+#   X-Frame-Options: DENY                 — clickjacking
+#   X-Content-Type-Options: nosniff       — MIME sniffing
+#   Referrer-Policy: strict-origin-when-cross-origin
+#                                         — privacy on outbound links
+#
+# Strict-Transport-Security is gated on FIT_ONTOLOGY_SESSION_SECURE
+# (same flag that toggles cookie Secure). HSTS on an http://localhost
+# would tell the browser "only ever talk to this host over HTTPS"
+# and brick the dev loop until the user manually clears HSTS state.
+# Production must set the flag explicitly.
+#
+# CSP is intentionally NOT here yet. The Next.js static-export +
+# inline-style components combination needs a nonce-aware CSP that's
+# its own multi-day project. Phase 5b.
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault(
+            "Referrer-Policy", "strict-origin-when-cross-origin"
+        )
+        # Lazy env read so a test that monkeypatches the flag mid-run
+        # picks it up without reloading the module.
+        if os.environ.get("FIT_ONTOLOGY_SESSION_SECURE", "").strip() in {"1", "true", "yes"}:
+            response.headers.setdefault(
+                "Strict-Transport-Security",
+                "max-age=63072000; includeSubDomains",
+            )
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 @app.get("/api/health")

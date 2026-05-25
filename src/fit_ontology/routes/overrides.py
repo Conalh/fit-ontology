@@ -5,9 +5,9 @@ import uuid
 from datetime import datetime
 
 import duckdb
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ..db import DEFAULT_DB_PATH, connect, insert_override, overrides_for_client
+from ..db import DEFAULT_DB_PATH, connect, insert_override, overrides_for_client, record_audit
 from ..ontology import RecommendationOverride
 from .deps import current_trainer_id, read_only_conn
 from .helpers import override_response, override_response_from_model
@@ -33,6 +33,7 @@ def get_overrides(
 def post_override(
     client_id: str,
     payload: OverrideCreate,
+    request: Request,
     trainer_id: str = Depends(current_trainer_id),
 ) -> OverrideResponse:
     ov = RecommendationOverride(
@@ -46,9 +47,20 @@ def post_override(
         trainer_note=payload.trainer_note,
         created_at=datetime.now(),
     )
+    client_ip = request.client.host if request.client else None
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as con:
             insert_override(con, trainer_id, ov)
+            record_audit(
+                con, trainer_id, "override.saved",
+                target_type="client", target_id=client_id,
+                details={
+                    "override_id": ov.id,
+                    "week_of": ov.week_of.isoformat(),
+                    "trainer_action": ov.trainer_action.value,
+                },
+                ip=client_ip,
+            )
     except duckdb.IOException as e:
         # Cross-process write conflict (Garmin sync holds the writer lock).
         raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e

@@ -4,9 +4,9 @@ from __future__ import annotations
 import uuid
 
 import duckdb
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ..db import DEFAULT_DB_PATH, connect, list_clients
+from ..db import DEFAULT_DB_PATH, connect, list_clients, record_audit
 from ..ontology import Sex
 from .deps import current_trainer_id, read_only_conn
 from .schemas import ClientCreate, ClientSummary, ClientUpdate
@@ -47,11 +47,13 @@ def get_client(
 @router.post("/api/clients")
 def post_client(
     payload: ClientCreate,
+    request: Request,
     trainer_id: str = Depends(current_trainer_id),
 ) -> dict:
     """Create a new client. Returns the generated id so the front-end
     can navigate straight to the detail page."""
     client_id = f"c_{uuid.uuid4().hex[:12]}"
+    client_ip = request.client.host if request.client else None
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as con:
             con.execute(
@@ -71,6 +73,14 @@ def post_client(
                     payload.goal,
                     payload.injury_history,
                 ],
+            )
+            # Audit name only — the rest is PII we don't want in the
+            # log row even though the row itself is trainer-scoped.
+            record_audit(
+                con, trainer_id, "client.created",
+                target_type="client", target_id=client_id,
+                details={"name": payload.name},
+                ip=client_ip,
             )
     except duckdb.IOException as e:
         raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e

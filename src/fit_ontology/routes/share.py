@@ -31,7 +31,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 import duckdb
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..db import (
     DEFAULT_DB_PATH,
@@ -41,10 +41,12 @@ from ..db import (
     metrics_for_client,
     plan_for_week,
     recommendation_for_week,
+    record_audit,
     sessions_for_client,
     share_lookup,
     thresholds_for_client,
 )
+from ..rate_limit import SHARE_MINT_LIMIT, enforce
 from ..reasoning import compute_recovery_score, generate_recommendation
 from .deps import current_trainer_id, read_only_conn
 from .schemas import (
@@ -61,13 +63,21 @@ router = APIRouter()
 def post_share(
     client_id: str,
     payload: ShareCreateRequest,
+    request: Request,
     trainer_id: str = Depends(current_trainer_id),
 ) -> ShareCreateResponse:
     """Trainer mints a fresh token for one of their clients. Multiple
     live tokens per client are fine — re-issuing doesn't revoke the
     old one. To kill a leaked link before its natural expiry, use the
     revoke endpoint (not in this slice; tokens just expire on their
-    own at 14 days)."""
+    own at 14 days).
+
+    Rate-limited per trainer (see rate_limit.SHARE_MINT_LIMIT) — the
+    real case is an accidental double-bound button minting 50 tokens
+    when the trainer clicked once.
+    """
+    enforce(SHARE_MINT_LIMIT, trainer_id)
+    client_ip = request.client.host if request.client else None
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as con:
             token, expires_at = create_share_token(
@@ -76,6 +86,15 @@ def post_share(
                 client_id=client_id,
                 trainer_message=payload.trainer_message,
                 ttl_days=SHARE_TTL_DAYS_DEFAULT,
+            )
+            record_audit(
+                con,
+                trainer_id,
+                "share.minted",
+                target_type="client",
+                target_id=client_id,
+                details={"expires_at": expires_at.isoformat()},
+                ip=client_ip,
             )
     except ValueError as e:
         # create_share_token raises ValueError when the client doesn't

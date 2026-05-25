@@ -748,6 +748,91 @@ def plan_for_week(con, trainer_id: str, client_id: str, week_of):
     return out
 
 
+# ─── Audit log (Phase 5a) ────────────────────────────────────────────
+#
+# Append-only — record_audit is the only writer this codebase has, and
+# there's no helper to delete rows from audit_log. The point is that
+# even an attacker who compromises a trainer's session can't erase
+# evidence of what they did with it (modulo the writer cooperating,
+# which it won't).
+#
+# We tolerate a missing table on read for pre-Phase-5a DBs the same
+# way the override / threshold readers do — older DBs without the
+# table just see an empty audit log on the eventual /audit endpoint
+# rather than an error.
+
+
+def record_audit(
+    con,
+    trainer_id: str,
+    action: str,
+    *,
+    target_type: str | None = None,
+    target_id: str | None = None,
+    details: dict | None = None,
+    ip: str | None = None,
+) -> None:
+    """Append one row to audit_log. Failures bubble — auditing is not
+    optional for the calling action: if we can't record what
+    happened, we shouldn't claim it succeeded.
+
+    details is serialized to JSON inline rather than via a separate
+    column-per-key schema, because the set of "action-specific
+    fields" is naturally heterogeneous (override.saved cares about
+    trainer_action, plan.edited cares about slot + field-changed).
+    Long JSON in a VARCHAR is fine at this scale; we're not indexing
+    into it.
+    """
+    con.execute(
+        """
+        INSERT INTO audit_log
+          (id, trainer_id, action, target_type, target_id, details, ip, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            f"a_{uuid.uuid4().hex[:12]}",
+            trainer_id,
+            action,
+            target_type,
+            target_id,
+            json.dumps(details) if details else None,
+            ip,
+            datetime.utcnow(),
+        ],
+    )
+
+
+def audit_log_for_trainer(con, trainer_id: str, limit: int = 100):
+    """Return the most recent ``limit`` audit rows for a trainer,
+    newest first. Tolerates a missing table (pre-migration DB)."""
+    try:
+        rows = con.execute(
+            """
+            SELECT id, trainer_id, action, target_type, target_id, details, ip, created_at
+            FROM audit_log
+            WHERE trainer_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            [trainer_id, limit],
+        ).fetchall()
+    except duckdb.CatalogException:
+        return []
+    out = []
+    for r in rows:
+        out.append({
+            "id": r[0],
+            "trainer_id": r[1],
+            "action": r[2],
+            "target_type": r[3],
+            "target_id": r[4],
+            "details": json.loads(r[5]) if r[5] else None,
+            "ip": r[6],
+            "created_at": r[7],
+        })
+    return out
+
+
 # ─── Share tokens (Phase 3a) ─────────────────────────────────────────
 #
 # Opaque token → read-only client view, no login. Three helpers:

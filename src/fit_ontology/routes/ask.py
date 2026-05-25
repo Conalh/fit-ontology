@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ..rate_limit import ASK_LIMIT, enforce
 from .deps import current_trainer_id
 from .schemas import AskRequest, AskResponse, AskTrace
 
@@ -21,7 +22,12 @@ def post_ask(
     (tool_use + tool_result blocks intact). Same model + system prompt
     + tool set as the Streamlit page used. trainer_id scopes every
     tool call so the assistant can only ever see this trainer's data.
+
+    Rate-limited per trainer (see rate_limit.ASK_LIMIT) — the real
+    threat here is a runaway loop in the front-end burning through
+    Anthropic API quota, not abusive humans.
     """
+    enforce(ASK_LIMIT, trainer_id)
     # Local import keeps the anthropic SDK optional at module-import time —
     # users without an API key can still run the rest of the API.
     from ..assistant import DEFAULT_MODEL, ask
