@@ -39,16 +39,31 @@ from fit_ontology.ontology import MetricKind, OverrideAction, RecommendationOver
 from fit_ontology.rate_limit import reset as rate_limit_reset
 from fit_ontology.routes import (
     auth as auth_routes,
+)
+from fit_ontology.routes import (
     clients as clients_routes,
+)
+from fit_ontology.routes import (
     coach as coach_routes,
+)
+from fit_ontology.routes import (
     metrics as metrics_routes,
+)
+from fit_ontology.routes import (
     overrides as overrides_routes,
+)
+from fit_ontology.routes import (
     planning as planning_routes,
+)
+from fit_ontology.routes import (
     recommendation as recommendation_routes,
+)
+from fit_ontology.routes import (
     share as share_routes,
+)
+from fit_ontology.routes import (
     thresholds as thresholds_routes,
 )
-
 
 # ─── Pure-function tests ──────────────────────────────────────────────
 

@@ -69,7 +69,7 @@ def enforce(limit: RateLimit, identity: str) -> None:
         if len(bucket) >= limit.max_attempts:
             raise HTTPException(
                 status_code=429,
-                detail=f"Too many requests. Try again in a moment.",
+                detail="Too many requests. Try again in a moment.",
             )
         bucket.append(now)
 

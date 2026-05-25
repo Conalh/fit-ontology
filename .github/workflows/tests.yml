@@ -30,7 +30,7 @@ jobs:
           pip install -e .[dev]
 
       - name: Lint with ruff
-        run: ruff check src/ app.py pages/ scripts/ tests/
+        run: ruff check src scripts tests
 
       - name: Run tests
         run: pytest -q

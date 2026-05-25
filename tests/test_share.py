@@ -39,14 +39,25 @@ from fit_ontology.db import (
 from fit_ontology.ontology import MetricKind
 from fit_ontology.routes import (
     auth as auth_routes,
+)
+from fit_ontology.routes import (
     clients as clients_routes,
+)
+from fit_ontology.routes import (
     metrics as metrics_routes,
+)
+from fit_ontology.routes import (
     overrides as overrides_routes,
+)
+from fit_ontology.routes import (
     recommendation as recommendation_routes,
+)
+from fit_ontology.routes import (
     share as share_routes,
+)
+from fit_ontology.routes import (
     thresholds as thresholds_routes,
 )
-
 
 # ─── Helper-level tests ───────────────────────────────────────────────
 

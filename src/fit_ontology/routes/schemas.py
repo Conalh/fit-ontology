@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field
 
 from ..ontology import OverrideAction, Sex
 
-
 # ─── Coach Assistant (Phase 7a) ─────────────────────────────────────
 
 class CoachDraftResponse(BaseModel):

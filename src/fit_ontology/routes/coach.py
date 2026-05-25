@@ -17,6 +17,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..coach_draft import (
     DEFAULT_MODEL as COACH_DEFAULT_MODEL,
+)
+from ..coach_draft import (
     build_coach_draft_payload,
     draft_coach_message,
 )

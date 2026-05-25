@@ -223,7 +223,14 @@ def test_matcher_falls_back_to_any_unmatched_slot(tmp_path):
     """If no same-type slot exists, the matcher should still bind the
     session to the lowest unmatched slot rather than dropping it on the
     floor."""
-    from fit_ontology.db import connect, ensure_client, insert_plan, insert_sessions, match_planned_sessions, plan_for_week
+    from fit_ontology.db import (
+        connect,
+        ensure_client,
+        insert_plan,
+        insert_sessions,
+        match_planned_sessions,
+        plan_for_week,
+    )
     db_path = tmp_path / "fallback.duckdb"
     today = date.today()
     week_of = today - timedelta(days=today.weekday())
