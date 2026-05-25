@@ -1,7 +1,9 @@
 import { useMemo } from "react";
 import { Donut } from "@/components/charts";
+import { InfoPopover } from "@/components/info-popover";
 import { Skeleton } from "@/components/skeleton";
 import type { OverrideRow, Recommendation } from "@/lib/api";
+import { citationMeta, flagMeta } from "@/lib/citation-meta";
 import { flagDisplay } from "@/lib/flag-display";
 import type { Verdict } from "./verdict-utils";
 
@@ -269,12 +271,40 @@ export function RecommendationCard({
             fontSize: 10.5,
             color: "var(--text-muted)",
             letterSpacing: "0.02em",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
           }}
         >
-          <span style={{ textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 500, marginRight: 8 }}>
+          <span style={{ textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 500 }}>
             Methodology
           </span>
-          {sources.join(" · ")}
+          {sources.map((source, idx) => {
+            const meta = citationMeta(source);
+            return (
+              <span key={source} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                {idx > 0 && <span aria-hidden>·</span>}
+                <InfoPopover
+                  trigger={source}
+                  title={meta.title}
+                  body={meta.description}
+                  href={meta.href}
+                  ariaLabel={`About citation: ${source}`}
+                  triggerStyle={{
+                    background: "transparent",
+                    border: "none",
+                    padding: 0,
+                    color: "var(--text-muted)",
+                    textDecoration: "underline dotted",
+                    textUnderlineOffset: 3,
+                    letterSpacing: "0.02em",
+                    fontSize: 10.5,
+                  }}
+                />
+              </span>
+            );
+          })}
         </div>
       )}
       {flags.length > 0 && (
@@ -297,11 +327,18 @@ export function RecommendationCard({
           <span style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
             {flags.map((f) => {
               const source = rec?.flag_citations?.[f];
+              const fm = flagMeta(f);
+              const sourceMeta = source ? citationMeta(source) : null;
               return (
-                <span
+                <InfoPopover
                   key={f}
-                  title={source ? `${flagDisplay(f)} — source: ${source}` : flagDisplay(f)}
-                  style={{
+                  trigger={flagDisplay(f)}
+                  title={flagDisplay(f)}
+                  body={fm.description}
+                  href={sourceMeta?.href}
+                  footer={source ? `Source: ${source}` : undefined}
+                  ariaLabel={`About signal: ${flagDisplay(f)}`}
+                  triggerStyle={{
                     fontSize: 11.5,
                     padding: "2px 8px",
                     background: "var(--surface)",
@@ -309,11 +346,8 @@ export function RecommendationCard({
                     borderRadius: 999,
                     color: "var(--text)",
                     fontWeight: 500,
-                    cursor: source ? "help" : "default",
                   }}
-                >
-                  {flagDisplay(f)}
-                </span>
+                />
               );
             })}
           </span>
