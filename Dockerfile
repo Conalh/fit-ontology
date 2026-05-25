@@ -81,6 +81,7 @@ USER app
 # lands at /usr/local/lib/python3.12, not /app).
 ENV FIT_ONTOLOGY_DB=/data/fit.duckdb \
     FIT_ONTOLOGY_STATIC_ROOT=/app/web/out \
+    FIT_ONTOLOGY_SYNTHETIC_DATA_ROOT=/app/data/synthetic \
     PYTHONUNBUFFERED=1 \
     PORT=8000
 

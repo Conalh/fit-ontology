@@ -126,16 +126,32 @@ def seed_demo_data_if_needed(con) -> None:
         from_whoop_json,
     )
 
-    # Resolve the synthetic data path the same way db.py anchors the
-    # default DB path: relative to the repo root, not the cwd. Lets
-    # the seed work whether the process starts from /app, /, or
-    # somewhere weird inside Docker.
-    repo_root = Path(__file__).resolve().parents[2]
-    synth = repo_root / "data" / "synthetic"
+    # Resolve the synthetic data path. The Path(__file__) fallback
+    # works in editable installs (local dev) where __file__ lives
+    # at <repo>/src/fit_ontology/demo.py — parents[2] is the repo
+    # root, and data/synthetic is right there. In a non-editable
+    # install (the Docker image, which does ``pip install .``),
+    # __file__ moves into site-packages and parents[2] no longer
+    # points anywhere useful. FIT_ONTOLOGY_SYNTHETIC_DATA_ROOT
+    # overrides; the Dockerfile sets it to /app/data/synthetic.
+    synth = Path(
+        os.environ.get(
+            "FIT_ONTOLOGY_SYNTHETIC_DATA_ROOT",
+            str(Path(__file__).resolve().parents[2] / "data" / "synthetic"),
+        )
+    )
     if not synth.exists():
         # Demo data isn't bundled — silently skip. A deployment that
         # opted into demo mode but didn't ship the data files would
         # get an empty demo dashboard rather than a startup crash.
+        # Log loud so the operator can spot the misconfiguration.
+        import sys
+        print(
+            f"[fit_ontology.demo] WARNING: synthetic data not found at {synth} — "
+            f"demo mode will return an empty roster. Set "
+            f"FIT_ONTOLOGY_SYNTHETIC_DATA_ROOT or ship data/synthetic/ in the image.",
+            file=sys.stderr,
+        )
         return
 
     # Ensure the demo trainer row exists.
