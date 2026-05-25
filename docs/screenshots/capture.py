@@ -30,12 +30,16 @@ this is the README target where size matters more than fidelity.
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 from playwright.async_api import async_playwright
 
 
-WEB = "http://127.0.0.1:3000"
+# Override via FITONTOLOGY_SCREENSHOT_URL — useful for capturing
+# against the deployed Fly instance when the local dev port is
+# occupied by another project.
+WEB = os.environ.get("FITONTOLOGY_SCREENSHOT_URL", "http://127.0.0.1:3000").rstrip("/")
 HERE = Path(__file__).resolve().parent
 
 SHOTS = [
