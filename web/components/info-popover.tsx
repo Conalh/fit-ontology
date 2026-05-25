@@ -198,22 +198,43 @@ export function InfoPopover({
     if (open) reposition();
   }, [open, reposition]);
 
-  // Phase 2: once the popover has rendered with content, check its
-  // actual height and flip vertically if it would extend below the
-  // viewport bottom.
+  // Phase 2: once the popover has rendered with content, decide
+  // where it should actually sit vertically.
+  //
+  //   1. If it fits below the trigger, leave it (default phase-1
+  //      position).
+  //   2. Else if it fits above the trigger (after flipping), put
+  //      it there — preferred over a partially-off-screen below.
+  //   3. Else (mid-size laptop with a chip mid-page and a popover
+  //      taller than either gap): clamp the popover into the
+  //      viewport. ``maxHeight: calc(100vh - gap)`` on the popover
+  //      itself ensures it can't be taller than the screen, so
+  //      this clamp always leaves the full popover visible —
+  //      content longer than the cap will scroll inside it
+  //      (overflowY: auto), keeping the footer link reachable.
+  //      This was Conal's report: a popover that opened below the
+  //      trigger with its "View paper ↗" link sitting below the
+  //      fold and no way to scroll the fixed-positioned dialog.
   useLayoutEffect(() => {
     if (!open || !pos || !popoverRef.current || !triggerRef.current) return;
     const rect = popoverRef.current.getBoundingClientRect();
     const vh = window.innerHeight;
-    if (rect.bottom + VIEWPORT_GAP > vh) {
-      const trigRect = triggerRef.current.getBoundingClientRect();
-      const flippedTop = trigRect.top - rect.height - 6;
-      // Only flip if there's actually room above; otherwise keep
-      // the original position even though it overflows (better
-      // partial visibility than fully off-screen).
-      if (flippedTop >= VIEWPORT_GAP && flippedTop !== pos.top) {
-        setPos({ ...pos, top: flippedTop });
-      }
+    if (rect.bottom + VIEWPORT_GAP <= vh) return; // already fits below
+    const trigRect = triggerRef.current.getBoundingClientRect();
+    const flippedTop = trigRect.top - rect.height - 6;
+    let nextTop: number;
+    if (flippedTop >= VIEWPORT_GAP) {
+      // Flip up — there's room.
+      nextTop = flippedTop;
+    } else {
+      // Neither below nor above fits with the chosen anchor.
+      // Clamp to bottom of viewport (or top if even that overflows)
+      // and let the internal scrollbar handle any remaining
+      // content overflow.
+      nextTop = Math.max(VIEWPORT_GAP, vh - rect.height - VIEWPORT_GAP);
+    }
+    if (nextTop !== pos.top) {
+      setPos({ ...pos, top: nextTop });
     }
   }, [open, pos]);
 
@@ -301,6 +322,18 @@ export function InfoPopover({
               top: pos.top,
               left: pos.left,
               width: pos.width,
+              // Cap height at viewport-minus-gap so a tall popover
+              // (or a short viewport with a long citation body) can
+              // never extend off-screen leaving the footer link
+              // unreachable — Conal hit this on a mid-size laptop
+              // where the "View paper ↗" link sat below the fold
+              // and the page wouldn't scroll under a fixed popover.
+              // overflowY: auto turns on an internal scrollbar only
+              // when content actually exceeds the cap; short popovers
+              // still size to content.
+              maxHeight: `calc(100vh - ${VIEWPORT_GAP * 2}px)`,
+              overflowY: "auto",
+              overscrollBehavior: "contain",
               // globals.css has ``body > div { min-height: 100% }``
               // to make the Next.js root span the viewport — but
               // that selector also matches portalled divs like this
