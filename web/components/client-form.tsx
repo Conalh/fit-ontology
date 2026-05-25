@@ -163,7 +163,10 @@ export function ClientForm({
         />
       </Field>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1.2fr 1fr", gap: 12 }}>
+      <div
+        className="fit-intake-row"
+        style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1.2fr 1fr", gap: 12 }}
+      >
         <Field label="Sex" required>
           <select
             value={sex}
@@ -182,6 +185,7 @@ export function ClientForm({
             onChange={(e) => setAge(e.target.value)}
             min={10}
             max={100}
+            className="fit-intake-num"
             style={INPUT_STYLE}
           />
         </Field>
@@ -195,6 +199,7 @@ export function ClientForm({
                 min={3}
                 max={7}
                 placeholder="ft"
+                className="fit-intake-num"
                 style={INPUT_WITH_SUFFIX}
               />
               <UnitSuffix>ft</UnitSuffix>
@@ -208,6 +213,7 @@ export function ClientForm({
                 max={11.99}
                 step="0.5"
                 placeholder="in"
+                className="fit-intake-num"
                 style={INPUT_WITH_SUFFIX}
               />
               <UnitSuffix>in</UnitSuffix>
@@ -224,6 +230,7 @@ export function ClientForm({
               max={550}
               step="0.5"
               placeholder="lb"
+              className="fit-intake-num"
               style={INPUT_WITH_SUFFIX}
             />
             <UnitSuffix>lb</UnitSuffix>
@@ -297,9 +304,16 @@ const INPUT_STYLE: CSSProperties = {
   boxSizing: "border-box",
 };
 
+// The number sub-inputs (ft / in / lb) share the row with three other
+// fields, so on a phone each cell shrinks below 90px wide. The
+// ``fit-intake-num`` class lets globals.css both strip the browser's
+// native number-spinner (which was eating 12-14px of digit room on
+// iOS / Chrome) and bump font-size to 16px on phones (so iOS doesn't
+// zoom-in on focus). Combined with the row-collapses-to-2-columns
+// media query, the digit is actually visible again.
 const INPUT_WITH_SUFFIX: CSSProperties = {
   ...INPUT_STYLE,
-  paddingRight: 26,
+  paddingRight: 22,
 };
 
 function UnitSuffix({ children }: { children: React.ReactNode }) {

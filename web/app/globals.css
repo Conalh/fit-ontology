@@ -385,6 +385,40 @@ svg polyline {
   }
 }
 
+/* Intake form (client create / edit) — the Sex/Age/Height/Weight
+   row is 1fr 1fr 1.2fr 1fr on desktop. On phones each cell shrinks
+   below 90px wide and the sub-inputs inside Height (ft / in side
+   by side) end up with maybe 30px of digit room — the actual digit
+   gets clipped by the unit suffix on the right (issue Conal flagged
+   with the cropped "5" + "1" screenshot). Two changes here:
+
+   1. Collapse the row to 2 columns at <640px (Sex+Age on top row,
+      Height+Weight on second) so each cell gets ~50% width.
+   2. Strip the browser's native number spinner (Chrome on iOS adds
+      a ~14px stepper to the right of every number input) and bump
+      number-input font to 16px on phones so iOS doesn't zoom-in
+      on focus — both of which were squeezing the actual digit. */
+.fit-intake-num::-webkit-outer-spin-button,
+.fit-intake-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.fit-intake-num {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+@media (max-width: 640px) {
+  .fit-intake-row {
+    grid-template-columns: 1fr 1fr !important;
+  }
+  .fit-intake-num {
+    /* 16px is the iOS zoom-prevention threshold; under it Safari
+       zooms in on focus, leaving the digit even less visible. */
+    font-size: 16px !important;
+  }
+}
+
 /* Send-to-client section header — flex-wrap is already on the outer
    container so the buttons drop to a new line when they don't fit.
    On the narrowest viewports, the three buttons themselves need
