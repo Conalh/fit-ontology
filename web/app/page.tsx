@@ -185,12 +185,18 @@ const RANK: Record<RosterRow["label"], number> = {
 };
 
 // Verdict → CSS color token for the row's left-edge accent strip.
-// Picks the same family as VerdictBadge so the row + badge read as
-// the same call at a glance.
+// Must be the SAME tokens VerdictBadge uses (--danger / --warn /
+// --ok) so the stripe + pill on the same row read as one signal.
+// Earlier code referenced --accent-warn / --accent-info /
+// --accent-good — those vars don't exist anywhere, so the fallback
+// hexes (amber / blue / green) fired and disagreed with the pill
+// (red / amber / green). Conal flagged the Conservative row showing
+// blue stripe + amber pill which made the colour stop reading as
+// meaningful.
 const VERDICT_ACCENT: Record<RosterRow["label"], string> = {
-  Deload: "var(--accent-warn, #f59e0b)",
-  Conservative: "var(--accent-info, #3b82f6)",
-  Standard: "var(--accent-good, #10b981)",
+  Deload: "var(--danger)",
+  Conservative: "var(--warn)",
+  Standard: "var(--ok)",
   "No recent data": "var(--border)",
 };
 
@@ -308,7 +314,13 @@ function RosterTable({ rows }: { rows: RosterRow[] }) {
               gridTemplateColumns: gridCols,
               gap: 12,
               alignItems: "center",
-              padding: "12px 16px",
+              // Vertical padding bumped from 12 → 14 so the verdict
+              // pill's coloured dot (and any text descenders) from
+              // the row above don't appear to crowd the last-data
+              // column on the row below — Conal's "18d ago too close
+              // to the line" report. Two pixels per side gives the
+              // pill room without changing the overall row count.
+              padding: "14px 16px",
               borderTop: "1px solid var(--border)",
               // Verdict-coloured left-edge stripe — quick visual scan
               // for "where are the flagged clients" without changing
@@ -394,6 +406,11 @@ function RosterTable({ rows }: { rows: RosterRow[] }) {
                 color: "var(--text-muted)",
                 fontVariantNumeric: "tabular-nums",
                 fontSize: 12,
+                // Match the rest of the row's line-height (1.5 from
+                // the page wrapper). Without it the 12px font computed
+                // a tighter height and the text rendered visually
+                // pressed against the row border below.
+                lineHeight: 1.5,
               }}
             >
               {row.last_data_days == null ? "—" : `${row.last_data_days}d ago`}
