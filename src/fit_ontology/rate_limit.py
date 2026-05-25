@@ -113,3 +113,13 @@ SHARE_MINT_LIMIT = RateLimit(
 """20 share-token mints per hour per trainer. An accidental
 click-loop (double-bound button, etc.) is the main case — a real
 trainer mints maybe one link per client per week."""
+
+COACH_DRAFT_LIMIT = RateLimit(
+    name="coach.draft",
+    window_seconds=3600,
+    max_attempts=20,
+)
+"""20 coach-message drafts per hour per trainer. Separate from
+ASK_LIMIT so chatting in /ask doesn't lock the trainer out of
+drafting check-ins (or vice versa). At ~$0.001 per Haiku draft
+this is also a soft floor on the per-hour API spend."""

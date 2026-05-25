@@ -30,6 +30,7 @@ from .routes import (
     auth,
     calibration,
     clients,
+    coach,
     metrics,
     overrides,
     pdf,
@@ -124,6 +125,7 @@ app.include_router(thresholds.router)
 app.include_router(planning.router)
 app.include_router(pdf.router)
 app.include_router(ask.router)
+app.include_router(coach.router)
 app.include_router(roster.router)
 
 

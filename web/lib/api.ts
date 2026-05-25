@@ -85,6 +85,11 @@ export interface ShareCreate {
   expires_at: string;
 }
 
+export interface CoachDraft {
+  draft: string;
+  model: string;
+}
+
 export interface ClientSummary {
   id: string;
   name: string;
@@ -312,6 +317,10 @@ export const api = {
       body: JSON.stringify({ trainer_message: trainerMessage }),
     }),
   shareView: (token: string) => request<ShareView>(`/api/share/${encodeURIComponent(token)}`),
+  draftCoachMessage: (clientId: string) =>
+    request<CoachDraft>(`/api/clients/${clientId}/coach-message/draft`, {
+      method: "POST",
+    }),
   clients: () => request<ClientSummary[]>("/api/clients"),
   client: (clientId: string) => request<ClientFull>(`/api/clients/${clientId}`),
   createClient: (payload: ClientFormPayload) =>

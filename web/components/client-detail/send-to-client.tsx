@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useToast } from "@/components/toast";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 
 export function SendToClient({
   clientId,
@@ -15,6 +15,8 @@ export function SendToClient({
 }) {
   const [downloading, setDownloading] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const [drafting, setDrafting] = useState(false);
+  const [draftModalText, setDraftModalText] = useState<string | null>(null);
   const toast = useToast();
 
   const download = async () => {
@@ -33,6 +35,37 @@ export function SendToClient({
     } finally {
       setDownloading(false);
     }
+  };
+
+  const draft = async () => {
+    setDrafting(true);
+    try {
+      const { draft } = await api.draftCoachMessage(clientId);
+      // Open the modal with the draft. The trainer reads, decides
+      // "use this" (copies into the existing coach_message textarea
+      // which already feeds both the PDF and the share link) or
+      // dismisses without applying.
+      setDraftModalText(draft);
+    } catch (e) {
+      const status = e instanceof ApiError ? e.status : 0;
+      if (status === 412) {
+        toast.show("Set ANTHROPIC_API_KEY in the environment to draft messages.", "error");
+      } else if (status === 429) {
+        toast.show("Too many drafts in a row. Try again in a few minutes.", "error");
+      } else {
+        toast.show(`Couldn't draft message: ${(e as Error).message}`, "error");
+      }
+    } finally {
+      setDrafting(false);
+    }
+  };
+
+  const useDraft = () => {
+    if (draftModalText) {
+      onCoachMessageChange(draftModalText);
+      toast.show("Draft applied — edit before sending if you want.");
+    }
+    setDraftModalText(null);
   };
 
   const share = async () => {
@@ -96,7 +129,15 @@ export function SendToClient({
             One-page PDF or a phone-friendly link. Your note below is shown to the client on either.
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
+          <button
+            className="btn-ghost"
+            onClick={draft}
+            disabled={drafting}
+            title="Have Claude draft a check-in based on this week's data"
+          >
+            {drafting ? "Drafting…" : "Draft check-in"}
+          </button>
           <button
             className="btn-ghost"
             onClick={share}
@@ -132,6 +173,114 @@ export function SendToClient({
           boxSizing: "border-box",
         }}
       />
+
+      {draftModalText !== null && (
+        <DraftReviewModal
+          clientName={clientName}
+          draft={draftModalText}
+          onUseDraft={useDraft}
+          onDismiss={() => setDraftModalText(null)}
+        />
+      )}
     </section>
+  );
+}
+
+/**
+ * Modal for reviewing an LLM-drafted check-in before applying it to
+ * the coach_message textarea. Backdrop click + Esc dismiss without
+ * applying. The modal is intentionally read-only: edits happen in
+ * the main textarea after "Use this" because that's where the
+ * trainer already mentally tracks the outbound message.
+ */
+function DraftReviewModal({
+  clientName,
+  draft,
+  onUseDraft,
+  onDismiss,
+}: {
+  clientName: string;
+  draft: string;
+  onUseDraft: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Drafted check-in for ${clientName}`}
+      onClick={(e) => {
+        // Click on the backdrop (not the card) dismisses.
+        if (e.target === e.currentTarget) onDismiss();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onDismiss();
+      }}
+      tabIndex={-1}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 100,
+        padding: 16,
+      }}
+    >
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 480,
+          background: "var(--surface-2)",
+          border: "1px solid var(--border)",
+          borderRadius: 10,
+          padding: "20px 22px 18px",
+          boxShadow: "0 10px 40px rgba(0,0,0,0.35)",
+        }}
+      >
+        <div
+          style={{
+            fontSize: 11,
+            fontWeight: 500,
+            color: "var(--text-muted)",
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+            marginBottom: 6,
+          }}
+        >
+          Drafted check-in for {clientName}
+        </div>
+        <div
+          style={{
+            fontSize: 14,
+            lineHeight: 1.55,
+            color: "var(--text)",
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            padding: "12px 14px",
+            whiteSpace: "pre-wrap",
+            margin: "8px 0 16px",
+          }}
+        >
+          {draft}
+        </div>
+        <div
+          style={{
+            fontSize: 11.5,
+            color: "var(--text-muted)",
+            marginBottom: 14,
+          }}
+        >
+          Review before sending — &ldquo;Use this&rdquo; copies the text into the message box
+          below so you can edit it.
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button className="btn-ghost" onClick={onDismiss}>Discard</button>
+          <button className="btn-primary" onClick={onUseDraft}>Use this</button>
+        </div>
+      </div>
+    </div>
   );
 }

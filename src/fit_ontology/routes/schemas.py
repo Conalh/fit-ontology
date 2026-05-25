@@ -14,6 +14,16 @@ from pydantic import BaseModel, Field
 from ..ontology import OverrideAction, Sex
 
 
+# ─── Coach Assistant (Phase 7a) ─────────────────────────────────────
+
+class CoachDraftResponse(BaseModel):
+    """Result of a coach-message draft. Plain text + which model
+    produced it (so the UI can render a small "drafted by X"
+    attribution if it wants)."""
+    draft: str
+    model: str
+
+
 # ─── Share tokens (Phase 3a) ────────────────────────────────────────
 
 class ShareCreateRequest(BaseModel):
