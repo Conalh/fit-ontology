@@ -26,8 +26,12 @@ from fit_ontology.ingest import metric_id
 
 def main() -> int:
     with connect(read_only=False) as con:
+        # Pull trainer_id alongside everything else so the rewrite
+        # preserves multi-tenant scoping (Phase 2a). On a pre-Phase-2a
+        # DB the migration that runs as part of connect() has already
+        # backfilled trainer_id, so this column is populated.
         existing = con.execute(
-            "SELECT id, client_id, date, source, kind, value, unit FROM metrics"
+            "SELECT id, client_id, date, source, kind, value, unit, trainer_id FROM metrics"
         ).df()
 
         if existing.empty:
@@ -59,7 +63,12 @@ def main() -> int:
         # same write connection is a single transaction in DuckDB.
         con.execute("DELETE FROM metrics")
         con.execute(
-            "INSERT INTO metrics SELECT id, client_id, date, source, kind, value, unit FROM deduped"
+            """
+            INSERT INTO metrics
+              (id, client_id, date, source, kind, value, unit, trainer_id)
+            SELECT id, client_id, date, source, kind, value, unit, trainer_id
+            FROM deduped
+            """
         )
 
     print(f"Migrated {before} -> {after} rows ({collapsed} duplicate natural keys collapsed).")

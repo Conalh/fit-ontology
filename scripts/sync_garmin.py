@@ -23,6 +23,7 @@ from getpass import getpass
 
 from fit_ontology.config import load_env
 from fit_ontology.db import (
+    DEFAULT_TRAINER_ID,
     connect,
     ensure_client,
     insert_metrics,
@@ -44,6 +45,11 @@ def main() -> int:
     email = os.environ.get("GARMIN_EMAIL", "").strip()
     password = os.environ.get("GARMIN_PASSWORD", "").strip()
     client_id = os.environ.get("GARMIN_CLIENT_ID", DEFAULT_CLIENT_ID).strip() or DEFAULT_CLIENT_ID
+    # In Phase 2a the sync script always runs as the default trainer
+    # (this is Conal's machine). Phase 2b will read this from an OAuth
+    # binding (trainer X authorized their Garmin account → cron-style
+    # worker syncs into trainer X's roster). The env var is the seam.
+    trainer_id = os.environ.get("FIT_ONTOLOGY_DEFAULT_TRAINER_ID", DEFAULT_TRAINER_ID)
     lookback = int(os.environ.get("GARMIN_LOOKBACK_DAYS", "14"))
 
     if not email:
@@ -67,15 +73,15 @@ def main() -> int:
         return 0
 
     con = connect()
-    ensure_client(con, client_id, name="Self (Garmin)")
+    ensure_client(con, trainer_id, client_id, name="Self (Garmin)")
     if not metrics_df.empty:
-        insert_metrics(con, metrics_df)
+        insert_metrics(con, trainer_id, metrics_df)
     if not sessions_df.empty:
-        insert_sessions(con, sessions_df)
+        insert_sessions(con, trainer_id, sessions_df)
         # Newly-synced sessions can retroactively bind to planned slots
         # for the same week — closes the plan-vs-execution telemetry
         # loop without the trainer having to do anything.
-        linked = match_planned_sessions(con, client_id)
+        linked = match_planned_sessions(con, trainer_id, client_id)
         if linked:
             print(f"  linked {linked} session(s) to planned slots")
     con.close()

@@ -6,7 +6,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends
 
 from ..db import all_overrides
-from .deps import read_only_conn
+from .deps import current_trainer_id, read_only_conn
 from .helpers import classify_rec, override_response
 from .schemas import (
     CalibrationResponse,
@@ -21,14 +21,17 @@ router = APIRouter()
 
 
 @router.get("/api/calibration", response_model=CalibrationResponse)
-def get_calibration(con=Depends(read_only_conn)) -> CalibrationResponse:
+def get_calibration(
+    con=Depends(read_only_conn),
+    trainer_id: str = Depends(current_trainer_id),
+) -> CalibrationResponse:
     # Plan adherence is independent of override history — compute it
     # first so suggestions on a brand-new trainer (no overrides yet) can
     # still surface "this client is off-plan" before the override-based
     # signals have anything to say.
-    plan_adherence = _build_plan_adherence(con)
+    plan_adherence = _build_plan_adherence(con, trainer_id)
 
-    df = all_overrides(con, limit=1000)
+    df = all_overrides(con, trainer_id, limit=1000)
     if df.empty:
         return CalibrationResponse(
             total=0, accept_rate=0.0, edits=0, rejects=0, matrix={}, recent=[],
@@ -53,9 +56,9 @@ def get_calibration(con=Depends(read_only_conn)) -> CalibrationResponse:
     recent = [override_response(row) for row in df.head(25).to_dict(orient="records")]
 
     by_week = _build_weekly_agreement(df)
-    by_client = _build_per_client_agreement(con, df)
+    by_client = _build_per_client_agreement(con, trainer_id, df)
     suggestions = _build_suggestions(df, plan_adherence)
-    confidence_audit = _build_confidence_audit(con)
+    confidence_audit = _build_confidence_audit(con, trainer_id)
 
     return CalibrationResponse(
         total=total,
@@ -72,7 +75,7 @@ def get_calibration(con=Depends(read_only_conn)) -> CalibrationResponse:
     )
 
 
-def _build_plan_adherence(con) -> list[PlanAdherenceRow]:
+def _build_plan_adherence(con, trainer_id: str) -> list[PlanAdherenceRow]:
     """Per-client plan-vs-execution telemetry.
 
     LEFT JOIN gives us every planned slot regardless of whether it was
@@ -100,7 +103,9 @@ def _build_plan_adherence(con) -> list[PlanAdherenceRow]:
                 CASE WHEN s.id IS NULL THEN 0 ELSE 1 END AS matched
             FROM planned_sessions ps
             LEFT JOIN sessions s ON s.id = ps.executed_session_id
+            WHERE ps.trainer_id = ?
             """,
+            [trainer_id],
         ).df()
     except duckdb.CatalogException:
         return []
@@ -108,8 +113,11 @@ def _build_plan_adherence(con) -> list[PlanAdherenceRow]:
     if df.empty:
         return []
 
-    # Pull client names once so we don't N+1 the per-client tally.
-    name_rows = con.execute("SELECT id, name FROM clients").fetchall()
+    # Pull this trainer's client names once so we don't N+1 the per-client tally.
+    name_rows = con.execute(
+        "SELECT id, name FROM clients WHERE trainer_id = ?",
+        [trainer_id],
+    ).fetchall()
     name_map = {cid: name for cid, name in name_rows}
 
     rows: list[PlanAdherenceRow] = []
@@ -157,7 +165,7 @@ def _build_plan_adherence(con) -> list[PlanAdherenceRow]:
     return rows
 
 
-def _build_confidence_audit(con) -> list[ConfidenceBucket]:
+def _build_confidence_audit(con, trainer_id: str) -> list[ConfidenceBucket]:
     """Bucket persisted recommendations by their stated confidence and
     compute the rate at which the trainer accepted them.
 
@@ -174,16 +182,20 @@ def _build_confidence_audit(con) -> list[ConfidenceBucket]:
             SELECT r.confidence, o.trainer_action
             FROM recommendations r
             INNER JOIN (
-                SELECT client_id, week_of, trainer_action,
+                SELECT client_id, week_of, trainer_action, trainer_id,
                        ROW_NUMBER() OVER (
                            PARTITION BY client_id, week_of
                            ORDER BY created_at DESC
                        ) AS rn
                 FROM recommendation_overrides
+                WHERE trainer_id = ?
             ) o
-            ON r.client_id = o.client_id AND r.week_of = o.week_of
-            WHERE o.rn = 1
+            ON r.client_id = o.client_id
+               AND r.week_of = o.week_of
+               AND r.trainer_id = o.trainer_id
+            WHERE o.rn = 1 AND r.trainer_id = ?
             """,
+            [trainer_id, trainer_id],
         ).df()
     except duckdb.CatalogException:
         # Pre-migration DB — recommendations / overrides table may not
@@ -230,16 +242,21 @@ def _build_weekly_agreement(df: pd.DataFrame) -> list[WeeklyAgreement]:
     return out
 
 
-def _build_per_client_agreement(con, df: pd.DataFrame) -> list[PerClientAgreement]:
+def _build_per_client_agreement(con, trainer_id: str, df: pd.DataFrame) -> list[PerClientAgreement]:
     """Per-client tally. The trainer cares less about aggregate accept
     rate than about which specific client they keep disagreeing with."""
     grouped = df.groupby("client_id")
     rows: list[PerClientAgreement] = []
     # One small SELECT to get names; saves a per-client roundtrip.
+    # trainer_id filter is defense-in-depth — df is already filtered
+    # by all_overrides() above, so any client_id here belongs to this
+    # trainer, but pinning the lookup to (id, trainer_id) means a
+    # mistakenly-leaked id can't reveal another trainer's client name.
     name_map: dict[str, str] = {}
     for client_id in grouped.groups:
         row = con.execute(
-            "SELECT name FROM clients WHERE id = ?", [client_id]
+            "SELECT name FROM clients WHERE id = ? AND trainer_id = ?",
+            [client_id, trainer_id],
         ).fetchone()
         name_map[client_id] = row[0] if row else client_id
 

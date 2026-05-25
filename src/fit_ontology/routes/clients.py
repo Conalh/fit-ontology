@@ -8,23 +8,36 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from ..db import DEFAULT_DB_PATH, connect, list_clients
 from ..ontology import Sex
-from .deps import read_only_conn
+from .deps import current_trainer_id, read_only_conn
 from .schemas import ClientCreate, ClientSummary, ClientUpdate
 
 router = APIRouter()
 
 
 @router.get("/api/clients", response_model=list[ClientSummary])
-def get_clients(con=Depends(read_only_conn)) -> list[ClientSummary]:
-    df = list_clients(con)
+def get_clients(
+    con=Depends(read_only_conn),
+    trainer_id: str = Depends(current_trainer_id),
+) -> list[ClientSummary]:
+    df = list_clients(con, trainer_id)
     return [ClientSummary(**row) for row in df.to_dict(orient="records")]
 
 
 @router.get("/api/clients/{client_id}")
-def get_client(client_id: str, con=Depends(read_only_conn)) -> dict:
+def get_client(
+    client_id: str,
+    con=Depends(read_only_conn),
+    trainer_id: str = Depends(current_trainer_id),
+) -> dict:
+    # trainer_id in the WHERE clause is what makes "another trainer's
+    # client" a 404 rather than a successful lookup.
     row = con.execute(
-        "SELECT id, name, sex, age, height_cm, weight_kg, goal, injury_history FROM clients WHERE id = ?",
-        [client_id],
+        """
+        SELECT id, name, sex, age, height_cm, weight_kg, goal, injury_history
+        FROM clients
+        WHERE id = ? AND trainer_id = ?
+        """,
+        [client_id, trainer_id],
     ).df()
     if row.empty:
         raise HTTPException(status_code=404, detail=f"No client with id {client_id}")
@@ -32,7 +45,10 @@ def get_client(client_id: str, con=Depends(read_only_conn)) -> dict:
 
 
 @router.post("/api/clients")
-def post_client(payload: ClientCreate) -> dict:
+def post_client(
+    payload: ClientCreate,
+    trainer_id: str = Depends(current_trainer_id),
+) -> dict:
     """Create a new client. Returns the generated id so the front-end
     can navigate straight to the detail page."""
     client_id = f"c_{uuid.uuid4().hex[:12]}"
@@ -41,11 +57,12 @@ def post_client(payload: ClientCreate) -> dict:
             con.execute(
                 """
                 INSERT INTO clients
-                  (id, name, sex, age, height_cm, weight_kg, goal, injury_history, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                  (id, trainer_id, name, sex, age, height_cm, weight_kg, goal, injury_history, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 [
                     client_id,
+                    trainer_id,
                     payload.name,
                     payload.sex.value,
                     payload.age,
@@ -61,7 +78,11 @@ def post_client(payload: ClientCreate) -> dict:
 
 
 @router.patch("/api/clients/{client_id}")
-def patch_client(client_id: str, payload: ClientUpdate) -> dict:
+def patch_client(
+    client_id: str,
+    payload: ClientUpdate,
+    trainer_id: str = Depends(current_trainer_id),
+) -> dict:
     """Partial update. Builds the SET clause from only the fields the
     trainer touched so we don't overwrite values they left alone."""
     updates = payload.model_dump(exclude_none=True)
@@ -71,15 +92,19 @@ def patch_client(client_id: str, payload: ClientUpdate) -> dict:
         return {"ok": True, "updated": []}
 
     set_clause = ", ".join(f"{k} = ?" for k in updates)
-    values = [*updates.values(), client_id]
+    values = [*updates.values(), client_id, trainer_id]
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as con:
             existing = con.execute(
-                "SELECT 1 FROM clients WHERE id = ?", [client_id]
+                "SELECT 1 FROM clients WHERE id = ? AND trainer_id = ?",
+                [client_id, trainer_id],
             ).fetchone()
             if not existing:
                 raise HTTPException(status_code=404, detail=f"No client with id {client_id}")
-            con.execute(f"UPDATE clients SET {set_clause} WHERE id = ?", values)
+            con.execute(
+                f"UPDATE clients SET {set_clause} WHERE id = ? AND trainer_id = ?",
+                values,
+            )
     except duckdb.IOException as e:
         raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
     return {"ok": True, "updated": list(updates.keys())}

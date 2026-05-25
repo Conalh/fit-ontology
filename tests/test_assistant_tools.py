@@ -16,7 +16,13 @@ import pandas as pd
 import pytest
 
 from fit_ontology.assistant import TOOLS, AssistantTurn, _execute_tool, ask
-from fit_ontology.db import connect, ensure_client, insert_metrics, insert_sessions
+from fit_ontology.db import (
+    DEFAULT_TRAINER_ID,
+    connect,
+    ensure_client,
+    insert_metrics,
+    insert_sessions,
+)
 from fit_ontology.ontology import MetricKind
 
 
@@ -26,7 +32,7 @@ def seeded_db(tmp_path: Path) -> Path:
     a few sessions. Returned path is what the tools read from."""
     db_path = tmp_path / "fit_ontology.duckdb"
     con = connect(db_path)
-    ensure_client(con, "c_test", name="Test Client")
+    ensure_client(con, DEFAULT_TRAINER_ID, "c_test", name="Test Client")
 
     today = date.today()
     metric_rows = []
@@ -42,7 +48,7 @@ def seeded_db(tmp_path: Path) -> Path:
             "source": "garmin", "kind": MetricKind.SLEEP_HOURS.value,
             "value": 7.5, "unit": "h",
         })
-    insert_metrics(con, pd.DataFrame(metric_rows))
+    insert_metrics(con, DEFAULT_TRAINER_ID, pd.DataFrame(metric_rows))
 
     session_rows = []
     for i, offset in enumerate([2, 4, 6, 9, 11, 13]):
@@ -51,7 +57,7 @@ def seeded_db(tmp_path: Path) -> Path:
             "date": today - timedelta(days=offset),
             "type": "strength", "duration_min": 60, "rpe": 6, "notes": "",
         })
-    insert_sessions(con, pd.DataFrame(session_rows))
+    insert_sessions(con, DEFAULT_TRAINER_ID, pd.DataFrame(session_rows))
     con.close()
     return db_path
 
@@ -67,36 +73,36 @@ def test_tool_definitions_have_required_fields():
 
 
 def test_list_clients_returns_csv_with_seeded_client(seeded_db: Path):
-    out = _execute_tool("list_clients", {}, seeded_db)
+    out = _execute_tool("list_clients", {}, seeded_db, DEFAULT_TRAINER_ID)
     assert "c_test" in out
     assert "Test Client" in out
 
 
 def test_get_client_summary_returns_intake_row(seeded_db: Path):
-    out = _execute_tool("get_client_summary", {"client_id": "c_test"}, seeded_db)
+    out = _execute_tool("get_client_summary", {"client_id": "c_test"}, seeded_db, DEFAULT_TRAINER_ID)
     assert "c_test" in out
     assert "Test Client" in out
 
 
 def test_get_client_summary_handles_unknown_id(seeded_db: Path):
-    out = _execute_tool("get_client_summary", {"client_id": "c_missing"}, seeded_db)
+    out = _execute_tool("get_client_summary", {"client_id": "c_missing"}, seeded_db, DEFAULT_TRAINER_ID)
     assert "no client with id" in out.lower()
 
 
 def test_get_recent_metrics_returns_hrv_and_sleep(seeded_db: Path):
-    out = _execute_tool("get_recent_metrics", {"client_id": "c_test", "days": 7}, seeded_db)
+    out = _execute_tool("get_recent_metrics", {"client_id": "c_test", "days": 7}, seeded_db, DEFAULT_TRAINER_ID)
     assert MetricKind.HRV_RMSSD.value in out
     assert MetricKind.SLEEP_HOURS.value in out
 
 
 def test_get_recent_sessions_returns_session_rows(seeded_db: Path):
-    out = _execute_tool("get_recent_sessions", {"client_id": "c_test", "days": 14}, seeded_db)
+    out = _execute_tool("get_recent_sessions", {"client_id": "c_test", "days": 14}, seeded_db, DEFAULT_TRAINER_ID)
     assert "strength" in out
     assert "duration_min" in out
 
 
 def test_compute_recommendation_returns_structured_json(seeded_db: Path):
-    out = _execute_tool("compute_recommendation", {"client_id": "c_test"}, seeded_db)
+    out = _execute_tool("compute_recommendation", {"client_id": "c_test"}, seeded_db, DEFAULT_TRAINER_ID)
     parsed = json.loads(out)
     assert "recommendation" in parsed
     assert "rationale" in parsed
@@ -121,17 +127,17 @@ def test_get_recent_overrides_returns_csv(seeded_db: Path):
         trainer_note="Looks perfect",
         created_at=datetime.now(),
     )
-    insert_override(con, ov)
+    insert_override(con, DEFAULT_TRAINER_ID, ov)
     con.close()
 
-    out = _execute_tool("get_recent_overrides", {"client_id": "c_test", "limit": 5}, seeded_db)
+    out = _execute_tool("get_recent_overrides", {"client_id": "c_test", "limit": 5}, seeded_db, DEFAULT_TRAINER_ID)
     assert "c_test" in out
     assert "accept" in out
     assert "Looks perfect" in out
 
 
 def test_unknown_tool_name_returns_friendly_error(seeded_db: Path):
-    out = _execute_tool("definitely_not_a_tool", {}, seeded_db)
+    out = _execute_tool("definitely_not_a_tool", {}, seeded_db, DEFAULT_TRAINER_ID)
     assert "unknown tool" in out.lower()
 
 

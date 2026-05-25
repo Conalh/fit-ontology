@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 
 import duckdb
@@ -23,12 +24,28 @@ DEFAULT_DB_PATH = Path(
 )
 
 
+# ─── Phase 2a default trainer ────────────────────────────────────────
+#
+# Until real auth lands in Phase 2b, every request resolves to this
+# single trainer via the ``current_trainer_id`` FastAPI dependency,
+# and the migration assigns every pre-existing row to this id. The
+# email matches Conal's, so when SSO arrives in Phase 2b the row can
+# be linked to the real Google identity by email lookup rather than
+# needing a re-key. Override via the ``FIT_ONTOLOGY_DEFAULT_TRAINER_*``
+# env vars if a deployment seeds a different default.
+DEFAULT_TRAINER_ID = os.environ.get("FIT_ONTOLOGY_DEFAULT_TRAINER_ID", "t_default")
+DEFAULT_TRAINER_EMAIL = os.environ.get(
+    "FIT_ONTOLOGY_DEFAULT_TRAINER_EMAIL", "conal.hg@gmail.com"
+)
+DEFAULT_TRAINER_NAME = os.environ.get("FIT_ONTOLOGY_DEFAULT_TRAINER_NAME", "Conal")
+
+
 def connect(db_path: Path = DEFAULT_DB_PATH, *, read_only: bool = False) -> duckdb.DuckDBPyConnection:
     """Open a DuckDB connection. DuckDB allows only one writer per file
     across processes, so the dashboard should pass ``read_only=True`` to
-    coexist with a concurrent sync script. The schema DDL is skipped in
-    read-only mode (the file must already exist, which is fine for a
-    dashboard that only renders existing data)."""
+    coexist with a concurrent sync script. The schema DDL + migrations
+    are skipped in read-only mode (the file must already exist, which
+    is fine for a dashboard that only renders existing data)."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     if read_only and not db_path.exists():
         # Read-only against a missing file would be misleading; let the
@@ -37,44 +54,168 @@ def connect(db_path: Path = DEFAULT_DB_PATH, *, read_only: bool = False) -> duck
     con = duckdb.connect(str(db_path), read_only=read_only)
     if not read_only:
         con.execute(SCHEMA_DDL)
+        _run_migrations(con)
     return con
 
 
-def insert_clients(con, df: pd.DataFrame) -> None:
+def _run_migrations(con: duckdb.DuckDBPyConnection) -> None:
+    """Idempotent data migrations that complement SCHEMA_DDL.
+
+    SCHEMA_DDL handles structure (CREATE TABLE / ALTER ADD COLUMN /
+    CREATE INDEX, all guarded by IF NOT EXISTS so a re-run is a
+    no-op). This function handles *data* steps that DDL can't express
+    — currently just the Phase 2a multi-tenant backfill:
+
+    1. Seed the default trainer row if no trainer exists. We don't
+       INSERT-OR-IGNORE on a specific id because a deployment may
+       have overridden ``DEFAULT_TRAINER_ID``; the right invariant
+       is "there is at least one trainer," not "this exact id exists."
+    2. Backfill ``trainer_id`` on every client-data table where it's
+       still NULL (i.e. rows that predate Phase 2a). Assign them all
+       to the default trainer so the single-trainer dashboard keeps
+       rendering exactly the same data after the migration.
+
+    Both steps are safe to re-run: step 1 short-circuits if a trainer
+    already exists, step 2's WHERE filters to NULL-only rows.
+    """
+    # Step 1: ensure at least one trainer exists.
+    existing = con.execute("SELECT COUNT(*) FROM trainers").fetchone()
+    if existing and existing[0] == 0:
+        con.execute(
+            """
+            INSERT INTO trainers (id, email, name, hashed_password, created_at)
+            VALUES (?, ?, ?, NULL, ?)
+            """,
+            [DEFAULT_TRAINER_ID, DEFAULT_TRAINER_EMAIL, DEFAULT_TRAINER_NAME, datetime.utcnow()],
+        )
+
+    # Step 2: resolve which trainer to assign legacy rows to. If a
+    # deployment-supplied DEFAULT_TRAINER_ID matches an existing row,
+    # use it; otherwise fall back to whichever trainer is in the
+    # table (one-trainer assumption holds during Phase 2a). This
+    # protects against an env-var change that doesn't match the
+    # seeded row.
+    target = con.execute(
+        "SELECT id FROM trainers WHERE id = ? LIMIT 1", [DEFAULT_TRAINER_ID]
+    ).fetchone()
+    if not target:
+        target = con.execute("SELECT id FROM trainers LIMIT 1").fetchone()
+    if not target:
+        # No trainers at all — nothing to backfill against, and a
+        # NULL backfill would defeat the purpose. Bail silently;
+        # the next connect() (with the env var aligned) will fix it.
+        return
+    backfill_id = target[0]
+
+    for table in (
+        "clients",
+        "sessions",
+        "metrics",
+        "recommendations",
+        "recommendation_overrides",
+        "planned_sessions",
+        "client_thresholds",
+    ):
+        con.execute(
+            f"UPDATE {table} SET trainer_id = ? WHERE trainer_id IS NULL",
+            [backfill_id],
+        )
+
+
+# ─── Trainer-scoped helpers ───────────────────────────────────────────
+#
+# Every helper that reads or writes client-data takes ``trainer_id`` as
+# the FIRST data argument after ``con``. This is the chokepoint that
+# enforces multi-tenant isolation (roadmap Phase 2a): route code can't
+# accidentally leak across trainers because there is no helper that
+# operates without a trainer_id. Reads add a ``WHERE trainer_id = ?``
+# filter on the outermost query; writes persist trainer_id alongside
+# the row. Trainer-scoping is composed with client-scoping rather than
+# replacing it — a request for client X's metrics still filters on
+# client_id; the trainer_id gate just ensures client X actually belongs
+# to the calling trainer.
+
+
+def get_trainer_by_email(con, email: str):
+    """Return (id, email, name, created_at) for an existing trainer, or None."""
+    return con.execute(
+        "SELECT id, email, name, created_at FROM trainers WHERE email = ?",
+        [email],
+    ).fetchone()
+
+
+def insert_trainer(con, trainer_id: str, email: str, name: str,
+                   hashed_password: str | None = None) -> None:
+    """Create a trainer row. Used by tests and by the eventual sign-up
+    flow in Phase 2b. The default trainer is seeded by _run_migrations()
+    on first connect; this helper is for additional trainers."""
+    con.execute(
+        """
+        INSERT INTO trainers (id, email, name, hashed_password, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [trainer_id, email, name, hashed_password, datetime.utcnow()],
+    )
+
+
+def insert_clients(con, trainer_id: str, df: pd.DataFrame) -> None:
+    """Bulk insert of clients for one trainer. The helper stamps the
+    trainer_id column onto the df before write so a caller that forgot
+    to set it still produces correctly-scoped rows — the whole point of
+    routing every write through this layer."""
+    df = df.copy()
+    df["trainer_id"] = trainer_id
     con.execute("INSERT OR REPLACE INTO clients SELECT * FROM df")
 
 
-def ensure_client(con, client_id: str, name: str = "Self", sex: str = "other") -> None:
+def ensure_client(con, trainer_id: str, client_id: str,
+                  name: str = "Self", sex: str = "other") -> None:
     """
     Idempotently create a stub client row so foreign-key constraints on
     metrics/sessions don't reject a fresh sync against a brand-new client_id.
     The trainer can edit the row later via SQL or a future Streamlit form;
-    we just need a valid parent here.
+    we just need a valid parent here. Scoped by ``trainer_id`` so two
+    trainers can both have a client called "Self" without collision.
     """
-    existing = con.execute("SELECT 1 FROM clients WHERE id = ?", [client_id]).fetchone()
+    existing = con.execute(
+        "SELECT 1 FROM clients WHERE id = ? AND trainer_id = ?",
+        [client_id, trainer_id],
+    ).fetchone()
     if existing:
         return
     con.execute(
         """
-        INSERT INTO clients (id, name, sex, age, height_cm, weight_kg, goal, injury_history, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO clients
+          (id, trainer_id, name, sex, age, height_cm, weight_kg, goal, injury_history, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """,
-        [client_id, name, sex, 30, 170.0, 70.0, "(self)", None],
+        [client_id, trainer_id, name, sex, 30, 170.0, 70.0, "(self)", None],
     )
 
 
-def insert_sessions(con, df: pd.DataFrame) -> None:
+def insert_sessions(con, trainer_id: str, df: pd.DataFrame) -> None:
+    """Bulk insert of sessions for one trainer. See ``insert_clients``
+    for the trainer_id stamping rationale."""
+    df = df.copy()
+    df["trainer_id"] = trainer_id
     con.execute("INSERT OR REPLACE INTO sessions SELECT * FROM df")
 
 
-def insert_metrics(con, df: pd.DataFrame) -> None:
+def insert_metrics(con, trainer_id: str, df: pd.DataFrame) -> None:
+    """Bulk insert of metrics for one trainer. See ``insert_clients``
+    for the trainer_id stamping rationale."""
+    df = df.copy()
+    df["trainer_id"] = trainer_id
     con.execute("INSERT OR REPLACE INTO metrics SELECT * FROM df")
 
 
-def insert_recommendation(con, rec) -> None:
+def insert_recommendation(con, trainer_id: str, rec) -> None:
     con.execute(
         """
-        INSERT OR REPLACE INTO recommendations VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO recommendations
+          (id, client_id, generated_at, week_of, recommendation, rationale,
+           source_metric_ids, confidence, trainer_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             rec.id,
@@ -85,28 +226,39 @@ def insert_recommendation(con, rec) -> None:
             rec.rationale,
             json.dumps(rec.source_metric_ids),
             rec.confidence,
+            trainer_id,
         ],
     )
 
 
-def list_clients(con) -> pd.DataFrame:
-    return con.execute("SELECT id, name, goal FROM clients ORDER BY name").df()
+def list_clients(con, trainer_id: str) -> pd.DataFrame:
+    """Roster view: every client this trainer owns. The trainer_id
+    filter is the multi-tenant gate — without it the dashboard would
+    list every trainer's clients."""
+    return con.execute(
+        "SELECT id, name, goal FROM clients WHERE trainer_id = ? ORDER BY name",
+        [trainer_id],
+    ).df()
 
 
-def metrics_for_client(con, client_id: str, days: int = 14) -> pd.DataFrame:
+def metrics_for_client(con, trainer_id: str, client_id: str, days: int = 14) -> pd.DataFrame:
+    """Metrics for one client. Filters on both trainer_id and client_id:
+    the trainer_id gate prevents trainer B from reading trainer A's
+    metrics even if they happened to know the client_id."""
     return con.execute(
         f"""
         SELECT date, source, kind, value, unit, id
         FROM metrics
-        WHERE client_id = ?
+        WHERE trainer_id = ?
+          AND client_id = ?
           AND date >= CURRENT_DATE - INTERVAL '{days}' DAY
         ORDER BY date
         """,
-        [client_id],
+        [trainer_id, client_id],
     ).df()
 
 
-def sessions_for_client(con, client_id: str, days: int = 14) -> pd.DataFrame:
+def sessions_for_client(con, trainer_id: str, client_id: str, days: int = 14) -> pd.DataFrame:
     """Include the session ``id`` in the result so reasoning signals that
     derive from sessions (ACWR, RPE drift) can attach source IDs to
     their output — closing the same audit-trail loop the metrics-based
@@ -115,31 +267,33 @@ def sessions_for_client(con, client_id: str, days: int = 14) -> pd.DataFrame:
         f"""
         SELECT id, date, type, duration_min, rpe, notes
         FROM sessions
-        WHERE client_id = ?
+        WHERE trainer_id = ?
+          AND client_id = ?
           AND date >= CURRENT_DATE - INTERVAL '{days}' DAY
         ORDER BY date
         """,
-        [client_id],
+        [trainer_id, client_id],
     ).df()
 
 
-def latest_recommendation(con, client_id: str) -> pd.DataFrame:
+def latest_recommendation(con, trainer_id: str, client_id: str) -> pd.DataFrame:
     return con.execute(
         """
         SELECT recommendation, rationale, source_metric_ids, confidence, generated_at, week_of
         FROM recommendations
-        WHERE client_id = ?
+        WHERE trainer_id = ? AND client_id = ?
         ORDER BY generated_at DESC
         LIMIT 1
         """,
-        [client_id],
+        [trainer_id, client_id],
     ).df()
 
 
-def recommendation_for_week(con, client_id: str, week_of):
-    """Return the stored Recommendation for this (client, week) or None.
-    Hydrates the JSON source_metric_ids back into a list, so callers
-    get the same shape ``generate_recommendation`` produces in memory."""
+def recommendation_for_week(con, trainer_id: str, client_id: str, week_of):
+    """Return the stored Recommendation for this (trainer, client, week)
+    or None. Hydrates the JSON source_metric_ids back into a list, so
+    callers get the same shape ``generate_recommendation`` produces in
+    memory."""
     from .ontology import Recommendation
 
     row = con.execute(
@@ -147,10 +301,10 @@ def recommendation_for_week(con, client_id: str, week_of):
         SELECT id, client_id, generated_at, week_of, recommendation, rationale,
                source_metric_ids, confidence
         FROM recommendations
-        WHERE client_id = ? AND week_of = ?
+        WHERE trainer_id = ? AND client_id = ? AND week_of = ?
         LIMIT 1
         """,
-        [client_id, week_of],
+        [trainer_id, client_id, week_of],
     ).fetchone()
     if not row:
         return None
@@ -167,7 +321,7 @@ def recommendation_for_week(con, client_id: str, week_of):
     )
 
 
-def recommendations_for_client(con, client_id: str, limit: int = 12) -> pd.DataFrame:
+def recommendations_for_client(con, trainer_id: str, client_id: str, limit: int = 12) -> pd.DataFrame:
     """All stored weekly recommendations for a client, newest first.
     Drives the history view on the detail page."""
     return con.execute(
@@ -175,11 +329,11 @@ def recommendations_for_client(con, client_id: str, limit: int = 12) -> pd.DataF
         SELECT id, client_id, week_of, recommendation, rationale,
                source_metric_ids, confidence, generated_at
         FROM recommendations
-        WHERE client_id = ?
+        WHERE trainer_id = ? AND client_id = ?
         ORDER BY week_of DESC
         LIMIT ?
         """,
-        [client_id, limit],
+        [trainer_id, client_id, limit],
     ).df()
 
 
@@ -191,13 +345,13 @@ def recommendations_for_client(con, client_id: str, limit: int = 12) -> pd.DataF
 # first time an override is written (which opens write mode, where the
 # IF NOT EXISTS DDL runs as part of connect()).
 
-def insert_override(con, ov) -> None:
+def insert_override(con, trainer_id: str, ov) -> None:
     con.execute(
         """
         INSERT INTO recommendation_overrides
         (id, client_id, week_of, system_recommendation, system_confidence,
-         trainer_action, applied_load_change_pct, trainer_note, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         trainer_action, applied_load_change_pct, trainer_note, created_at, trainer_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             ov.id,
@@ -209,6 +363,7 @@ def insert_override(con, ov) -> None:
             ov.applied_load_change_pct,
             ov.trainer_note,
             ov.created_at,
+            trainer_id,
         ],
     )
 
@@ -229,7 +384,7 @@ def _empty_overrides_df() -> pd.DataFrame:
     )
 
 
-def overrides_for_client(con, client_id: str, limit: int = 50) -> pd.DataFrame:
+def overrides_for_client(con, trainer_id: str, client_id: str, limit: int = 50) -> pd.DataFrame:
     """All overrides for a client, newest first. Empty if the table
     doesn't exist yet (pre-migration DB)."""
     try:
@@ -238,29 +393,29 @@ def overrides_for_client(con, client_id: str, limit: int = 50) -> pd.DataFrame:
             SELECT id, client_id, week_of, system_recommendation, system_confidence,
                    trainer_action, applied_load_change_pct, trainer_note, created_at
             FROM recommendation_overrides
-            WHERE client_id = ?
+            WHERE trainer_id = ? AND client_id = ?
             ORDER BY created_at DESC
             LIMIT ?
             """,
-            [client_id, limit],
+            [trainer_id, client_id, limit],
         ).df()
     except duckdb.CatalogException:
         return _empty_overrides_df()
 
 
-def latest_override_for_week(con, client_id: str, week_of) -> pd.DataFrame:
-    """The most recent override for (client_id, week_of), or empty."""
+def latest_override_for_week(con, trainer_id: str, client_id: str, week_of) -> pd.DataFrame:
+    """The most recent override for (trainer, client, week), or empty."""
     try:
         return con.execute(
             """
             SELECT id, client_id, week_of, system_recommendation, system_confidence,
                    trainer_action, applied_load_change_pct, trainer_note, created_at
             FROM recommendation_overrides
-            WHERE client_id = ? AND week_of = ?
+            WHERE trainer_id = ? AND client_id = ? AND week_of = ?
             ORDER BY created_at DESC
             LIMIT 1
             """,
-            [client_id, week_of],
+            [trainer_id, client_id, week_of],
         ).df()
     except duckdb.CatalogException:
         return _empty_overrides_df()
@@ -273,47 +428,58 @@ def latest_override_for_week(con, client_id: str, week_of) -> pd.DataFrame:
 # population default from reasoning.DEFAULT_THRESHOLDS. Reads tolerate
 # a missing table for pre-migration DBs.
 
-def thresholds_for_client(con, client_id: str) -> dict[str, float]:
+def thresholds_for_client(con, trainer_id: str, client_id: str) -> dict[str, float]:
     try:
         rows = con.execute(
-            "SELECT name, value FROM client_thresholds WHERE client_id = ?",
-            [client_id],
+            "SELECT name, value FROM client_thresholds WHERE trainer_id = ? AND client_id = ?",
+            [trainer_id, client_id],
         ).fetchall()
         return {name: float(value) for name, value in rows}
     except duckdb.CatalogException:
         return {}
 
 
-def upsert_threshold(con, client_id: str, name: str, value: float) -> None:
+def upsert_threshold(con, trainer_id: str, client_id: str, name: str, value: float) -> None:
+    # The PK is (client_id, name) — adding trainer_id to the conflict
+    # target would change PK semantics (and DuckDB would reject it).
+    # We rely on (trainer_id, client_id) being effectively unique:
+    # client_id is a uuid'd column, so two trainers can't collide on
+    # it in practice. Trainer_id is set on both INSERT and UPDATE so a
+    # mistakenly-passed cross-trainer client_id at least writes the
+    # caller's trainer_id, surfacing the bug on the next read.
     con.execute(
         """
-        INSERT INTO client_thresholds (client_id, name, value)
-        VALUES (?, ?, ?)
-        ON CONFLICT (client_id, name) DO UPDATE SET value = EXCLUDED.value
+        INSERT INTO client_thresholds (client_id, name, value, trainer_id)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT (client_id, name) DO UPDATE
+          SET value = EXCLUDED.value,
+              trainer_id = EXCLUDED.trainer_id
         """,
-        [client_id, name, value],
+        [client_id, name, value, trainer_id],
     )
 
 
-def delete_threshold(con, client_id: str, name: str) -> None:
+def delete_threshold(con, trainer_id: str, client_id: str, name: str) -> None:
     con.execute(
-        "DELETE FROM client_thresholds WHERE client_id = ? AND name = ?",
-        [client_id, name],
+        "DELETE FROM client_thresholds WHERE trainer_id = ? AND client_id = ? AND name = ?",
+        [trainer_id, client_id, name],
     )
 
 
-def all_overrides(con, limit: int = 1000) -> pd.DataFrame:
-    """All overrides across clients — for the calibration page."""
+def all_overrides(con, trainer_id: str, limit: int = 1000) -> pd.DataFrame:
+    """All overrides for a trainer across all their clients — for the
+    calibration page."""
     try:
         return con.execute(
             """
             SELECT id, client_id, week_of, system_recommendation, system_confidence,
                    trainer_action, applied_load_change_pct, trainer_note, created_at
             FROM recommendation_overrides
+            WHERE trainer_id = ?
             ORDER BY created_at DESC
             LIMIT ?
             """,
-            [limit],
+            [trainer_id, limit],
         ).df()
     except duckdb.CatalogException:
         return _empty_overrides_df()
@@ -321,17 +487,25 @@ def all_overrides(con, limit: int = 1000) -> pd.DataFrame:
 
 # ─── Planned sessions (weekly plan) ──────────────────────────────────
 
-def upsert_planned_session(con, ps) -> None:
+def upsert_planned_session(con, trainer_id: str, ps) -> None:
     """Insert or replace a single planned-session row. Used both during
     initial engine generation and for trainer edits (a PATCH on a slot).
     Source string and contraindications JSON live in the row alongside
-    the structured fields so a reload doesn't need to re-derive them."""
+    the structured fields so a reload doesn't need to re-derive them.
+
+    Explicit column list (instead of positional VALUES) so adding new
+    columns — trainer_id today, more tomorrow — doesn't silently
+    misalign with the table definition."""
     from .planning import serialize_contraindications
 
     con.execute(
         """
-        INSERT OR REPLACE INTO planned_sessions VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO planned_sessions
+          (id, client_id, week_of, slot, type, title, description,
+           target_duration_min, target_load_au, target_rpe,
+           contraindications, source, generated_at, executed_session_id, trainer_id)
+        VALUES
+          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             ps.id,
@@ -348,27 +522,28 @@ def upsert_planned_session(con, ps) -> None:
             ps.source.value if hasattr(ps.source, "value") else str(ps.source),
             ps.generated_at,
             ps.executed_session_id,
+            trainer_id,
         ],
     )
 
 
-def insert_plan(con, planned_sessions) -> None:
+def insert_plan(con, trainer_id: str, planned_sessions) -> None:
     """Persist a freshly-generated plan (list of PlannedSession). Wraps
     individual upserts so a partial failure leaves the DB in a usable
     state — each slot is independent."""
     for ps in planned_sessions:
-        upsert_planned_session(con, ps)
+        upsert_planned_session(con, trainer_id, ps)
 
 
-def match_planned_sessions(con, client_id: str) -> int:
+def match_planned_sessions(con, trainer_id: str, client_id: str) -> int:
     """Link unmatched sessions to unmatched planned_sessions slots.
 
-    For each session belonging to ``client_id`` that isn't yet linked to
-    a planned slot, look up the slots for that session's week and pick
-    one: prefer same ``type`` first, then lowest ``slot`` number. If a
-    match is found, write the session id into the slot's
-    ``executed_session_id``. Idempotent — sessions already linked are
-    skipped. Returns the number of new links made.
+    For each session belonging to ``(trainer_id, client_id)`` that
+    isn't yet linked to a planned slot, look up the slots for that
+    session's week and pick one: prefer same ``type`` first, then
+    lowest ``slot`` number. If a match is found, write the session id
+    into the slot's ``executed_session_id``. Idempotent — sessions
+    already linked are skipped. Returns the number of new links made.
 
     Closes the plan-vs-execution telemetry loop: once a real session
     lands (via Garmin sync, upload, manual entry), the matcher records
@@ -387,10 +562,10 @@ def match_planned_sessions(con, client_id: str) -> int:
             SELECT s.id, s.date, s.type
             FROM sessions s
             LEFT JOIN planned_sessions ps ON ps.executed_session_id = s.id
-            WHERE s.client_id = ? AND ps.id IS NULL
+            WHERE s.trainer_id = ? AND s.client_id = ? AND ps.id IS NULL
             ORDER BY s.date
             """,
-            [client_id],
+            [trainer_id, client_id],
         ).fetchall()
     except duckdb.CatalogException:
         # planned_sessions table doesn't exist yet (pre-migration)
@@ -411,7 +586,8 @@ def match_planned_sessions(con, client_id: str) -> int:
         match = con.execute(
             """
             SELECT id FROM planned_sessions
-            WHERE client_id = ?
+            WHERE trainer_id = ?
+              AND client_id = ?
               AND week_of = ?
               AND executed_session_id IS NULL
             ORDER BY
@@ -419,7 +595,7 @@ def match_planned_sessions(con, client_id: str) -> int:
                 slot
             LIMIT 1
             """,
-            [client_id, week_of, session_type],
+            [trainer_id, client_id, week_of, session_type],
         ).fetchone()
 
         if match:
@@ -431,9 +607,10 @@ def match_planned_sessions(con, client_id: str) -> int:
     return linked
 
 
-def plan_for_week(con, client_id: str, week_of):
-    """Return the list of PlannedSession rows for ``(client_id, week_of)``,
-    ordered by slot. Empty list if no plan persisted yet."""
+def plan_for_week(con, trainer_id: str, client_id: str, week_of):
+    """Return the list of PlannedSession rows for ``(trainer_id,
+    client_id, week_of)``, ordered by slot. Empty list if no plan
+    persisted yet."""
     from .ontology import PlannedSession, PlanSource, SessionType
     from .planning import parse_contraindications
 
@@ -444,10 +621,10 @@ def plan_for_week(con, client_id: str, week_of):
                    target_duration_min, target_load_au, target_rpe,
                    contraindications, source, generated_at, executed_session_id
             FROM planned_sessions
-            WHERE client_id = ? AND week_of = ?
+            WHERE trainer_id = ? AND client_id = ? AND week_of = ?
             ORDER BY slot
             """,
-            [client_id, week_of],
+            [trainer_id, client_id, week_of],
         ).fetchall()
     except duckdb.CatalogException:
         # Pre-migration DB

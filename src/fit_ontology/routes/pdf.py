@@ -7,22 +7,28 @@ from fastapi.responses import Response
 from ..db import metrics_for_client, sessions_for_client
 from ..reasoning import generate_recommendation
 from ..report import build_weekly_pdf
-from .deps import read_only_conn
+from .deps import current_trainer_id, read_only_conn
 from .schemas import PdfRequest
 
 router = APIRouter()
 
 
 @router.post("/api/clients/{client_id}/pdf")
-def post_pdf(client_id: str, payload: PdfRequest, con=Depends(read_only_conn)) -> Response:
+def post_pdf(
+    client_id: str,
+    payload: PdfRequest,
+    con=Depends(read_only_conn),
+    trainer_id: str = Depends(current_trainer_id),
+) -> Response:
     row = con.execute(
-        "SELECT name, goal FROM clients WHERE id = ?", [client_id]
+        "SELECT name, goal FROM clients WHERE id = ? AND trainer_id = ?",
+        [client_id, trainer_id],
     ).df()
     if row.empty:
         raise HTTPException(status_code=404, detail=f"No client with id {client_id}")
 
-    metrics = metrics_for_client(con, client_id, days=35)
-    sessions = sessions_for_client(con, client_id, days=35)
+    metrics = metrics_for_client(con, trainer_id, client_id, days=35)
+    sessions = sessions_for_client(con, trainer_id, client_id, days=35)
     rec = generate_recommendation(client_id, metrics, sessions)
 
     pdf_bytes = build_weekly_pdf(

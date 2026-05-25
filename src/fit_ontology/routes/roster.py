@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 
 from ..db import list_clients, metrics_for_client, sessions_for_client
 from ..reasoning import generate_recommendation
-from .deps import read_only_conn
+from .deps import current_trainer_id, read_only_conn
 from .helpers import classify_rec
 from .schemas import RosterRow
 
@@ -16,11 +16,14 @@ router = APIRouter()
 
 
 @router.get("/api/roster", response_model=list[RosterRow])
-def get_roster(con=Depends(read_only_conn)) -> list[RosterRow]:
+def get_roster(
+    con=Depends(read_only_conn),
+    trainer_id: str = Depends(current_trainer_id),
+) -> list[RosterRow]:
     """Computed roster: one row per client with the recommendation
     label, flag kinds, and freshness. The frontend handles sorting and
     presentation — we just hand over structured data."""
-    clients = list_clients(con)
+    clients = list_clients(con, trainer_id)
     if clients.empty:
         return []
 
@@ -29,8 +32,8 @@ def get_roster(con=Depends(read_only_conn)) -> list[RosterRow]:
 
     for _, client in clients.iterrows():
         cid = client["id"]
-        metrics = metrics_for_client(con, cid, days=28)
-        sessions = sessions_for_client(con, cid, days=28)
+        metrics = metrics_for_client(con, trainer_id, cid, days=28)
+        sessions = sessions_for_client(con, trainer_id, cid, days=28)
 
         last_days: int | None = None
         if not metrics.empty:

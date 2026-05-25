@@ -174,20 +174,24 @@ def _df_brief(df: pd.DataFrame, max_rows: int = 30) -> str:
     return prefix + df.to_csv(index=False)
 
 
-def _tool_list_clients(db_path: Path) -> str:
+def _tool_list_clients(db_path: Path, trainer_id: str) -> str:
     con = connect(db_path, read_only=True)
-    clients = list_clients(con)
+    clients = list_clients(con, trainer_id)
     con.close()
     if clients.empty:
         return "(no clients in the database)"
     return clients.to_csv(index=False)
 
 
-def _tool_get_client_summary(db_path: Path, client_id: str) -> str:
+def _tool_get_client_summary(db_path: Path, trainer_id: str, client_id: str) -> str:
     con = connect(db_path, read_only=True)
     row = con.execute(
-        "SELECT id, name, sex, age, height_cm, weight_kg, goal, injury_history FROM clients WHERE id = ?",
-        [client_id],
+        """
+        SELECT id, name, sex, age, height_cm, weight_kg, goal, injury_history
+        FROM clients
+        WHERE id = ? AND trainer_id = ?
+        """,
+        [client_id, trainer_id],
     ).df()
     con.close()
     if row.empty:
@@ -195,24 +199,24 @@ def _tool_get_client_summary(db_path: Path, client_id: str) -> str:
     return row.to_csv(index=False)
 
 
-def _tool_get_recent_metrics(db_path: Path, client_id: str, days: int = 21) -> str:
+def _tool_get_recent_metrics(db_path: Path, trainer_id: str, client_id: str, days: int = 21) -> str:
     con = connect(db_path, read_only=True)
-    df = metrics_for_client(con, client_id, days=days)
+    df = metrics_for_client(con, trainer_id, client_id, days=days)
     con.close()
     return _df_brief(df)
 
 
-def _tool_get_recent_sessions(db_path: Path, client_id: str, days: int = 21) -> str:
+def _tool_get_recent_sessions(db_path: Path, trainer_id: str, client_id: str, days: int = 21) -> str:
     con = connect(db_path, read_only=True)
-    df = sessions_for_client(con, client_id, days=days)
+    df = sessions_for_client(con, trainer_id, client_id, days=days)
     con.close()
     return _df_brief(df)
 
 
-def _tool_compute_recommendation(db_path: Path, client_id: str) -> str:
+def _tool_compute_recommendation(db_path: Path, trainer_id: str, client_id: str) -> str:
     con = connect(db_path, read_only=True)
-    metrics = metrics_for_client(con, client_id, days=35)   # 28d baseline window + slack
-    sessions = sessions_for_client(con, client_id, days=35)
+    metrics = metrics_for_client(con, trainer_id, client_id, days=35)   # 28d baseline window + slack
+    sessions = sessions_for_client(con, trainer_id, client_id, days=35)
     con.close()
     rec = generate_recommendation(client_id, metrics, sessions)
     return json.dumps({
@@ -224,26 +228,26 @@ def _tool_compute_recommendation(db_path: Path, client_id: str) -> str:
     })
 
 
-def _tool_get_recent_overrides(db_path: Path, client_id: str, limit: int = 10) -> str:
+def _tool_get_recent_overrides(db_path: Path, trainer_id: str, client_id: str, limit: int = 10) -> str:
     con = connect(db_path, read_only=True)
-    df = overrides_for_client(con, client_id, limit=limit)
+    df = overrides_for_client(con, trainer_id, client_id, limit=limit)
     con.close()
     return _df_brief(df)
 
 
-def _execute_tool(name: str, arguments: dict[str, Any], db_path: Path) -> str:
+def _execute_tool(name: str, arguments: dict[str, Any], db_path: Path, trainer_id: str) -> str:
     if name == "list_clients":
-        return _tool_list_clients(db_path)
+        return _tool_list_clients(db_path, trainer_id)
     if name == "get_client_summary":
-        return _tool_get_client_summary(db_path, arguments["client_id"])
+        return _tool_get_client_summary(db_path, trainer_id, arguments["client_id"])
     if name == "get_recent_metrics":
-        return _tool_get_recent_metrics(db_path, arguments["client_id"], arguments.get("days", 21))
+        return _tool_get_recent_metrics(db_path, trainer_id, arguments["client_id"], arguments.get("days", 21))
     if name == "get_recent_sessions":
-        return _tool_get_recent_sessions(db_path, arguments["client_id"], arguments.get("days", 21))
+        return _tool_get_recent_sessions(db_path, trainer_id, arguments["client_id"], arguments.get("days", 21))
     if name == "compute_recommendation":
-        return _tool_compute_recommendation(db_path, arguments["client_id"])
+        return _tool_compute_recommendation(db_path, trainer_id, arguments["client_id"])
     if name == "get_recent_overrides":
-        return _tool_get_recent_overrides(db_path, arguments["client_id"], arguments.get("limit", 10))
+        return _tool_get_recent_overrides(db_path, trainer_id, arguments["client_id"], arguments.get("limit", 10))
     return f"(unknown tool: {name})"
 
 
@@ -268,6 +272,7 @@ def _summarize_result(name: str, result: str) -> str:
 def ask(
     question: str,
     *,
+    trainer_id: str | None = None,
     history: Iterable[dict] | None = None,
     db_path: Path = DEFAULT_DB_PATH,
     model: str = DEFAULT_MODEL,
@@ -275,10 +280,20 @@ def ask(
 ) -> AssistantTurn:
     """Ask one question and run the tool-use loop to completion.
 
+    ``trainer_id`` scopes every tool call to one trainer's data — the
+    assistant never sees another trainer's clients. Defaults to the
+    Phase 2a default trainer so existing single-trainer callers (CLI
+    scripts, tests) keep working without an argument.
+
     ``history`` is a list of prior message dicts (in Anthropic Messages
     format) so a multi-turn chat can persist context. Pass None for a
     fresh conversation.
     """
+    # Resolve at call time (not import time) so a test that monkey-patches
+    # DEFAULT_TRAINER_ID picks up the override.
+    if trainer_id is None:
+        from .db import DEFAULT_TRAINER_ID
+        trainer_id = DEFAULT_TRAINER_ID
     import anthropic  # local import keeps the package importable without the SDK
 
     api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "").strip()
@@ -325,7 +340,7 @@ def ask(
         # back as a single user-role tool_result message.
         tool_results: list[dict] = []
         for block in tool_use_blocks:
-            result = _execute_tool(block.name, block.input, db_path)
+            result = _execute_tool(block.name, block.input, db_path, trainer_id)
             traces.append(ToolTrace(
                 name=block.name,
                 arguments=block.input,

@@ -1,21 +1,26 @@
 """Ask FitOntology — Claude-powered conversational layer."""
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from .deps import current_trainer_id
 from .schemas import AskRequest, AskResponse, AskTrace
 
 router = APIRouter()
 
 
 @router.post("/api/ask", response_model=AskResponse)
-def post_ask(payload: AskRequest) -> AskResponse:
+def post_ask(
+    payload: AskRequest,
+    trainer_id: str = Depends(current_trainer_id),
+) -> AskResponse:
     """Run one turn of the Ask FitOntology tool-use loop.
 
     Wraps fit_ontology.assistant.ask(); the client passes back the
     prior turn's ``messages`` as ``history`` to keep multi-turn context
     (tool_use + tool_result blocks intact). Same model + system prompt
-    + tool set as the Streamlit page used.
+    + tool set as the Streamlit page used. trainer_id scopes every
+    tool call so the assistant can only ever see this trainer's data.
     """
     # Local import keeps the anthropic SDK optional at module-import time —
     # users without an API key can still run the rest of the API.
@@ -24,6 +29,7 @@ def post_ask(payload: AskRequest) -> AskResponse:
     try:
         turn = ask(
             payload.question,
+            trainer_id=trainer_id,
             history=payload.history or None,
             model=payload.model or DEFAULT_MODEL,
         )

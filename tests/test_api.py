@@ -14,7 +14,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 import fit_ontology.api as api_mod
-from fit_ontology.db import connect, ensure_client, insert_metrics, insert_sessions
+from fit_ontology.db import (
+    DEFAULT_TRAINER_ID,
+    connect,
+    ensure_client,
+    insert_metrics,
+    insert_sessions,
+)
 from fit_ontology.ontology import MetricKind
 from fit_ontology.routes import (
     clients as clients_routes,
@@ -34,7 +40,10 @@ def app_with_db(tmp_path: Path, monkeypatch):
     db_path = tmp_path / "fit_ontology.duckdb"
 
     con = connect(db_path)
-    ensure_client(con, "c_test", name="Test Client")
+    # The migration in connect() has already seeded DEFAULT_TRAINER_ID.
+    # The API dependency current_trainer_id() returns the same id, so
+    # routes will read this seeded client without further wiring.
+    ensure_client(con, DEFAULT_TRAINER_ID, "c_test", name="Test Client")
 
     today = date.today()
     metric_rows = []
@@ -50,7 +59,7 @@ def app_with_db(tmp_path: Path, monkeypatch):
             "source": "garmin", "kind": MetricKind.SLEEP_HOURS.value,
             "value": 7.5, "unit": "h",
         })
-    insert_metrics(con, pd.DataFrame(metric_rows))
+    insert_metrics(con, DEFAULT_TRAINER_ID, pd.DataFrame(metric_rows))
 
     session_rows = []
     for i, offset in enumerate([2, 4, 6, 9, 11, 13]):
@@ -59,7 +68,7 @@ def app_with_db(tmp_path: Path, monkeypatch):
             "date": today - timedelta(days=offset),
             "type": "strength", "duration_min": 60, "rpe": 6, "notes": "",
         })
-    insert_sessions(con, pd.DataFrame(session_rows))
+    insert_sessions(con, DEFAULT_TRAINER_ID, pd.DataFrame(session_rows))
     con.close()
 
     # Each route module did ``from ..db import DEFAULT_DB_PATH`` at load

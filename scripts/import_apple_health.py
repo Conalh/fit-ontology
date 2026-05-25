@@ -23,7 +23,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from fit_ontology.db import connect, ensure_client, insert_metrics
+from fit_ontology.db import DEFAULT_TRAINER_ID, connect, ensure_client, insert_metrics
 from fit_ontology.ingest import from_apple_health_export
 
 
@@ -55,8 +55,8 @@ def main() -> int:
         return 0
 
     with connect(read_only=False) as con:
-        ensure_client(con, args.client_id, name=args.client_name)
-        insert_metrics(con, metrics)
+        ensure_client(con, DEFAULT_TRAINER_ID, args.client_id, name=args.client_name)
+        insert_metrics(con, DEFAULT_TRAINER_ID, metrics)
 
     print("Done. Open the Streamlit dashboard to see the data.")
     return 0

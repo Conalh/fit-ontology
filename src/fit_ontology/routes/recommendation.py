@@ -20,14 +20,17 @@ from ..db import (
     thresholds_for_client,
 )
 from ..reasoning import FLAG_CITATIONS, compute_recovery_score, generate_recommendation
-from .deps import read_only_conn
+from .deps import current_trainer_id, read_only_conn
 from .schemas import ContraindicationItem, RecommendationResponse, RecoveryScoreResponse
 
 router = APIRouter()
 
 
 @router.get("/api/clients/{client_id}/recommendation", response_model=RecommendationResponse)
-def get_recommendation(client_id: str) -> RecommendationResponse:
+def get_recommendation(
+    client_id: str,
+    trainer_id: str = Depends(current_trainer_id),
+) -> RecommendationResponse:
     """Return the recommendation for the current week, persisting it on
     first compute so subsequent lookups are stable.
 
@@ -58,15 +61,16 @@ def get_recommendation(client_id: str) -> RecommendationResponse:
     overrides: dict | None = None
 
     with connect(DEFAULT_DB_PATH, read_only=True) as rcon:
-        stored = recommendation_for_week(rcon, client_id, week_of)
+        stored = recommendation_for_week(rcon, trainer_id, client_id, week_of)
         injury_row = rcon.execute(
-            "SELECT injury_history FROM clients WHERE id = ?", [client_id]
+            "SELECT injury_history FROM clients WHERE id = ? AND trainer_id = ?",
+            [client_id, trainer_id],
         ).fetchone()
         injury = injury_row[0] if injury_row else None
 
-        metrics = metrics_for_client(rcon, client_id, days=35)
-        sessions = sessions_for_client(rcon, client_id, days=35)
-        overrides = thresholds_for_client(rcon, client_id)
+        metrics = metrics_for_client(rcon, trainer_id, client_id, days=35)
+        sessions = sessions_for_client(rcon, trainer_id, client_id, days=35)
+        overrides = thresholds_for_client(rcon, trainer_id, client_id)
 
         if stored is not None:
             rec = stored
@@ -77,7 +81,7 @@ def get_recommendation(client_id: str) -> RecommendationResponse:
     if needs_persist:
         try:
             with connect(DEFAULT_DB_PATH, read_only=False) as wcon:
-                insert_recommendation(wcon, rec)
+                insert_recommendation(wcon, trainer_id, rec)
         except duckdb.IOException as e:
             raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
 
@@ -117,13 +121,14 @@ def get_recommendation_history(
     client_id: str,
     limit: int = 12,
     con=Depends(read_only_conn),
+    trainer_id: str = Depends(current_trainer_id),
 ) -> list[RecommendationResponse]:
     """Past weekly recommendations, newest first. Contraindications
     are not historical — they're derived from the current intake — so
     each row's ``contraindications`` field is the empty list. Callers
     that need contraindications should hit /recommendation for the
     current week."""
-    df = recommendations_for_client(con, client_id, limit=limit)
+    df = recommendations_for_client(con, trainer_id, client_id, limit=limit)
     if df.empty:
         return []
     out: list[RecommendationResponse] = []

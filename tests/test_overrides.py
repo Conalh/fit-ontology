@@ -17,6 +17,7 @@ from pathlib import Path
 import duckdb
 
 from fit_ontology.db import (
+    DEFAULT_TRAINER_ID,
     connect,
     insert_override,
     latest_override_for_week,
@@ -26,13 +27,15 @@ from fit_ontology.ontology import OverrideAction, RecommendationOverride
 
 
 def _seed_client(con, client_id: str = "c_test") -> str:
+    # Direct raw-SQL seed to bypass ensure_client; pin to the default
+    # trainer so the scoped readers below find the row.
     con.execute(
         """
         INSERT OR REPLACE INTO clients
-            (id, name, sex, age, height_cm, weight_kg, goal, injury_history, created_at)
-        VALUES (?, 'Test Client', 'other', 30, 170.0, 70.0, 'test', NULL, CURRENT_TIMESTAMP)
+            (id, trainer_id, name, sex, age, height_cm, weight_kg, goal, injury_history, created_at)
+        VALUES (?, ?, 'Test Client', 'other', 30, 170.0, 70.0, 'test', NULL, CURRENT_TIMESTAMP)
         """,
-        [client_id],
+        [client_id, DEFAULT_TRAINER_ID],
     )
     return client_id
 
@@ -64,18 +67,18 @@ def test_override_roundtrip(tmp_path: Path) -> None:
             applied_load_change_pct=-10.0,
             trainer_note="travel week",
         )
-        insert_override(con, ov)
+        insert_override(con, DEFAULT_TRAINER_ID, ov)
 
     # Reopen read-only — the override should survive.
     with connect(db_path, read_only=True) as con:
-        latest = latest_override_for_week(con, client_id, week_of)
+        latest = latest_override_for_week(con, DEFAULT_TRAINER_ID, client_id, week_of)
         assert len(latest) == 1
         row = latest.iloc[0]
         assert row["trainer_action"] == "edit"
         assert row["applied_load_change_pct"] == -10.0
         assert row["trainer_note"] == "travel week"
 
-        history = overrides_for_client(con, client_id)
+        history = overrides_for_client(con, DEFAULT_TRAINER_ID, client_id)
         assert len(history) == 1
 
 
@@ -87,21 +90,21 @@ def test_latest_override_returns_most_recent(tmp_path: Path) -> None:
 
     with connect(db_path, read_only=False) as con:
         client_id = _seed_client(con)
-        insert_override(con, _make_override(
+        insert_override(con, DEFAULT_TRAINER_ID, _make_override(
             client_id, week_of, OverrideAction.ACCEPT,
             created_at=datetime(2026, 5, 19, 9, 0, 0),
         ))
-        insert_override(con, _make_override(
+        insert_override(con, DEFAULT_TRAINER_ID, _make_override(
             client_id, week_of, OverrideAction.REJECT,
             trainer_note="client called sick",
             created_at=datetime(2026, 5, 20, 14, 30, 0),
         ))
 
     with connect(db_path, read_only=True) as con:
-        latest = latest_override_for_week(con, client_id, week_of)
+        latest = latest_override_for_week(con, DEFAULT_TRAINER_ID, client_id, week_of)
         assert latest.iloc[0]["trainer_action"] == "reject"
 
-        history = overrides_for_client(con, client_id)
+        history = overrides_for_client(con, DEFAULT_TRAINER_ID, client_id)
         assert len(history) == 2  # both preserved
 
 
@@ -126,10 +129,12 @@ def test_reader_tolerates_missing_table(tmp_path: Path) -> None:
     raw.close()
 
     # Reopen read-only — should NOT auto-create the overrides table.
+    # The trainer_id argument is irrelevant here: the CatalogException
+    # fires before any WHERE clause is evaluated.
     raw_ro = duckdb.connect(str(db_path), read_only=True)
     try:
-        history = overrides_for_client(raw_ro, "c_legacy")
-        latest = latest_override_for_week(raw_ro, "c_legacy", date(2026, 5, 18))
+        history = overrides_for_client(raw_ro, DEFAULT_TRAINER_ID, "c_legacy")
+        latest = latest_override_for_week(raw_ro, DEFAULT_TRAINER_ID, "c_legacy", date(2026, 5, 18))
     finally:
         raw_ro.close()
 

@@ -13,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from fit_ontology.db import (
+    DEFAULT_TRAINER_ID,
     connect,
     delete_threshold,
     ensure_client,
@@ -100,24 +101,24 @@ def test_tr_threshold_override_changes_severity():
 def test_thresholds_db_roundtrip(tmp_path: Path):
     db_path = tmp_path / "th.duckdb"
     with connect(db_path, read_only=False) as con:
-        ensure_client(con, "c_th", name="Threshold Client")
+        ensure_client(con, DEFAULT_TRAINER_ID, "c_th", name="Threshold Client")
         # Empty client returns empty dict.
-        assert thresholds_for_client(con, "c_th") == {}
+        assert thresholds_for_client(con, DEFAULT_TRAINER_ID, "c_th") == {}
         # Upsert one threshold.
-        upsert_threshold(con, "c_th", "hrv_mild_sd", 0.7)
-        assert thresholds_for_client(con, "c_th") == {"hrv_mild_sd": 0.7}
+        upsert_threshold(con, DEFAULT_TRAINER_ID, "c_th", "hrv_mild_sd", 0.7)
+        assert thresholds_for_client(con, DEFAULT_TRAINER_ID, "c_th") == {"hrv_mild_sd": 0.7}
         # Upsert another, both should remain.
-        upsert_threshold(con, "c_th", "sleep_floor_hours", 6.5)
-        out = thresholds_for_client(con, "c_th")
+        upsert_threshold(con, DEFAULT_TRAINER_ID, "c_th", "sleep_floor_hours", 6.5)
+        out = thresholds_for_client(con, DEFAULT_TRAINER_ID, "c_th")
         assert out == {"hrv_mild_sd": 0.7, "sleep_floor_hours": 6.5}
         # Update an existing → overwrites, doesn't add a duplicate.
-        upsert_threshold(con, "c_th", "hrv_mild_sd", 0.6)
-        out = thresholds_for_client(con, "c_th")
+        upsert_threshold(con, DEFAULT_TRAINER_ID, "c_th", "hrv_mild_sd", 0.6)
+        out = thresholds_for_client(con, DEFAULT_TRAINER_ID, "c_th")
         assert out["hrv_mild_sd"] == 0.6
         assert out["sleep_floor_hours"] == 6.5
         # Delete one, other survives.
-        delete_threshold(con, "c_th", "hrv_mild_sd")
-        assert thresholds_for_client(con, "c_th") == {"sleep_floor_hours": 6.5}
+        delete_threshold(con, DEFAULT_TRAINER_ID, "c_th", "hrv_mild_sd")
+        assert thresholds_for_client(con, DEFAULT_TRAINER_ID, "c_th") == {"sleep_floor_hours": 6.5}
 
 
 def test_default_thresholds_dict_complete():

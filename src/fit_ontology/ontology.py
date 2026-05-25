@@ -1,7 +1,10 @@
 """
 The ontology.
 
-Four entities, modeled to integrate three otherwise-incompatible data sources:
+Five entities, modeled to integrate three otherwise-incompatible data sources:
+  - Trainer (the account that owns clients — added in roadmap Phase 2a as
+    the multi-tenant foundation; every client-data row carries a
+    ``trainer_id`` so two trainers' rosters stay fully isolated)
   - Client intake (slow-changing facts: goals, injuries, anthropometrics)
   - Sessions (the trainer's first-party record of what happened)
   - Metrics (third-party wearables: heart rate, HRV, sleep, body comp)
@@ -21,6 +24,25 @@ from datetime import date, datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
+
+
+class Trainer(BaseModel):
+    """The account that owns a roster of clients.
+
+    Added in roadmap Phase 2a as the multi-tenant foundation. ``email``
+    is the natural identity (eventual SSO subject in Phase 2b);
+    ``hashed_password`` is nullable so an SSO-only trainer has no
+    password row, and a future email/password trainer can fill it.
+
+    No FK to clients here — the parent-side relation is on
+    ``clients.trainer_id``, which is the column that does the actual
+    scoping work on every query.
+    """
+    id: str
+    email: str
+    name: str
+    hashed_password: str | None = None
+    created_at: datetime
 
 
 class Sex(str, Enum):
@@ -69,6 +91,12 @@ class MetricSource(str, Enum):
 
 class Client(BaseModel):
     id: str
+    # trainer_id is required for new clients (roadmap Phase 2a), but
+    # left nullable on the Pydantic model so legacy fixtures that
+    # predate the column don't need to be touched. The DB-helper layer
+    # is the enforcement point: every write fills it from the calling
+    # trainer's context.
+    trainer_id: str | None = None
     name: str
     sex: Sex
     age: int = Field(ge=10, le=100)
@@ -192,7 +220,28 @@ class RecommendationOverride(BaseModel):
 
 
 # DDL for DuckDB — kept in code so the schema lives with the model.
+#
+# Multi-tenant scoping (roadmap Phase 2a): every client-data table
+# carries a ``trainer_id``. The column is added via ALTER TABLE rather
+# than baked into the CREATE so an existing DuckDB file from the
+# pre-Phase-2a era picks it up automatically on the next connect()
+# (DuckDB's CREATE TABLE IF NOT EXISTS does NOT reconcile column
+# differences — that's what the ADD COLUMN IF NOT EXISTS block at the
+# bottom is for). The column is intentionally nullable at the DB level
+# because (a) DuckDB can't ALTER a column to NOT NULL while existing
+# data is present, and (b) the db.py helpers enforce trainer_id on
+# every write, which is the chokepoint that actually matters. A later
+# cleanup can do a table-rebuild to add the constraint once we're
+# confident no pre-migration DBs are out there.
 SCHEMA_DDL = """
+CREATE TABLE IF NOT EXISTS trainers (
+    id              VARCHAR PRIMARY KEY,
+    email           VARCHAR NOT NULL UNIQUE,
+    name            VARCHAR NOT NULL,
+    hashed_password VARCHAR,
+    created_at      TIMESTAMP NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS clients (
     id            VARCHAR PRIMARY KEY,
     name          VARCHAR NOT NULL,
@@ -294,4 +343,28 @@ CREATE TABLE IF NOT EXISTS client_thresholds (
     value       DOUBLE NOT NULL,
     PRIMARY KEY (client_id, name)
 );
+
+-- ─── Phase 2a multi-tenant scoping ──────────────────────────────────
+-- Add trainer_id to every client-data table. ADD COLUMN IF NOT EXISTS
+-- so a fresh DB and an existing DB both end up with the column. The
+-- backfill (assigning existing rows to a default trainer) lives in
+-- db._run_migrations() — DDL can't carry that data, only the column.
+ALTER TABLE clients                  ADD COLUMN IF NOT EXISTS trainer_id VARCHAR;
+ALTER TABLE sessions                 ADD COLUMN IF NOT EXISTS trainer_id VARCHAR;
+ALTER TABLE metrics                  ADD COLUMN IF NOT EXISTS trainer_id VARCHAR;
+ALTER TABLE recommendations          ADD COLUMN IF NOT EXISTS trainer_id VARCHAR;
+ALTER TABLE recommendation_overrides ADD COLUMN IF NOT EXISTS trainer_id VARCHAR;
+ALTER TABLE planned_sessions         ADD COLUMN IF NOT EXISTS trainer_id VARCHAR;
+ALTER TABLE client_thresholds        ADD COLUMN IF NOT EXISTS trainer_id VARCHAR;
+
+-- Indexes on (trainer_id, ...) for the hot lookup patterns. The
+-- existing (client_id, date) indexes still serve client-detail views;
+-- these new ones cover the trainer-roster / cross-client roll-ups.
+CREATE INDEX IF NOT EXISTS idx_clients_trainer                  ON clients(trainer_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_trainer                 ON sessions(trainer_id);
+CREATE INDEX IF NOT EXISTS idx_metrics_trainer                  ON metrics(trainer_id);
+CREATE INDEX IF NOT EXISTS idx_recommendations_trainer          ON recommendations(trainer_id);
+CREATE INDEX IF NOT EXISTS idx_recommendation_overrides_trainer ON recommendation_overrides(trainer_id);
+CREATE INDEX IF NOT EXISTS idx_planned_sessions_trainer         ON planned_sessions(trainer_id);
+CREATE INDEX IF NOT EXISTS idx_client_thresholds_trainer        ON client_thresholds(trainer_id);
 """

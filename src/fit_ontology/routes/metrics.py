@@ -21,15 +21,20 @@ from ..ingest import (
     from_strava_export,
     from_whoop_json,
 )
-from .deps import read_only_conn
+from .deps import current_trainer_id, read_only_conn
 from .schemas import MetricRow, SessionRow
 
 router = APIRouter()
 
 
 @router.get("/api/clients/{client_id}/metrics", response_model=list[MetricRow])
-def get_metrics(client_id: str, days: int = 35, con=Depends(read_only_conn)) -> list[MetricRow]:
-    df = metrics_for_client(con, client_id, days=days)
+def get_metrics(
+    client_id: str,
+    days: int = 35,
+    con=Depends(read_only_conn),
+    trainer_id: str = Depends(current_trainer_id),
+) -> list[MetricRow]:
+    df = metrics_for_client(con, trainer_id, client_id, days=days)
     if df.empty:
         return []
     df["date"] = pd.to_datetime(df["date"]).dt.date
@@ -37,8 +42,13 @@ def get_metrics(client_id: str, days: int = 35, con=Depends(read_only_conn)) -> 
 
 
 @router.get("/api/clients/{client_id}/sessions", response_model=list[SessionRow])
-def get_sessions(client_id: str, days: int = 35, con=Depends(read_only_conn)) -> list[SessionRow]:
-    df = sessions_for_client(con, client_id, days=days)
+def get_sessions(
+    client_id: str,
+    days: int = 35,
+    con=Depends(read_only_conn),
+    trainer_id: str = Depends(current_trainer_id),
+) -> list[SessionRow]:
+    df = sessions_for_client(con, trainer_id, client_id, days=days)
     if df.empty:
         return []
     df["date"] = pd.to_datetime(df["date"]).dt.date
@@ -55,7 +65,11 @@ def get_sessions(client_id: str, days: int = 35, con=Depends(read_only_conn)) ->
 
 
 @router.post("/api/clients/{client_id}/upload", response_model=dict)
-async def post_upload(client_id: str, file: UploadFile = File(...)) -> dict:
+async def post_upload(
+    client_id: str,
+    file: UploadFile = File(...),
+    trainer_id: str = Depends(current_trainer_id),
+) -> dict:
     """Accept a wearable export and ingest it for the given client.
 
     Sniffs the format from the upload's filename + the first few KB of
@@ -85,7 +99,7 @@ async def post_upload(client_id: str, file: UploadFile = File(...)) -> dict:
 
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as con:
-            insert_metrics(con, df)
+            insert_metrics(con, trainer_id, df)
     except duckdb.IOException as e:
         raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
 

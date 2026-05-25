@@ -22,6 +22,7 @@ from ..db import (
 from ..ontology import PlanSource, SessionType
 from ..planning import Verdict, generate_plan
 from ..reasoning import generate_recommendation
+from .deps import current_trainer_id
 from .schemas import PlannedSessionPatch, PlannedSessionResponse, PlanResponse
 
 router = APIRouter()
@@ -41,7 +42,10 @@ def _classify_verdict(rec_text: str) -> Verdict:
 
 
 @router.get("/api/clients/{client_id}/plan", response_model=PlanResponse)
-def get_plan(client_id: str) -> PlanResponse:
+def get_plan(
+    client_id: str,
+    trainer_id: str = Depends(current_trainer_id),
+) -> PlanResponse:
     """Return the current week's plan, lazy-persisting on first fetch.
 
     Mirrors the recommendation route's pattern: read first (closing the
@@ -59,25 +63,26 @@ def get_plan(client_id: str) -> PlanResponse:
     new_plan = None
 
     with connect(DEFAULT_DB_PATH, read_only=True) as rcon:
-        plan = plan_for_week(rcon, client_id, week_of)
+        plan = plan_for_week(rcon, trainer_id, client_id, week_of)
         # We also need the verdict for the response, regardless of
         # whether the plan is fresh or cached. Look up the persisted
         # recommendation if there is one; otherwise compute inline so
         # we have a verdict to drive generation.
-        rec = recommendation_for_week(rcon, client_id, week_of)
+        rec = recommendation_for_week(rcon, trainer_id, client_id, week_of)
         if rec is None:
-            metrics = metrics_for_client(rcon, client_id, days=70)
-            sessions = sessions_for_client(rcon, client_id, days=35)
-            overrides = thresholds_for_client(rcon, client_id)
+            metrics = metrics_for_client(rcon, trainer_id, client_id, days=70)
+            sessions = sessions_for_client(rcon, trainer_id, client_id, days=35)
+            overrides = thresholds_for_client(rcon, trainer_id, client_id)
             rec = generate_recommendation(client_id, metrics, sessions, thresholds=overrides)
         verdict = _classify_verdict(rec.recommendation)
 
         if not plan:
             # Generate the initial plan from the verdict + recent
             # sessions + injury-derived contraindications.
-            sessions = sessions_for_client(rcon, client_id, days=35)
+            sessions = sessions_for_client(rcon, trainer_id, client_id, days=35)
             injury_row = rcon.execute(
-                "SELECT injury_history FROM clients WHERE id = ?", [client_id]
+                "SELECT injury_history FROM clients WHERE id = ? AND trainer_id = ?",
+                [client_id, trainer_id],
             ).fetchone()
             injury = injury_row[0] if injury_row else None
             ci_phrases = [c.advice for c in match_contraindications(injury)]
@@ -94,13 +99,13 @@ def get_plan(client_id: str) -> PlanResponse:
     if needs_persist and new_plan:
         try:
             with connect(DEFAULT_DB_PATH, read_only=False) as wcon:
-                insert_plan(wcon, new_plan)
+                insert_plan(wcon, trainer_id, new_plan)
                 # Plan just got created — any sessions already logged
                 # this week should retroactively link to their slots.
-                match_planned_sessions(wcon, client_id)
+                match_planned_sessions(wcon, trainer_id, client_id)
                 # Re-read to pick up executed_session_id values the
                 # matcher just wrote.
-                plan = plan_for_week(wcon, client_id, week_of)
+                plan = plan_for_week(wcon, trainer_id, client_id, week_of)
         except duckdb.IOException as e:
             raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
     else:
@@ -109,9 +114,9 @@ def get_plan(client_id: str) -> PlanResponse:
         # index) and ensures the UI always shows current execution status.
         try:
             with connect(DEFAULT_DB_PATH, read_only=False) as wcon:
-                linked = match_planned_sessions(wcon, client_id)
+                linked = match_planned_sessions(wcon, trainer_id, client_id)
                 if linked > 0:
-                    plan = plan_for_week(wcon, client_id, week_of)
+                    plan = plan_for_week(wcon, trainer_id, client_id, week_of)
         except duckdb.IOException:
             # Background match failed — not fatal, just skip the refresh.
             pass
@@ -131,6 +136,7 @@ def patch_planned_session(
     client_id: str,
     slot: int,
     payload: PlannedSessionPatch,
+    trainer_id: str = Depends(current_trainer_id),
 ) -> PlannedSessionResponse:
     """Edit one slot of the current week's plan. Any patch flips the
     row's source to "trainer" — once the trainer has touched a slot,
@@ -140,7 +146,7 @@ def patch_planned_session(
 
     # Load the existing slot so we can apply partial updates.
     with connect(DEFAULT_DB_PATH, read_only=True) as rcon:
-        plan = plan_for_week(rcon, client_id, week_of)
+        plan = plan_for_week(rcon, trainer_id, client_id, week_of)
     existing = next((p for p in plan if p.slot == slot), None)
     if existing is None:
         raise HTTPException(
@@ -177,7 +183,7 @@ def patch_planned_session(
 
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as wcon:
-            upsert_planned_session(wcon, existing)
+            upsert_planned_session(wcon, trainer_id, existing)
     except duckdb.IOException as e:
         raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
 
