@@ -4,6 +4,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { createPortal } from "react-dom";
 import type { CSSProperties, ReactNode } from "react";
 
+import { useToast } from "@/components/toast";
+
 /**
  * InfoPopover — a tooltip that works on mouse and touch.
  *
@@ -86,6 +88,26 @@ export function InfoPopover({
 }: InfoPopoverProps) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<PopoverPos | null>(null);
+  const toast = useToast();
+
+  // Copy the citation URL to the clipboard so the trainer can drop
+  // it into a client message or peer DM in one tap — part of the
+  // "makes trainers sound smarter" angle, since citations beat
+  // bare assertions in any client conversation. Best-effort: if the
+  // browser blocks clipboard access (Safari over http, e.g.), we
+  // fall back to a toast with the URL visible so it can be copied
+  // by hand.
+  const copyLink = useCallback(
+    async (url: string) => {
+      try {
+        await navigator.clipboard.writeText(url);
+        toast.show("Citation link copied.");
+      } catch {
+        toast.show(`Link: ${url}`);
+      }
+    },
+    [toast],
+  );
   const wrapperRef = useRef<HTMLSpanElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
@@ -349,19 +371,42 @@ export function InfoPopover({
                   <span style={{ color: "var(--text-muted)" }}>{footer}</span>
                 )}
                 {href && (
-                  <a
-                    href={href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      color: "var(--accent)",
-                      textDecoration: "none",
-                      fontWeight: 500,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    View paper ↗
-                  </a>
+                  <span style={{ display: "inline-flex", gap: 10, alignItems: "center", whiteSpace: "nowrap" }}>
+                    <button
+                      type="button"
+                      onClick={() => copyLink(href)}
+                      // Stop the popover's outside-click handler from
+                      // catching this and dismissing on the same gesture.
+                      onPointerDown={(e) => e.stopPropagation()}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        padding: 0,
+                        color: "var(--text-muted)",
+                        font: "inherit",
+                        fontSize: 11,
+                        fontWeight: 500,
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                      title="Copy citation link to clipboard"
+                    >
+                      Copy link
+                    </button>
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        color: "var(--accent)",
+                        textDecoration: "none",
+                        fontWeight: 500,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      View paper ↗
+                    </a>
+                  </span>
                 )}
               </div>
             )}
