@@ -51,6 +51,7 @@ signal value.
 from __future__ import annotations
 
 import os
+from datetime import date, datetime, timedelta
 
 # The demo trainer's id is deliberately distinct from DEFAULT_TRAINER_ID
 # ("t_default") so a deployment can have both: a real trainer the
@@ -105,7 +106,6 @@ def seed_demo_data_if_needed(con) -> None:
     the trainer scope + no logging when the seed already happened.
     Reuses the ingest helpers it calls.
     """
-    from datetime import datetime
     from pathlib import Path
 
     import pandas as pd
@@ -193,6 +193,13 @@ def seed_demo_data_if_needed(con) -> None:
         all_metrics = pd.concat(metric_frames, ignore_index=True)
         insert_metrics(con, DEMO_TRAINER_ID, all_metrics)
 
+    # Synthesise ~4 weeks of past recommendations + trainer overrides
+    # per client so the calibration page lands on real content (system-
+    # vs-trainer agreement matrix, weekly trend, per-client breakdown,
+    # tuning suggestions) instead of an empty-state placeholder. Without
+    # this the demo's most data-rich screen is the most empty.
+    history_n = _seed_demo_history(con, clients_df["id"].tolist())
+
     # Record-keeping for the operator who tail-fs the logs on first
     # deploy: one line, not a stack of inserts. Stays out of audit
     # log because record_audit needs a trainer that performed an
@@ -201,7 +208,166 @@ def seed_demo_data_if_needed(con) -> None:
     print(
         f"[fit_ontology.demo] Seeded {len(clients_df)} demo clients + "
         f"{len(sessions_df)} sessions + "
-        f"{sum(len(f) for f in metric_frames)} metric rows "
+        f"{sum(len(f) for f in metric_frames)} metric rows + "
+        f"{history_n} historical overrides "
         f"under {DEMO_TRAINER_ID} at {datetime.utcnow().isoformat()}Z",
         file=sys.stderr,
     )
+
+
+def _seed_demo_history(con, client_ids: list[str]) -> int:
+    """Generate 4 weeks of past recommendations + overrides per demo
+    client so the calibration page has real content.
+
+    Procedure: for each (client, week-back-N), filter metrics to
+    "what was available at the end of that week," run the reasoning
+    engine against that snapshot, persist the result with a stable
+    ID, then synthesise a trainer override with believable
+    accept/edit/reject probabilities tied to the verdict severity.
+
+    Stability: every ID is deterministic on (client_id, week_of), so
+    running the seed twice updates-in-place via INSERT OR REPLACE
+    rather than duplicating. Action choice uses a seeded RNG keyed
+    on the same tuple so trainer-A's decisions are identical from
+    one boot to the next — the demo's calibration page shows the
+    SAME agreement matrix every visit, not a fresh randomisation.
+
+    Returns the number of (recommendation, override) pairs written.
+    Short-circuits if any demo override already exists.
+    """
+    import random
+
+    import pandas as pd
+
+    from .db import (
+        insert_override,
+        insert_recommendation,
+        metrics_for_client,
+        overrides_for_client,
+        sessions_for_client,
+    )
+    from .ontology import OverrideAction, RecommendationOverride
+    from .reasoning import generate_recommendation
+
+    today = date.today()
+    pairs_written = 0
+
+    for client_id in client_ids:
+        # Skip if this client already has demo overrides — keeps the
+        # seed idempotent even though the recommendation IDs would
+        # INSERT-OR-REPLACE cleanly. Cheaper to check once than to
+        # re-run the engine eight times for no net change.
+        existing = overrides_for_client(con, DEMO_TRAINER_ID, client_id, limit=1)
+        if not existing.empty:
+            continue
+
+        # Pull everything available; we'll filter per-week below.
+        all_metrics = metrics_for_client(con, DEMO_TRAINER_ID, client_id, days=70)
+        all_sessions = sessions_for_client(con, DEMO_TRAINER_ID, client_id, days=70)
+        if all_metrics.empty:
+            continue
+
+        for weeks_back in (1, 2, 3, 4):
+            # End-of-week-back Sunday is "what the trainer was deciding on
+            # that Monday." Filter to data available at that point so the
+            # historical recommendation is what the engine would have
+            # produced in real time, not a hindsight reconstruction.
+            historical_today = today - timedelta(days=weeks_back * 7)
+            week_of = historical_today - timedelta(days=historical_today.weekday())
+
+            # The metrics/sessions date columns come back as
+            # datetime64[us] (pandas auto-promotes DuckDB DATE on
+            # read), but ``historical_today`` is a python date — direct
+            # comparison raises InvalidComparison. Normalise both
+            # sides to pandas Timestamps to dodge that.
+            cutoff = pd.Timestamp(historical_today)
+            metrics_at = all_metrics[pd.to_datetime(all_metrics["date"]) <= cutoff]
+            sessions_at = (
+                all_sessions[pd.to_datetime(all_sessions["date"]) <= cutoff]
+                if not all_sessions.empty
+                else all_sessions
+            )
+
+            # Need at least ~14 days of HRV / sleep for the baseline-
+            # window detectors to fire meaningfully. Fewer than that
+            # and the recommendation defaults to a flat "Standard" with
+            # low confidence — not interesting calibration content.
+            if len(metrics_at) < 14:
+                continue
+
+            rec = generate_recommendation(client_id, metrics_at, sessions_at)
+            # Stable IDs so the seed is genuinely idempotent + the
+            # calibration page renders the same rows on every visit.
+            rec.id = f"r_demo_{client_id}_{week_of.isoformat()}"
+            rec.week_of = week_of
+            # Monday-morning of the historical week is when the trainer
+            # would have been reading this verdict. Time of day doesn't
+            # matter; date does, for the weekly-trend chart.
+            rec.generated_at = datetime.combine(week_of, datetime.min.time())
+            insert_recommendation(con, DEMO_TRAINER_ID, rec)
+
+            # Seeded RNG → stable trainer behaviour per (client, week).
+            # The seed string includes the verdict text so a change to
+            # the engine's wording (which would only happen with a real
+            # threshold tweak) re-randomises in a controlled way.
+            rng = random.Random(f"{client_id}|{week_of.isoformat()}|{rec.recommendation}")
+            roll = rng.random()
+            verdict_lower = rec.recommendation.lower()
+
+            # Trainers usually agree with the system but disagree more
+            # often on the louder calls — a deload week is the kind of
+            # decision where the trainer has more reason to push back
+            # ("client felt great"). Numbers chosen so the agreement
+            # matrix has variety without painting an unrealistically
+            # contentious picture.
+            if verdict_lower.startswith("deload"):
+                action = (
+                    OverrideAction.ACCEPT if roll < 0.55
+                    else OverrideAction.EDIT if roll < 0.85
+                    else OverrideAction.REJECT
+                )
+            elif verdict_lower.startswith("conservative"):
+                action = (
+                    OverrideAction.ACCEPT if roll < 0.7
+                    else OverrideAction.EDIT if roll < 0.9
+                    else OverrideAction.REJECT
+                )
+            else:  # Standard / fallback
+                action = (
+                    OverrideAction.ACCEPT if roll < 0.85
+                    else OverrideAction.EDIT if roll < 0.97
+                    else OverrideAction.REJECT
+                )
+
+            note: str | None = None
+            applied_pct: float | None = None
+            if action == OverrideAction.EDIT:
+                # Edits are usually small magnitude shifts: "more
+                # conservative than the system said" or "less" by
+                # 5-10%. Sign chosen by the next roll so edits split
+                # both ways across the dataset.
+                applied_pct = rng.choice([-10.0, -5.0, 5.0, 10.0])
+            elif action == OverrideAction.REJECT:
+                note = rng.choice([
+                    "Client felt great this morning, kept training.",
+                    "Travel week — skipping the deload, will deload next week.",
+                    "Mid-meet block, holding intensity.",
+                    "Sleep was off — went lighter than the system suggested.",
+                    "Client missed last session anyway, no extra recovery needed.",
+                ])
+
+            ov = RecommendationOverride(
+                id=f"o_demo_{client_id}_{week_of.isoformat()}",
+                client_id=client_id,
+                week_of=week_of,
+                system_recommendation=rec.recommendation,
+                system_confidence=rec.confidence,
+                trainer_action=action,
+                applied_load_change_pct=applied_pct,
+                trainer_note=note,
+                created_at=datetime.combine(week_of, datetime.min.time()),
+            )
+            insert_override(con, DEMO_TRAINER_ID, ov)
+            pairs_written += 1
+
+    return pairs_written
