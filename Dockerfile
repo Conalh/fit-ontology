@@ -73,7 +73,14 @@ USER app
 
 # DuckDB file lives on the persistent volume; the FastAPI process
 # reads this env var to anchor its path.
+#
+# FIT_ONTOLOGY_STATIC_ROOT overrides api.py's __file__-relative
+# calculation, which would otherwise resolve to a site-packages path
+# in the non-editable install used here (Docker copies the package
+# into site-packages via ``pip install .``, so ``__file__.parents[2]``
+# lands at /usr/local/lib/python3.12, not /app).
 ENV FIT_ONTOLOGY_DB=/data/fit.duckdb \
+    FIT_ONTOLOGY_STATIC_ROOT=/app/web/out \
     PYTHONUNBUFFERED=1 \
     PORT=8000
 

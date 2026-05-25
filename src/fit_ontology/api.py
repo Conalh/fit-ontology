@@ -219,7 +219,21 @@ app.include_router(roster.router)
 # under this same FastAPI process. Local-first deployment, one URL,
 # no CORS round-trip. In dev (no static export) the Next.js dev server
 # runs on its own port and hits ``/api`` here via CORS.
+#
+# Path resolution: in an editable install (local dev), ``__file__``
+# is at ``<repo>/src/fit_ontology/api.py`` and ``parents[2]`` lands at
+# the repo root — ``web/out`` is right there. In a non-editable
+# install (the Docker image, which does ``pip install .``), ``__file__``
+# lives in ``site-packages`` and ``parents[2]`` no longer points
+# anywhere useful. The Dockerfile sets ``FIT_ONTOLOGY_STATIC_ROOT=
+# /app/web/out`` to override the calculation; the fallback below is
+# what the local dev loop uses.
 
-_STATIC_ROOT = Path(__file__).resolve().parents[2] / "web" / "out"
+_STATIC_ROOT = Path(
+    os.environ.get(
+        "FIT_ONTOLOGY_STATIC_ROOT",
+        str(Path(__file__).resolve().parents[2] / "web" / "out"),
+    )
+)
 if _STATIC_ROOT.exists():
     app.mount("/", StaticFiles(directory=str(_STATIC_ROOT), html=True), name="web")
