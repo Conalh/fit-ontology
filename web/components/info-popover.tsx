@@ -401,7 +401,29 @@ export function InfoPopover({
                 }}
               >
                 {footer && (
-                  <span style={{ color: "var(--text-muted)" }}>{footer}</span>
+                  href ? (
+                    // When the citation has a paper URL, the "Source: …"
+                    // line doubles as the second link to the same study
+                    // — the citation name is what the trainer recognises
+                    // and clicks instinctively, so it should behave the
+                    // way it looks (Conal's "make it clickable" call).
+                    // Dotted underline picks up the same affordance the
+                    // methodology chips use.
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        color: "var(--text-muted)",
+                        textDecoration: "underline dotted",
+                        textUnderlineOffset: 3,
+                      }}
+                    >
+                      {footer}
+                    </a>
+                  ) : (
+                    <span style={{ color: "var(--text-muted)" }}>{footer}</span>
+                  )
                 )}
                 {href && (
                   <span style={{ display: "inline-flex", gap: 10, alignItems: "center", whiteSpace: "nowrap" }}>
