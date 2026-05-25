@@ -1,16 +1,44 @@
 # FitOntology
 
+[![tests](https://github.com/Conalh/fit-ontology/actions/workflows/tests.yml/badge.svg)](https://github.com/Conalh/fit-ontology/actions/workflows/tests.yml)
+[![coverage](https://img.shields.io/badge/coverage-85%25-brightgreen)](.github/workflows/tests.yml)
+[![python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)](pyproject.toml)
+[![next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](web/package.json)
+[![mypy](https://img.shields.io/badge/mypy-checked-2a6db2)](pyproject.toml)
+[![ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/charliermarsh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 **A client intelligence layer for personal trainers.** Three messy data sources — wearables, trainer intake, and exercise-science guidelines — unified into one queryable ontology, with an explainable rules-based reasoning layer that produces a weekly training recommendation and the full data trail behind it.
 
 > **Live demo →** [fit-ontology.fly.dev](https://fit-ontology.fly.dev) — no signup. Pre-seeded with three synthetic clients. All write actions return a friendly read-only notice; clone the repo to save changes.
 
-```
-wearables (Garmin / Apple Health / Strava / Whoop)  ─┐
-trainer intake (CSV)                                  ├─► ontology (DuckDB) ─► reasoning ─► dashboard
-ACSM reference guidelines                            ─┘                                  └─► PDF
+```mermaid
+flowchart LR
+    Wearables["Wearables<br/>Garmin · Apple Health<br/>Strava · Whoop"] --> Ontology
+    Intake["Trainer intake<br/>(client CSV + UI)"] --> Ontology
+    ACSM["ACSM reference<br/>guidelines"] --> Reasoning
+    Ontology[("Ontology<br/>(DuckDB)")] --> Reasoning
+    Reasoning["Reasoning<br/>(9 signal detectors)"] --> Dashboard["Dashboard<br/>(Next.js)"]
+    Reasoning --> PDF["Client PDF<br/>+ share link"]
+    Dashboard --> Coach["Coach Assistant<br/>(Claude draft)"]
+
+    classDef box fill:#1e293b,stroke:#334155,color:#e2e8f0
+    classDef store fill:#0f172a,stroke:#1e293b,color:#e2e8f0,stroke-width:2px
+    classDef out fill:#0c4a6e,stroke:#0369a1,color:#e0f2fe
+    class Wearables,Intake,ACSM box
+    class Ontology store
+    class Reasoning,Dashboard,PDF,Coach out
 ```
 
 Ships as a Next.js + Tailwind dashboard backed by a FastAPI service over a single DuckDB file. One command boots both: `fit-ontology-serve`.
+
+**See also:** [ARCHITECTURE.md](ARCHITECTURE.md) for the system breakdown and load-bearing decisions · [SECURITY.md](SECURITY.md) for the threat model and security posture · [docs/deploy.md](docs/deploy.md) for the Fly.io runbook.
+
+## Screenshots
+
+| Roster (Monday triage) | Client detail (recovery + plan) | Calibration (system vs trainer) |
+| --- | --- | --- |
+| ![Roster](docs/screenshots/roster.png) | ![Client detail](docs/screenshots/client-detail.png) | ![Calibration](docs/screenshots/calibration.png) |
 
 ## Why this exists
 
