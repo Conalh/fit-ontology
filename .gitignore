@@ -33,6 +33,9 @@ Thumbs.db
 # Local Claude Code config (per-developer tooling)
 .claude/
 
+# Internal planning docs — not for public sharing via the repo
+ROADMAP.md
+
 # Next.js build artifacts (rebuild via `npm run build --prefix web`)
 web/.next/
 web/out/
