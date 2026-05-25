@@ -27,13 +27,15 @@ explicitly in the next step so we control the size + region.
 ### 2. Create the persistent volume
 
 ```bash
-fly volumes create fit_data --region iad --size 1
+fly volumes create fit_data --region sjc --size 1
 ```
 
 - `fit_data` matches the `[mounts] source` in `fly.toml`
 - 1 GB is enough for ~hundreds of trainers' worth of DuckDB rows;
   Fly auto-extends up to 5 GB per the `fly.toml` config
-- Set the region to whichever you set as `primary_region` in `fly.toml`
+- The region MUST match `primary_region` in `fly.toml` (currently
+  `sjc`) — otherwise the volume + machine land in different regions
+  and the mount fails to attach
 
 ### 3. Set secrets
 
@@ -140,7 +142,7 @@ To restore from a snapshot, create a new volume from it and update
 `fly.toml`'s `[mounts] source`:
 
 ```bash
-fly volumes create fit_data_restored --snapshot-id <snapshot-id> --region iad
+fly volumes create fit_data_restored --snapshot-id <snapshot-id> --region sjc
 ```
 
 For higher-bar durability (Phase 5b/c), add Litestream replication

@@ -22,7 +22,7 @@
 # Subsequent deploys: fly deploy.
 
 app = "fit-ontology"
-primary_region = "iad"        # change to your closest region
+primary_region = "sjc"        # change to your closest region
 
 # ─── Build ───────────────────────────────────────────────────────────
 [build]
