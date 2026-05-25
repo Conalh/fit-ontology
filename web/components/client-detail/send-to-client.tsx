@@ -112,8 +112,11 @@ export function SendToClient({
         padding: "16px 20px",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 18 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
+      <div
+        className="fit-send-to-client-head"
+        style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 18, flexWrap: "wrap" }}
+      >
+        <div className="fit-send-to-client-copy" style={{ flex: "1 1 220px", minWidth: 180 }}>
           <h3
             style={{
               margin: 0,
@@ -129,7 +132,7 @@ export function SendToClient({
             One-page PDF or a phone-friendly link. Your note below is shown to the client on either.
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
+        <div className="fit-send-to-client-actions" style={{ display: "flex", gap: 8, flexShrink: 0, flexWrap: "wrap" }}>
           <button
             className="btn-ghost"
             onClick={draft}

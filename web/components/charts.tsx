@@ -89,7 +89,17 @@ export function TrendChart({
   // bubble far from the user's eye on tall charts). idx stays so the
   // vertical guide + dot still snap to the nearest data point.
   const [hover, setHover] = useState<{ idx: number; y: number } | null>(null);
-  const hoverIdx = hover?.idx ?? null;
+  // Touch users can't "hover" — their finger lifts immediately and the
+  // bubble disappears before they read it. Pinned state survives the
+  // lift: tap a point, bubble stays; tap the same point again to
+  // dismiss; tap elsewhere to move the pin. Mouse users keep the
+  // hover-tracking behaviour and don't interact with the pin path.
+  const [pinned, setPinned] = useState<number | null>(null);
+  // The pin wins over the hover when both are set — a mouse user who
+  // somehow inherited a pinned state from a previous touch interaction
+  // can clear it by tapping (touch) or just refreshing.
+  const activeIdx = pinned ?? hover?.idx ?? null;
+  const hoverIdx = activeIdx; // alias kept for the existing render code below
 
   if (!data || data.length === 0) {
     return (
@@ -294,7 +304,7 @@ export function TrendChart({
             stroke="var(--surface)"
             strokeWidth="1.5"
           />
-          {showBubble && hover && (() => {
+          {showBubble && hoverIdx !== null && (() => {
             const pt = data[hoverIdx];
             const valueText = `${pt.value.toFixed(pt.value < 10 ? 1 : 0)}${unit}`;
             const dayText = pt.day === 0 ? "today" : `${Math.abs(pt.day)}d ago`;
@@ -307,10 +317,15 @@ export function TrendChart({
               padL + bubbleW / 2 + 2,
               Math.min(padL + innerW - bubbleW / 2 - 2, dotX),
             );
-            // Bubble rides ~26px above the cursor so it stays out from
-            // under a finger on touch. Clamp to the top of the inner
-            // chart area so it doesn't escape the SVG.
-            const desiredY = hover.y - 26 - bubbleH;
+            // Anchor Y for the bubble: in mouse-hover mode, ride the
+            // cursor (hover.y). In pinned mode (touch tap), anchor to
+            // the data point itself — the finger has lifted, there's
+            // no cursor to ride. Bubble sits ~26px above the anchor
+            // so on touch it doesn't end up under the user's finger.
+            const anchorY = pinned !== null
+              ? y(data[hoverIdx].value)
+              : hover?.y ?? y(data[hoverIdx].value);
+            const desiredY = anchorY - 26 - bubbleH;
             const bubbleY = Math.max(padT - 4, desiredY);
             const dayCx = Math.max(padL + 16, Math.min(padL + innerW - 16, dotX));
             return (
@@ -363,6 +378,11 @@ export function TrendChart({
         fill="transparent"
         style={{ cursor: "crosshair", touchAction: "none" }}
         onPointerMove={(e: ReactPointerEvent<SVGRectElement>) => {
+          // Touch drag shouldn't track-the-finger like a mouse — a
+          // user scrolling past the chart on their phone would
+          // otherwise see the bubble flicker through every point.
+          // Only mouse moves update the hover state.
+          if (e.pointerType !== "mouse") return;
           const rect = e.currentTarget.getBoundingClientRect();
           if (rect.width === 0) return;
           const svgX = ((e.clientX - rect.left) / rect.width) * innerW;
@@ -375,13 +395,37 @@ export function TrendChart({
             if (!hover || idx !== hover.idx) onHover?.(idx);
           }
         }}
-        onPointerLeave={() => {
+        onPointerDown={(e: ReactPointerEvent<SVGRectElement>) => {
+          // Touch tap → pin (or unpin if same point). Mouse clicks
+          // also pin so a desktop user can lock the bubble before
+          // taking a screenshot or moving their cursor away.
+          const rect = e.currentTarget.getBoundingClientRect();
+          if (rect.width === 0) return;
+          const svgX = ((e.clientX - rect.left) / rect.width) * innerW;
+          const t = svgX / innerW;
+          const idx = Math.max(0, Math.min(data.length - 1, Math.round(t * (data.length - 1))));
+          if (pinned === idx) {
+            setPinned(null);
+            onHover?.(null);
+          } else {
+            setPinned(idx);
+            onHover?.(idx);
+          }
+        }}
+        onPointerLeave={(e: ReactPointerEvent<SVGRectElement>) => {
+          // Touch "leave" fires when the finger lifts — that's not a
+          // real cursor leave, just the end of the tap. Don't clear
+          // the pin or the hover state in that case.
+          if (e.pointerType !== "mouse") return;
           setHover(null);
-          onHover?.(null);
+          if (pinned === null) onHover?.(null);
         }}
         onPointerCancel={() => {
+          // Pointer cancel (gesture interrupted) — clear ephemeral
+          // hover but leave the pin alone. The pin's the user's
+          // explicit choice; only an explicit tap should change it.
           setHover(null);
-          onHover?.(null);
+          if (pinned === null) onHover?.(null);
         }}
       />
 
@@ -412,7 +456,9 @@ export function LoadBars({
   showBubble?: boolean;
 }) {
   const [hover, setHover] = useState<{ idx: number; y: number } | null>(null);
-  const hoverIdx = hover?.idx ?? null;
+  // Tap-to-pin for touch users — same contract as TrendChart.
+  const [pinned, setPinned] = useState<number | null>(null);
+  const hoverIdx = pinned ?? hover?.idx ?? null;
 
   if (!data || data.length === 0) {
     return (
@@ -472,7 +518,7 @@ export function LoadBars({
             strokeDasharray="3 3"
             opacity="0.6"
           />
-          {showBubble && hover && (() => {
+          {showBubble && hoverIdx !== null && (() => {
             const pt = data[hoverIdx];
             const dayText = pt.day === 0 ? "today" : `${Math.abs(pt.day)}d ago`;
             // LoadBars chart is wider than the trend cells, so the bubble
@@ -489,7 +535,12 @@ export function LoadBars({
               padL + bubbleW / 2 + 2,
               Math.min(padL + innerW - bubbleW / 2 - 2, cx),
             );
-            const desiredY = hover.y - 26 - bubbleH;
+            // Anchor Y: cursor in hover mode, bar-top in pinned mode.
+            // Same rationale as TrendChart's anchor logic — pinned
+            // bubbles can't follow a cursor that's no longer there.
+            const barTopY = padT + innerH - (pt.load / maxLoad) * innerH;
+            const anchorY = pinned !== null ? barTopY : hover?.y ?? barTopY;
+            const desiredY = anchorY - 26 - bubbleH;
             const bubbleY = Math.max(padT - 4, desiredY);
             return (
               <g>
@@ -545,6 +596,9 @@ export function LoadBars({
         fill="transparent"
         style={{ cursor: "crosshair", touchAction: "none" }}
         onPointerMove={(e: ReactPointerEvent<SVGRectElement>) => {
+          // Mouse-only hover tracking — touch drag would otherwise
+          // flicker through every bar as the user scrolls past.
+          if (e.pointerType !== "mouse") return;
           const rect = e.currentTarget.getBoundingClientRect();
           if (rect.width === 0) return;
           const svgX = ((e.clientX - rect.left) / rect.width) * innerW;
@@ -557,13 +611,29 @@ export function LoadBars({
             if (!hover || idx !== hover.idx) onHover?.(idx);
           }
         }}
-        onPointerLeave={() => {
+        onPointerDown={(e: ReactPointerEvent<SVGRectElement>) => {
+          // Tap / click pins the bubble. Same point twice = unpin.
+          const rect = e.currentTarget.getBoundingClientRect();
+          if (rect.width === 0) return;
+          const svgX = ((e.clientX - rect.left) / rect.width) * innerW;
+          const t = svgX / innerW;
+          const idx = Math.max(0, Math.min(data.length - 1, Math.floor(t * data.length)));
+          if (pinned === idx) {
+            setPinned(null);
+            onHover?.(null);
+          } else {
+            setPinned(idx);
+            onHover?.(idx);
+          }
+        }}
+        onPointerLeave={(e: ReactPointerEvent<SVGRectElement>) => {
+          if (e.pointerType !== "mouse") return;
           setHover(null);
-          onHover?.(null);
+          if (pinned === null) onHover?.(null);
         }}
         onPointerCancel={() => {
           setHover(null);
-          onHover?.(null);
+          if (pinned === null) onHover?.(null);
         }}
       />
     </svg>

@@ -120,6 +120,7 @@ function PlannedSessionDisplay({
 }) {
   return (
     <div
+      className="fit-plan-slot"
       style={{
         padding: "14px 20px",
         borderTop: "1px solid var(--border)",
@@ -130,6 +131,7 @@ function PlannedSessionDisplay({
       }}
     >
       <div
+        className="fit-plan-slot-num"
         style={{
           width: 32,
           height: 32,
@@ -149,7 +151,7 @@ function PlannedSessionDisplay({
         {session.slot}
       </div>
 
-      <div style={{ minWidth: 0 }}>
+      <div className="fit-plan-slot-main" style={{ minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
           <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{session.title}</span>
           <SessionTypeChip type={session.type} />
@@ -196,6 +198,7 @@ function PlannedSessionDisplay({
       </div>
 
       <div
+        className="fit-plan-slot-targets"
         style={{
           display: "grid",
           gridTemplateColumns: "1fr 1fr 1fr",

@@ -354,3 +354,52 @@ svg polyline {
     gap: 8px !important;
   }
 }
+
+/* Plan slot rows — collapse from "[num] [main] [targets]" three
+   columns into a stacked layout on phones. The slot number stays
+   inline with the title row (small enough to not need its own
+   column), description below, targets row spanning full width.
+   Without this, the 220px targets column squeezes the title /
+   description to a few characters wide and the layout looks
+   character-wrapped on a phone screen (the issue Conal reported). */
+@media (max-width: 720px) {
+  .fit-plan-slot {
+    grid-template-columns: 32px 1fr !important;
+    grid-template-areas:
+      "num main"
+      "targets targets" !important;
+    column-gap: 12px !important;
+    row-gap: 10px !important;
+    padding: 14px 16px !important;
+  }
+  .fit-plan-slot-num { grid-area: num; }
+  .fit-plan-slot-main { grid-area: main; }
+  .fit-plan-slot-targets {
+    grid-area: targets;
+    /* Align the targets numbers left on phone — right-alignment in
+       a full-width row leaves an awkward gap on the left side. */
+    text-align: left !important;
+  }
+  .fit-plan-slot-targets > * {
+    text-align: left !important;
+  }
+}
+
+/* Send-to-client section header — flex-wrap is already on the outer
+   container so the buttons drop to a new line when they don't fit.
+   On the narrowest viewports, the three buttons themselves need
+   room to wrap individually and stay readable. */
+@media (max-width: 480px) {
+  .fit-send-to-client-actions {
+    /* Buttons go full-width-stacked on truly narrow phones — at
+       <480px three side-by-side buttons would otherwise compress
+       label text to a few characters wide. */
+    flex-direction: column !important;
+    align-items: stretch !important;
+    width: 100% !important;
+  }
+  .fit-send-to-client-actions > button {
+    width: 100% !important;
+    text-align: center;
+  }
+}
