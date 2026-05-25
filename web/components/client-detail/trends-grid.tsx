@@ -1,7 +1,25 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { LoadBars, TrendChart } from "@/components/charts";
 import type { MetricRow, SessionRow } from "@/lib/api";
 import { acwrSeries, baseline, dailySeries, loadSeries, recentMean } from "@/lib/series";
+
+// Trends window selector. Day-count maps to the slice we keep from the
+// 60-day fetch. Baselines (mean ± SD shaded band, "vs base" delta in
+// the header) still computed off the full window data so the band
+// doesn't jump when the trainer flips between 7d and 28d — only the
+// rendered series shortens.
+const WINDOWS = [
+  { label: "7d", days: 7 },
+  { label: "28d", days: 28 },
+  { label: "8w", days: 56 },
+] as const;
+type WindowKey = (typeof WINDOWS)[number]["label"];
+
+const WINDOW_DESCRIPTIONS: Record<WindowKey, string> = {
+  "7d": "Last 7 days. Shaded band = 28d baseline mean ± 1 SD.",
+  "28d": "Last 28 days. Shaded band = 28d baseline mean ± 1 SD.",
+  "8w": "Last 8 weeks (56 days). Shaded band = 28d baseline mean ± 1 SD.",
+};
 
 export function TrendsGrid({
   metrics,
@@ -13,35 +31,44 @@ export function TrendsGrid({
   isLoading: boolean;
 }) {
   const today = new Date().toISOString().slice(0, 10);
+  const [window, setWindow] = useState<WindowKey>("28d");
+  const windowDays = WINDOWS.find((w) => w.label === window)?.days ?? 28;
 
   const items = useMemo(() => {
-    const hrvSeries =
+    // Pull the full series, then slice the tail to the chosen window.
+    // The baseline still computes off the full series so the shaded
+    // band stays anchored across window switches — only the rendered
+    // line shortens / lengthens.
+    const sliceToWindow = <T,>(arr: T[]): T[] =>
+      arr.length > windowDays ? arr.slice(-windowDays) : arr;
+
+    const hrvFull =
       dailySeries(metrics, "hrv_rmssd", today).length > 0
         ? dailySeries(metrics, "hrv_rmssd", today)
         : dailySeries(metrics, "hrv_sdnn", today);
-    const rhr = dailySeries(metrics, "resting_hr", today);
-    const sleepH = dailySeries(metrics, "sleep_hours", today);
-    const sleepS = dailySeries(metrics, "sleep_score", today);
-    const tr = dailySeries(metrics, "training_readiness", today);
-    const acwr = acwrSeries(sessions, today);
+    const rhrFull = dailySeries(metrics, "resting_hr", today);
+    const sleepHFull = dailySeries(metrics, "sleep_hours", today);
+    const sleepSFull = dailySeries(metrics, "sleep_score", today);
+    const trFull = dailySeries(metrics, "training_readiness", today);
+    const acwrFull = acwrSeries(sessions, today);
 
     return [
-      { title: "HRV", sub: "ms", data: hrvSeries, base: baseline(hrvSeries), unit: " ms", invert: false },
-      { title: "Resting HR", sub: "bpm", data: rhr, base: baseline(rhr), unit: " bpm", invert: true },
-      { title: "Sleep", sub: "hours", data: sleepH, base: baseline(sleepH), unit: " h", invert: false },
-      { title: "Sleep score", sub: "0–100", data: sleepS, base: baseline(sleepS), unit: "", invert: false },
-      { title: "Readiness", sub: "0–100 composite", data: tr, base: baseline(tr), unit: "", invert: false },
+      { title: "HRV", sub: "ms", data: sliceToWindow(hrvFull), base: baseline(hrvFull), unit: " ms", invert: false },
+      { title: "Resting HR", sub: "bpm", data: sliceToWindow(rhrFull), base: baseline(rhrFull), unit: " bpm", invert: true },
+      { title: "Sleep", sub: "hours", data: sliceToWindow(sleepHFull), base: baseline(sleepHFull), unit: " h", invert: false },
+      { title: "Sleep score", sub: "0–100", data: sliceToWindow(sleepSFull), base: baseline(sleepSFull), unit: "", invert: false },
+      { title: "Readiness", sub: "0–100 composite", data: sliceToWindow(trFull), base: baseline(trFull), unit: "", invert: false },
       {
         title: "ACWR",
         sub: "acute:chronic",
-        data: acwr,
+        data: sliceToWindow(acwrFull),
         base: { mean: 1, sd: 0.2 },
         unit: "",
         invert: true,
         threshold: { value: 1.5, label: "risk" },
       },
     ];
-  }, [metrics, sessions, today]);
+  }, [metrics, sessions, today, windowDays]);
 
   const totalLoad7 = useMemo(() => {
     const series = loadSeries(sessions, today).slice(-7);
@@ -62,15 +89,25 @@ export function TrendsGrid({
             Trends
           </h2>
           <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "2px 0 0" }}>
-            Daily wearable signals, last 28 days. Shaded band = 28d baseline mean ± 1 SD.
+            Daily wearable signals. {WINDOW_DESCRIPTIONS[window]}
           </p>
         </div>
-        <div style={{ display: "flex", gap: 4, fontSize: 12 }}>
-          {["7d", "28d", "8w"].map((w) => (
-            <button key={w} className={w === "28d" ? "btn-chip-on" : "btn-chip"}>
-              {w}
-            </button>
-          ))}
+        <div role="tablist" aria-label="Trends window" style={{ display: "flex", gap: 4, fontSize: 12 }}>
+          {WINDOWS.map((w) => {
+            const on = w.label === window;
+            return (
+              <button
+                key={w.label}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                onClick={() => setWindow(w.label)}
+                className={on ? "btn-chip-on" : "btn-chip"}
+              >
+                {w.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 

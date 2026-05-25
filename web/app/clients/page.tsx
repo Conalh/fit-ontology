@@ -17,6 +17,7 @@ import { SyncStatus } from "@/components/client-detail/sync-status";
 import { SessionsTable } from "@/components/client-detail/sessions-table";
 import { TrendsGrid } from "@/components/client-detail/trends-grid";
 import { ThresholdsPanel } from "@/components/thresholds-panel";
+import { TourCoachMark } from "@/components/tour";
 import { api } from "@/lib/api";
 import { withAlpha } from "@/lib/accent";
 import { useClientAccent } from "@/lib/use-client-accent";
@@ -61,7 +62,11 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
   });
   const metricsQ = useQuery({
     queryKey: ["metrics", clientId],
-    queryFn: () => api.metrics(clientId, 35),
+    // 60 days covers the trends-grid's 8w window (56d) plus a small
+    // buffer for the baseline windows that look back 28d from "today
+    // minus the chart's leftmost day" without ever asking the API
+    // for more data on window change.
+    queryFn: () => api.metrics(clientId, 60),
     enabled: !missing,
   });
   const sessionsQ = useQuery({
@@ -172,11 +177,13 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
 
           <RecoveryGauge score={recQ.data?.recovery_score ?? null} />
 
-          <RecommendationCard
-            rec={recQ.data}
-            isLoading={recQ.isLoading}
-            overrides={overridesQ.data ?? []}
-          />
+          <div id="fit-tour-rec-anchor">
+            <RecommendationCard
+              rec={recQ.data}
+              isLoading={recQ.isLoading}
+              overrides={overridesQ.data ?? []}
+            />
+          </div>
 
           {recQ.data && recQ.data.contraindications.length > 0 && (
             <ContraindicationsCard items={recQ.data.contraindications} />
@@ -217,6 +224,8 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
           onClose={() => setOverrideOpen(false)}
         />
       )}
+
+      <TourCoachMark clientName={clientName} />
     </div>
   );
 }
