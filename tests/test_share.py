@@ -30,13 +30,14 @@ from fit_ontology.db import (
     create_share_token,
     ensure_client,
     insert_metrics,
+    insert_recommendation,
     insert_sessions,
     insert_trainer,
     revoke_share_token,
     set_trainer_password,
     share_lookup,
 )
-from fit_ontology.ontology import MetricKind
+from fit_ontology.ontology import MetricKind, Recommendation
 from fit_ontology.routes import (
     auth as auth_routes,
 )
@@ -260,6 +261,38 @@ def test_get_share_is_public(share_app):
     assert payload["client_first_name"] == "Test"  # "Test Client" → first word
     assert payload["trainer_message"] == "looking strong"
     assert "recommendation" in payload and payload["recommendation"]
+
+
+def test_share_and_dashboard_use_same_weekly_recommendation(share_app):
+    """The public share view should render the same stored weekly
+    verdict the authenticated dashboard uses for that client/week."""
+    _login(share_app)
+    today = date.today()
+    week_of = today - timedelta(days=today.weekday())
+    stored = Recommendation(
+        id="rec_share_sentinel",
+        client_id="c_owned",
+        generated_at=datetime.now(),
+        week_of=week_of,
+        recommendation="Sentinel shared dashboard verdict.",
+        rationale="Same rationale in both surfaces.",
+        source_metric_ids=[],
+        confidence=0.73,
+    )
+    with connect(recommendation_routes.DEFAULT_DB_PATH, read_only=False) as con:
+        insert_recommendation(con, "t_test", stored)
+
+    dashboard = share_app.get("/api/clients/c_owned/recommendation").json()
+    token = share_app.post(
+        "/api/clients/c_owned/share", json={"trainer_message": None},
+    ).json()["token"]
+    share_app.cookies.clear()
+    public = share_app.get(f"/api/share/{token}").json()
+
+    assert public["week_of"] == dashboard["week_of"]
+    assert public["recommendation"] == dashboard["recommendation"]
+    assert public["rationale"] == dashboard["rationale"]
+    assert public["confidence"] == dashboard["confidence"]
 
 
 def test_get_share_omits_pii(share_app):

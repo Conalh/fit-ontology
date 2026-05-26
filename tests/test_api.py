@@ -19,10 +19,11 @@ from fit_ontology.db import (
     connect,
     ensure_client,
     insert_metrics,
+    insert_recommendation,
     insert_sessions,
     insert_trainer,
 )
-from fit_ontology.ontology import MetricKind
+from fit_ontology.ontology import MetricKind, Recommendation
 from fit_ontology.routes import (
     clients as clients_routes,
 )
@@ -31,6 +32,9 @@ from fit_ontology.routes import (
 )
 from fit_ontology.routes import (
     overrides as overrides_routes,
+)
+from fit_ontology.routes import (
+    pdf as pdf_routes,
 )
 from fit_ontology.routes import (
     recommendation as recommendation_routes,
@@ -281,6 +285,39 @@ def test_pdf_endpoint_returns_pdf_bytes(app_with_db):
     assert r.headers["content-type"] == "application/pdf"
     assert r.content.startswith(b"%PDF")
     assert "attachment" in r.headers.get("content-disposition", "")
+
+
+def test_pdf_endpoint_uses_stored_weekly_recommendation(app_with_db, monkeypatch):
+    """PDF export should render the same weekly recommendation the
+    dashboard/share surfaces use, not recompute a route-local verdict."""
+    week_of = date.today() - timedelta(days=date.today().weekday())
+    stored = Recommendation(
+        id="rec_pdf_sentinel",
+        client_id="c_test",
+        generated_at=datetime.now(),
+        week_of=week_of,
+        recommendation="Sentinel stored verdict for PDF export.",
+        rationale="Stored rationale should travel with the export.",
+        source_metric_ids=["m-hrv-1"],
+        confidence=0.42,
+    )
+    with connect(recommendation_routes.DEFAULT_DB_PATH, read_only=False) as con:
+        insert_recommendation(con, DEFAULT_TRAINER_ID, stored)
+
+    captured: dict[str, Recommendation] = {}
+
+    def fake_build_weekly_pdf(*, client_name, client_goal, rec, metrics, today=None, coach_message=None):
+        captured["rec"] = rec
+        return b"%PDF-1.4\n%%EOF"
+
+    monkeypatch.setattr(pdf_routes, "build_weekly_pdf", fake_build_weekly_pdf)
+
+    r = app_with_db.post("/api/clients/c_test/pdf", json={"coach_message": None})
+
+    assert r.status_code == 200, r.text
+    assert captured["rec"].id == "rec_pdf_sentinel"
+    assert captured["rec"].recommendation == "Sentinel stored verdict for PDF export."
+    assert captured["rec"].confidence == 0.42
 
 
 def test_post_client_creates_row(app_with_db):

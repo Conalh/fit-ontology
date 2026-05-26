@@ -28,8 +28,6 @@ What it EXCLUDES (PII the client doesn't need from a share URL):
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
-
 import duckdb
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -38,16 +36,11 @@ from ..db import (
     SHARE_TTL_DAYS_DEFAULT,
     connect,
     create_share_token,
-    metrics_for_client,
-    plan_for_week,
-    recommendation_for_week,
     record_audit,
-    sessions_for_client,
     share_lookup,
-    thresholds_for_client,
 )
 from ..rate_limit import SHARE_MINT_LIMIT, enforce
-from ..reasoning import compute_recovery_score, generate_recommendation
+from ..weekly_state import ClientNotFoundError, build_weekly_client_state
 from .deps import forbid_demo_trainer, read_only_conn
 from .schemas import (
     ShareCreateRequest,
@@ -126,40 +119,21 @@ def get_share(
     client_id = record["client_id"]
 
     # Pull the client row (just the name — PII fields stay server-side).
-    row = con.execute(
-        "SELECT name FROM clients WHERE id = ? AND trainer_id = ?",
-        [client_id, trainer_id],
-    ).fetchone()
-    if not row:
+    try:
+        state = build_weekly_client_state(con, trainer_id, client_id)
+    except ClientNotFoundError:
         # Client was deleted after the token was minted. Treat as
         # expired from the public POV.
-        raise HTTPException(status_code=410, detail="Share link has expired")
-    full_name = row[0]
+        raise HTTPException(status_code=410, detail="Share link has expired") from None
+    full_name = state.client_name
     first_name = full_name.split(" ", 1)[0] if full_name else "you"
 
     # Current week's verdict — same logic as the dashboard's
     # /recommendation endpoint, but read-only and without
     # lazy-persisting (the dashboard's POST writes are the canonical
     # path; the share view should never create rows).
-    today = date.today()
-    week_of = today - timedelta(days=today.weekday())
-
-    stored = recommendation_for_week(con, trainer_id, client_id, week_of)
-    metrics = metrics_for_client(con, trainer_id, client_id, days=35)
-    sessions = sessions_for_client(con, trainer_id, client_id, days=35)
-    overrides = thresholds_for_client(con, trainer_id, client_id)
-
-    if stored is not None:
-        rec_text = stored.recommendation
-        rec_rationale = stored.rationale
-        confidence = stored.confidence
-    else:
-        rec = generate_recommendation(client_id, metrics, sessions, thresholds=overrides)
-        rec_text = rec.recommendation
-        rec_rationale = rec.rationale
-        confidence = rec.confidence
-
-    score = compute_recovery_score(metrics, sessions, today=today, thresholds=overrides)
+    rec = state.recommendation
+    score = state.recovery_score
     recovery = {
         "composite": score.composite,
         "hrv": score.hrv,
@@ -168,7 +142,6 @@ def get_share(
         "acwr": score.acwr,
     }
 
-    plan_rows = plan_for_week(con, trainer_id, client_id, week_of)
     plan = [
         SharePlannedSession(
             slot=ps.slot,
@@ -179,15 +152,15 @@ def get_share(
             target_rpe=ps.target_rpe,
             done=ps.executed_session_id is not None,
         )
-        for ps in plan_rows
+        for ps in state.plan
     ]
 
     return ShareViewResponse(
         client_first_name=first_name,
-        week_of=week_of,
-        recommendation=rec_text,
-        rationale=rec_rationale,
-        confidence=confidence,
+        week_of=state.week_of,
+        recommendation=rec.recommendation,
+        rationale=rec.rationale,
+        confidence=rec.confidence,
         recovery_score=recovery,
         plan=plan,
         trainer_message=record["trainer_message"],

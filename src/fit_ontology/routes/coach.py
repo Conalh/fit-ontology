@@ -10,8 +10,6 @@ the message anywhere on its own.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
-
 import duckdb
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -25,16 +23,11 @@ from ..coach_draft import (
 from ..db import (
     DEFAULT_DB_PATH,
     connect,
-    metrics_for_client,
     overrides_for_client,
-    plan_for_week,
-    recommendation_for_week,
     record_audit,
-    sessions_for_client,
-    thresholds_for_client,
 )
 from ..rate_limit import COACH_DRAFT_LIMIT, enforce
-from ..reasoning import compute_recovery_score, generate_recommendation
+from ..weekly_state import ClientNotFoundError, build_weekly_client_state
 from .deps import forbid_demo_trainer
 from .schemas import CoachDraftResponse
 
@@ -60,43 +53,30 @@ def post_coach_draft(
     """
     enforce(COACH_DRAFT_LIMIT, trainer_id)
 
-    today = date.today()
-    week_of = today - timedelta(days=today.weekday())
-
     # ── Gather phase (read-only) ──
     with connect(DEFAULT_DB_PATH, read_only=True) as rcon:
-        row = rcon.execute(
-            "SELECT name, goal FROM clients WHERE id = ? AND trainer_id = ?",
-            [client_id, trainer_id],
-        ).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail=f"No client with id {client_id}")
-        client_name, client_goal = row
+        try:
+            state = build_weekly_client_state(rcon, trainer_id, client_id)
+        except ClientNotFoundError:
+            raise HTTPException(status_code=404, detail=f"No client with id {client_id}") from None
+        client_name = state.client_name
+        client_goal = state.client_goal
 
         # Verdict + rationale — prefer the persisted recommendation
         # for this week so the draft reflects the same call the
         # trainer is looking at on screen.
-        stored = recommendation_for_week(rcon, trainer_id, client_id, week_of)
-        metrics = metrics_for_client(rcon, trainer_id, client_id, days=35)
-        sessions = sessions_for_client(rcon, trainer_id, client_id, days=35)
-        thresh = thresholds_for_client(rcon, trainer_id, client_id)
-        if stored is not None:
-            rec_text = stored.recommendation
-            rec_rationale = stored.rationale
-            confidence = stored.confidence
-        else:
-            rec = generate_recommendation(client_id, metrics, sessions, thresholds=thresh)
-            rec_text = rec.recommendation
-            rec_rationale = rec.rationale
-            confidence = rec.confidence
-
-        score = compute_recovery_score(metrics, sessions, today=today, thresholds=thresh)
+        rec = state.recommendation
+        rec_text = rec.recommendation
+        rec_rationale = rec.rationale
+        confidence = rec.confidence
+        score = state.recovery_score
+        week_of = state.week_of
 
         # Plan adherence for THIS week only. Different from
         # calibration's all-clients-all-time view — Claude needs
         # "what's going on this week with this client," not
         # historical aggregates.
-        plan_rows = plan_for_week(rcon, trainer_id, client_id, week_of)
+        plan_rows = state.plan
         if plan_rows:
             total_slots = len(plan_rows)
             matched_slots = sum(1 for p in plan_rows if p.executed_session_id is not None)

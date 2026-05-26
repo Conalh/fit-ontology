@@ -31,11 +31,12 @@ from fit_ontology.db import (
     ensure_client,
     insert_metrics,
     insert_override,
+    insert_recommendation,
     insert_sessions,
     insert_trainer,
     set_trainer_password,
 )
-from fit_ontology.ontology import MetricKind, OverrideAction, RecommendationOverride
+from fit_ontology.ontology import MetricKind, OverrideAction, Recommendation, RecommendationOverride
 from fit_ontology.rate_limit import reset as rate_limit_reset
 from fit_ontology.routes import (
     auth as auth_routes,
@@ -310,3 +311,33 @@ def test_draft_uses_recent_overrides_in_payload(coach_app, monkeypatch):
     user_text = fake.messages.create_calls[0]["messages"][0]["content"]
     assert "recent_overrides" in user_text
     assert "reject" in user_text  # the seeded action
+
+
+def test_draft_uses_stored_weekly_recommendation_in_payload(coach_app, monkeypatch):
+    client, db_path = coach_app
+    fake = _install_fake_anthropic(monkeypatch, "ok")
+    today = date.today()
+    week_of = today - timedelta(days=today.weekday())
+
+    with connect(db_path, read_only=False) as con:
+        insert_recommendation(
+            con,
+            "t_test",
+            Recommendation(
+                id="rec_coach_sentinel",
+                client_id="c_owned",
+                generated_at=datetime.now(),
+                week_of=week_of,
+                recommendation="Sentinel coach draft verdict.",
+                rationale="Stored coach rationale.",
+                source_metric_ids=[],
+                confidence=0.61,
+            ),
+        )
+
+    r = client.post("/api/clients/c_owned/coach-message/draft")
+    assert r.status_code == 200, r.text
+
+    user_text = fake.messages.create_calls[0]["messages"][0]["content"]
+    assert "Sentinel coach draft verdict." in user_text
+    assert "Stored coach rationale." in user_text

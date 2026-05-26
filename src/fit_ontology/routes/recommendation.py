@@ -2,30 +2,22 @@
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
 
 import duckdb
-import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 
-from ..contraindications import match_contraindications
 from ..db import (
     DEFAULT_DB_PATH,
     connect,
     insert_recommendation,
-    metrics_for_client,
-    recommendation_for_week,
     recommendations_for_client,
-    sessions_for_client,
-    thresholds_for_client,
 )
 from ..demo import is_demo_trainer
 from ..reasoning import (
     FLAG_CITATIONS,
-    compute_recovery_score,
     compute_trend_diagnostics,
-    generate_recommendation,
 )
+from ..weekly_state import ClientNotFoundError, build_weekly_client_state
 from .deps import current_trainer_id, read_only_conn
 from .schemas import (
     ContraindicationItem,
@@ -59,56 +51,30 @@ def get_recommendation(
     refuses to open write while any read handle is alive in the same
     process, so we read first (closing the connection), then write.
     """
-    today = date.today()
-    week_of = today - timedelta(days=today.weekday())  # Monday
-
-    needs_persist = False
-    rec = None
-    injury: str | None = None
-    # We always need the current metrics + sessions for the live recovery
-    # gauge, whether or not the verdict itself was already persisted.
-    metrics: pd.DataFrame | None = None
-    sessions: pd.DataFrame | None = None
-    overrides: dict | None = None
-
     with connect(DEFAULT_DB_PATH, read_only=True) as rcon:
-        stored = recommendation_for_week(rcon, trainer_id, client_id, week_of)
-        injury_row = rcon.execute(
-            "SELECT injury_history FROM clients WHERE id = ? AND trainer_id = ?",
-            [client_id, trainer_id],
-        ).fetchone()
-        if injury_row is None:
-            raise HTTPException(status_code=404, detail=f"No client with id {client_id}")
-        injury = injury_row[0]
-
-        metrics = metrics_for_client(rcon, trainer_id, client_id, days=35)
-        sessions = sessions_for_client(rcon, trainer_id, client_id, days=35)
-        overrides = thresholds_for_client(rcon, trainer_id, client_id)
-
-        if stored is not None:
-            rec = stored
-        else:
-            rec = generate_recommendation(client_id, metrics, sessions, thresholds=overrides)
-            needs_persist = True
+        try:
+            state = build_weekly_client_state(rcon, trainer_id, client_id)
+        except ClientNotFoundError:
+            raise HTTPException(status_code=404, detail=f"No client with id {client_id}") from None
 
     # Demo trainer: skip the persist branch. Visitor gets a freshly
     # computed verdict rendered in memory, no row lands in the DB,
     # no writer-lock contention from demo traffic.
-    if needs_persist and not is_demo_trainer(trainer_id):
+    if state.recommendation_needs_persist and not is_demo_trainer(trainer_id):
         try:
             with connect(DEFAULT_DB_PATH, read_only=False) as wcon:
-                insert_recommendation(wcon, trainer_id, rec)
+                insert_recommendation(wcon, trainer_id, state.recommendation)
         except duckdb.IOException as e:
             raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
 
     contras = [
         ContraindicationItem(kind=c.kind, title=c.title, advice=c.advice, source_phrase=c.source_phrase)
-        for c in match_contraindications(injury)
+        for c in state.contraindications
     ]
 
     # Recovery gauge — fresh on every call, not persisted. The verdict
     # carries the Monday-morning decision; this carries today's snapshot.
-    score = compute_recovery_score(metrics, sessions, today=today, thresholds=overrides)
+    score = state.recovery_score
     recovery = RecoveryScoreResponse(
         composite=score.composite,
         hrv=score.hrv,
@@ -124,7 +90,7 @@ def get_recommendation(
     # within a week; that's acceptable because the chips are
     # "current state at a glance" and the rationale is "what we
     # decided on Monday."
-    trend_diag = compute_trend_diagnostics(metrics, today, overrides)
+    trend_diag = compute_trend_diagnostics(state.metrics, state.today, state.thresholds)
     trend_details = {
         kind: TrendDetailResponse(
             kind=d.kind,
@@ -141,7 +107,7 @@ def get_recommendation(
         for kind, d in trend_diag.items()
     }
 
-    assert rec is not None  # for type-checkers; the branches above both set it
+    rec = state.recommendation
     return RecommendationResponse(
         id=rec.id, client_id=rec.client_id, week_of=rec.week_of,
         recommendation=rec.recommendation, rationale=rec.rationale,
