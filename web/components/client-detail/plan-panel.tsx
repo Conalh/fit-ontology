@@ -252,6 +252,7 @@ function PlannedSessionEditor({
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["plan", clientId] });
+      qc.invalidateQueries({ queryKey: ["weekly-delta", clientId] });
       toast.show(`Slot ${session.slot} updated.`);
       onDone();
     },

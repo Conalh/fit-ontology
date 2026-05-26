@@ -337,6 +337,24 @@ class ActionQueueItem(BaseModel):
     href: str
 
 
+class WeeklyDeltaResponse(BaseModel):
+    """Current-week plan-vs-reality summary for one client."""
+    week_of: date
+    status: str  # "on_track" | "watch" | "off_track" | "no_plan"
+    headline: str
+    bullets: list[str]
+    planned_sessions: int
+    completed_sessions: int
+    completion_rate: float | None
+    target_load_au: int
+    completed_target_load_au: int
+    actual_load_au: int
+    matched_load_delta_pct: float | None
+    current_week_load_au: int
+    previous_week_load_au: int
+    week_load_change_pct: float | None
+
+
 # ─── Calibration ────────────────────────────────────────────────────
 
 class WeeklyAgreement(BaseModel):

@@ -7,6 +7,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends
 
 from ..db import list_clients
+from ..weekly_delta import build_weekly_delta
 from ..weekly_state import build_weekly_client_state
 from .deps import current_trainer_id, read_only_conn
 from .helpers import classify_rec
@@ -15,7 +16,7 @@ from .schemas import ActionQueueItem
 router = APIRouter()
 
 _PRIORITY_RANK = {"high": 0, "medium": 1, "low": 2}
-_KIND_RANK = {"review_recommendation": 0, "sync_data": 1, "build_plan": 2}
+_KIND_RANK = {"review_recommendation": 0, "sync_data": 1, "review_weekly_delta": 2, "build_plan": 3}
 
 
 def _last_metric_days(metrics: pd.DataFrame, today: date) -> int | None:
@@ -134,6 +135,24 @@ def get_action_queue(
                 cta_label="Open plan",
                 href=client_href,
             ))
+        else:
+            delta = build_weekly_delta(con, trainer_id, cid, today=today)
+            if delta.status in {"off_track", "watch"}:
+                detail = next(
+                    (bullet for bullet in delta.bullets if "target" in bullet.lower()),
+                    delta.bullets[0] if delta.bullets else delta.headline,
+                )
+                items.append(_item(
+                    kind="review_weekly_delta",
+                    priority="high" if delta.status == "off_track" else "medium",
+                    client_id=cid,
+                    client_name=state.client_name,
+                    client_goal=state.client_goal,
+                    title=f"Review plan drift for {state.client_name}",
+                    detail=detail,
+                    cta_label="Review week",
+                    href=client_href,
+                ))
 
     return sorted(
         items,

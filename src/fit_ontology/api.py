@@ -34,6 +34,7 @@ from .routes import (
     calibration,
     clients,
     coach,
+    delta,
     intake,
     metrics,
     overrides,
@@ -306,6 +307,7 @@ app.include_router(actions.router)
 app.include_router(share.router)
 app.include_router(intake.router)
 app.include_router(clients.router)
+app.include_router(delta.router)
 app.include_router(metrics.router)
 app.include_router(recommendation.router)
 app.include_router(overrides.router)

@@ -52,6 +52,7 @@ function UploadInner({ clientId }: { clientId: string }) {
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["metrics", clientId] });
       qc.invalidateQueries({ queryKey: ["sessions", clientId] });
+      qc.invalidateQueries({ queryKey: ["weekly-delta", clientId] });
       qc.invalidateQueries({ queryKey: ["roster"] });
       toast.show(`Imported ${data.inserted} row${data.inserted === 1 ? "" : "s"}.`);
     },

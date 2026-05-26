@@ -20,11 +20,12 @@ from fit_ontology.db import (
     connect,
     ensure_client,
     insert_metrics,
+    insert_plan,
     insert_recommendation,
     insert_sessions,
     insert_trainer,
 )
-from fit_ontology.ontology import MetricKind, Recommendation
+from fit_ontology.ontology import MetricKind, PlannedSession, PlanSource, Recommendation, SessionType
 from fit_ontology.routes import (
     clients as clients_routes,
 )
@@ -382,6 +383,195 @@ def test_plan_get_returns_in_memory_plan_when_writer_is_busy(app_with_db, monkey
     body = r.json()
     assert body["sessions"]
     assert body["verdict"] in {"DELOAD", "CONSERVATIVE", "STANDARD"}
+
+
+def test_weekly_delta_summarizes_plan_vs_reality(app_with_db):
+    today = date.today()
+    week_of = today - timedelta(days=today.weekday())
+    previous_week = week_of - timedelta(days=7)
+
+    with connect(recommendation_routes.DEFAULT_DB_PATH, read_only=False) as con:
+        ensure_client(con, DEFAULT_TRAINER_ID, "c_delta", name="Delta Client")
+        insert_metrics(
+            con,
+            DEFAULT_TRAINER_ID,
+            pd.DataFrame([
+                {
+                    "id": "m_delta_recent",
+                    "client_id": "c_delta",
+                    "date": today,
+                    "source": "garmin",
+                    "kind": MetricKind.HRV_RMSSD.value,
+                    "value": 55.0,
+                    "unit": "ms",
+                }
+            ]),
+        )
+        insert_sessions(
+            con,
+            DEFAULT_TRAINER_ID,
+            pd.DataFrame([
+                {
+                    "id": "s_delta_done",
+                    "client_id": "c_delta",
+                    "date": week_of,
+                    "type": "strength",
+                    "duration_min": 60,
+                    "rpe": 5,
+                    "notes": "",
+                },
+                {
+                    "id": "s_delta_previous",
+                    "client_id": "c_delta",
+                    "date": previous_week,
+                    "type": "strength",
+                    "duration_min": 30,
+                    "rpe": 5,
+                    "notes": "",
+                },
+            ]),
+        )
+        insert_plan(
+            con,
+            DEFAULT_TRAINER_ID,
+            [
+                PlannedSession(
+                    id="p_delta_1",
+                    client_id="c_delta",
+                    week_of=week_of,
+                    slot=1,
+                    type=SessionType.STRENGTH,
+                    title="Strength",
+                    description="Do the work.",
+                    target_duration_min=40,
+                    target_load_au=200,
+                    target_rpe=5,
+                    contraindications=[],
+                    source=PlanSource.ENGINE,
+                    generated_at=datetime.now(),
+                    executed_session_id="s_delta_done",
+                ),
+                PlannedSession(
+                    id="p_delta_2",
+                    client_id="c_delta",
+                    week_of=week_of,
+                    slot=2,
+                    type=SessionType.CARDIO,
+                    title="Z2",
+                    description="Easy aerobic.",
+                    target_duration_min=50,
+                    target_load_au=300,
+                    target_rpe=6,
+                    contraindications=[],
+                    source=PlanSource.ENGINE,
+                    generated_at=datetime.now(),
+                    executed_session_id=None,
+                ),
+            ],
+        )
+
+    r = app_with_db.get("/api/clients/c_delta/weekly-delta")
+
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["status"] == "off_track"
+    assert data["planned_sessions"] == 2
+    assert data["completed_sessions"] == 1
+    assert data["completion_rate"] == 0.5
+    assert data["target_load_au"] == 500
+    assert data["completed_target_load_au"] == 200
+    assert data["actual_load_au"] == 300
+    assert data["matched_load_delta_pct"] == 50.0
+    assert data["current_week_load_au"] == 300
+    assert data["previous_week_load_au"] == 150
+    assert data["week_load_change_pct"] == 100.0
+    assert "1 of 2 planned sessions completed" in data["bullets"][0]
+    assert any("50% above target" in bullet for bullet in data["bullets"])
+
+
+def test_weekly_delta_404s_for_unknown_client(app_with_db):
+    r = app_with_db.get("/api/clients/c_missing/weekly-delta")
+    assert r.status_code == 404
+
+
+def test_action_queue_surfaces_plan_reality_drift(app_with_db):
+    today = date.today()
+    week_of = today - timedelta(days=today.weekday())
+    previous_week = week_of - timedelta(days=7)
+
+    with connect(recommendation_routes.DEFAULT_DB_PATH, read_only=False) as con:
+        ensure_client(con, DEFAULT_TRAINER_ID, "c_delta", name="Delta Client")
+        insert_metrics(
+            con,
+            DEFAULT_TRAINER_ID,
+            pd.DataFrame([
+                {
+                    "id": "m_delta_recent_queue",
+                    "client_id": "c_delta",
+                    "date": today,
+                    "source": "garmin",
+                    "kind": MetricKind.HRV_RMSSD.value,
+                    "value": 55.0,
+                    "unit": "ms",
+                }
+            ]),
+        )
+        insert_sessions(
+            con,
+            DEFAULT_TRAINER_ID,
+            pd.DataFrame([
+                {
+                    "id": "s_delta_done",
+                    "client_id": "c_delta",
+                    "date": week_of,
+                    "type": "strength",
+                    "duration_min": 60,
+                    "rpe": 5,
+                    "notes": "",
+                },
+                {
+                    "id": "s_delta_previous",
+                    "client_id": "c_delta",
+                    "date": previous_week,
+                    "type": "strength",
+                    "duration_min": 30,
+                    "rpe": 5,
+                    "notes": "",
+                },
+            ]),
+        )
+        insert_plan(
+            con,
+            DEFAULT_TRAINER_ID,
+            [
+                PlannedSession(
+                    id="p_delta_1",
+                    client_id="c_delta",
+                    week_of=week_of,
+                    slot=1,
+                    type=SessionType.STRENGTH,
+                    title="Strength",
+                    description="Do the work.",
+                    target_duration_min=40,
+                    target_load_au=200,
+                    target_rpe=5,
+                    contraindications=[],
+                    source=PlanSource.ENGINE,
+                    generated_at=datetime.now(),
+                    executed_session_id="s_delta_done",
+                )
+            ],
+        )
+
+    r = app_with_db.get("/api/action-queue")
+
+    assert r.status_code == 200, r.text
+    items = r.json()
+    drift = next(item for item in items if item["kind"] == "review_weekly_delta")
+    assert drift["client_id"] == "c_delta"
+    assert drift["priority"] == "high"
+    assert "plan drift" in drift["title"].lower()
+    assert "50% above target" in drift["detail"]
 
 
 def test_override_roundtrip(app_with_db):

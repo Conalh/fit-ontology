@@ -354,6 +354,23 @@ export interface PlanResponse {
   sessions: PlannedSession[];
 }
 
+export interface WeeklyDelta {
+  week_of: string;
+  status: "on_track" | "watch" | "off_track" | "no_plan" | string;
+  headline: string;
+  bullets: string[];
+  planned_sessions: number;
+  completed_sessions: number;
+  completion_rate: number | null;
+  target_load_au: number;
+  completed_target_load_au: number;
+  actual_load_au: number;
+  matched_load_delta_pct: number | null;
+  current_week_load_au: number;
+  previous_week_load_au: number;
+  week_load_change_pct: number | null;
+}
+
 export interface AskResponse {
   answer: string;
   traces: AskTrace[];
@@ -446,6 +463,8 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   plan: (clientId: string) => request<PlanResponse>(`/api/clients/${clientId}/plan`),
+  weeklyDelta: (clientId: string) =>
+    request<WeeklyDelta>(`/api/clients/${clientId}/weekly-delta`),
   patchPlannedSession: (
     clientId: string,
     slot: number,

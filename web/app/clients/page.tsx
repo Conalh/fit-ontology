@@ -16,6 +16,7 @@ import { SendToClient } from "@/components/client-detail/send-to-client";
 import { SyncStatus } from "@/components/client-detail/sync-status";
 import { SessionsTable } from "@/components/client-detail/sessions-table";
 import { TrendsGrid } from "@/components/client-detail/trends-grid";
+import { WeeklyDeltaCard } from "@/components/client-detail/weekly-delta-card";
 import { ThresholdsPanel } from "@/components/thresholds-panel";
 import { TourCoachMark } from "@/components/tour";
 import { api } from "@/lib/api";
@@ -75,6 +76,11 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
     queryFn: () => api.sessions(clientId, 35),
     enabled: !missing,
   });
+  const weeklyDeltaQ = useQuery({
+    queryKey: ["weekly-delta", clientId],
+    queryFn: () => api.weeklyDelta(clientId),
+    enabled: !missing,
+  });
   const overridesQ = useQuery({
     queryKey: ["overrides", clientId],
     queryFn: () => api.overrides(clientId, 20),
@@ -91,6 +97,7 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
       qc.invalidateQueries({ queryKey: ["rec", clientId] });
       qc.invalidateQueries({ queryKey: ["rec-history", clientId] });
       qc.invalidateQueries({ queryKey: ["plan", clientId] });
+      qc.invalidateQueries({ queryKey: ["weekly-delta", clientId] });
       qc.invalidateQueries({ queryKey: ["roster"] });
       qc.invalidateQueries({ queryKey: ["action-queue"] });
     },
@@ -207,6 +214,11 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
           )}
 
           <PlanPanel clientId={clientId} />
+
+          <WeeklyDeltaCard
+            delta={weeklyDeltaQ.data}
+            isLoading={weeklyDeltaQ.isLoading}
+          />
 
           <SendToClient
             clientId={clientId}
