@@ -33,6 +33,42 @@ Each signal is graded mild / moderate / severe. The aggregator weighs them
 together rather than counting binary flags — one severe signal alone
 triggers a deload; two moderate signals do the same; mixed mild signals
 yield a conservative progression.
+
+Engine v2 — dual-window trend detection
+---------------------------------------
+
+Trend signals (hrv_trend_down / rhr_trend_up / sleep_trend_down) use a
+dual-window combiner rather than a single 7-day OLS slope:
+
+  - Acute window: 7-day ordinary least-squares slope, normalised by the
+    28-day baseline SD. Responsive to recent changes, but noisy on
+    short samples — a ±3-bpm random fluctuation over 7 days can trip
+    the severe threshold by chance.
+
+  - Chronic window: 28-day exponentially-weighted moving average (halflife
+    10 days), with OLS slope taken on the smoothed series. Damps short-
+    window noise so the slope reflects sustained direction. Plews,
+    Laursen et al. (2013) explicitly favour rolling-mean windows on the
+    order of 4 weeks for monitoring purposes, exactly because the
+    7-day variance is too high at the individual level.
+
+  - Combiner (combine_acute_chronic): chronic absence demotes acute by
+    one severity band (the noise-suppression rule — Holmes' acute-only
+    HRV crash collapses from severe to moderate), chronic dominance
+    promotes acute by one (early warning of a slow drift), chronic
+    confirmation holds at acute.
+
+  - Level-dominates-trend safety rule: when composite recovery score is
+    ≥ 90, every trend signal is demoted one more band before counting.
+    The "recovery markers across the board are great but two trends
+    are technically firing" UX contradiction (the original Bennet
+    screen-test) collapses cleanly with this in place.
+
+The acute thresholds (SLOPE_*_SD_PER_DAY) and chronic thresholds
+(CHRONIC_SLOPE_*_SD_PER_DAY) live as separate constants because the
+EWMA smoother halves the slope variance — what fires at 0.20 SD/day on
+the raw 7-day OLS would barely register on the 28-day EWMA. Both sets
+are tunable per client via the thresholds plumbing.
 """
 from __future__ import annotations
 

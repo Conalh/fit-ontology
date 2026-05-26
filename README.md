@@ -180,6 +180,8 @@ Every signal includes its summary, severity, and the source IDs that fed it (met
 
 Alongside the verdict, the engine also computes a **0–100 composite recovery score** (HRV / sleep / RHR / ACWR, weighted) that the dashboard surfaces as a gauge. It uses the same windows and thresholds as the verdict engine, so the gauge and the verdict can never disagree.
 
+**Engine v2 — dual-window trend detection.** The three trend detectors (HRV / RHR / sleep) each run two slope estimators on every signal: a 7-day OLS for acute changes and a 28-day EWMA (halflife=10 days) for sustained drift. The combiner demotes acute-only firings by one severity band (the noise-suppression rule — most published trend methods acknowledge the 7-day window is too noisy on its own to drive a verdict) and promotes acute-plus-chronic agreement. A second safety rule fires when composite recovery ≥ 90: trend signals get demoted again, on the basis that excellent levels shouldn't be overridden by borderline trend math. On the recommendation card, each trend chip carries a `7d` / `28d` / `7d + 28d` badge so the trainer can see which window(s) actually fired before clicking through to the popover that shows the raw slope numbers. Plews, Laursen et al. (2013) recommend rolling-mean windows of ~4 weeks for individual-level monitoring exactly because the 7-day variance is too high to act on alone.
+
 The baseline window length itself is data-driven: `recommend_baseline_window` picks 14, 28, or 56 days per client by finding the shortest window whose newer/older halves don't drift apart by more than 0.5 SD. Falls back to the 28-day literature default when no candidate settles.
 
 Thresholds, citations, and references live in [`src/fit_ontology/reasoning.py`](src/fit_ontology/reasoning.py):
@@ -231,7 +233,7 @@ pip install -e .[dev]
 pytest -q
 ```
 
-239 tests covering the reasoning branches (level + trend detectors, recovery score, baseline-window auto-fit, per-client threshold overrides), the planning templates and plan-vs-execution matcher, contraindications routing, the override log roundtrip, the assistant tool routing, the Apple Health and Garmin activity parsers, the PDF report, the deterministic metric-ID dedup, multi-tenant isolation across reads + writes, the audit log + rate-limit + security-header + CSP middleware, the share-token surface, the intake-token surface (helpers + mint + public submit), the Coach Assistant draft endpoint, demo-mode write-rejection, and every FastAPI route. CI runs the same suite on Python 3.11 and 3.12 for every push and PR
+280 tests covering the reasoning branches (level + trend detectors, dual-window acute/chronic combiner + level-dominates safety rule, recovery score, baseline-window auto-fit, per-client threshold overrides), the planning templates and plan-vs-execution matcher, contraindications routing, the override log roundtrip, the assistant tool routing, the Apple Health and Garmin activity parsers, the PDF report, the deterministic metric-ID dedup, multi-tenant isolation across reads + writes, the audit log + rate-limit + security-header + CSP middleware, the share-token surface, the intake-token surface (helpers + mint + public submit), the Coach Assistant draft endpoint, demo-mode write-rejection, and every FastAPI route. CI runs the same suite on Python 3.11 and 3.12 for every push and PR
 ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)).
 
 ## Deploy

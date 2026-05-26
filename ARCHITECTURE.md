@@ -147,7 +147,14 @@ up a server.
 - **`reasoning.py`** — nine literature-backed signal detectors
   (HRV level + trend, RHR level + trend, sleep level + trend,
   ACWR, RPE drift, Training Readiness), each producing a
-  severity grade. Weighted into a single recommendation.
+  severity grade. Weighted into a single recommendation. The
+  three trend detectors run a dual-window combiner (7-day OLS
+  acute + 28-day EWMA chronic) so a slope firing on noise gets
+  demoted by one severity band when chronic disagrees; a
+  level-dominates safety rule additionally demotes trend signals
+  one more band when composite recovery is ≥ 90, so a "97/100
+  recovery + trend down" verdict can't read as Deload. Both
+  thresholds are tunable per-client.
 - **`planning.py`** — turns a recommendation into a structured
   weekly plan. Templates per verdict (3 slots for deload, 4 for
   conservative, match recent cadence for standard). Deterministic
@@ -395,6 +402,6 @@ web/
 data/synthetic/         Seed data for build_db.py + demo mode
 
 scripts/                build_db, sync_garmin, trainer admin CLI
-tests/                  pytest, 239 tests
+tests/                  pytest, 280 tests
 docs/                   deploy runbook
 ```

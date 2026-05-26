@@ -92,7 +92,7 @@ export const FLAG_META: Record<string, FlagMeta> = {
   },
   hrv_trend_down: {
     description:
-      "HRV has been trending downward over the recent rolling window — an early sign of accumulating stress before any single day looks bad.",
+      "HRV has been trending downward — an early sign of accumulating stress before any single day looks bad. Engine v2 checks both a 7-day acute slope and a 28-day chronic (EWMA) slope; the chip badge shows which window(s) fired, and the verdict combiner demotes acute-only readings to dampen noise.",
   },
   rhr_above_baseline: {
     description:
@@ -100,7 +100,7 @@ export const FLAG_META: Record<string, FlagMeta> = {
   },
   rhr_trend_up: {
     description:
-      "Resting heart rate has been climbing over the recent rolling window — same story as the absolute elevation, just earlier in its development.",
+      "Resting heart rate has been climbing — same story as the absolute elevation, just earlier in its development. Engine v2 checks both 7-day acute and 28-day chronic slopes; the badge tells you which window(s) agreed.",
   },
   sleep_deficit: {
     description:
@@ -108,7 +108,7 @@ export const FLAG_META: Record<string, FlagMeta> = {
   },
   sleep_trend_down: {
     description:
-      "Sleep duration has been eroding over recent nights even if individual nights still look acceptable.",
+      "Sleep duration has been eroding even if individual nights still look acceptable. Engine v2 checks both 7-day acute and 28-day chronic slopes; the badge tells you whether the erosion is recent or sustained.",
   },
   rpe_rising: {
     description:
