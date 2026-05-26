@@ -202,6 +202,7 @@ export interface OverrideRow {
   system_recommendation: string;
   system_confidence: number;
   trainer_action: "accept" | "edit" | "reject";
+  trainer_recommendation: string | null;
   applied_load_change_pct: number | null;
   trainer_note: string | null;
   created_at: string;
@@ -407,6 +408,7 @@ export const api = {
     system_recommendation: string;
     system_confidence: number;
     trainer_action: "accept" | "edit" | "reject";
+    trainer_recommendation?: string | null;
     applied_load_change_pct?: number | null;
     trainer_note?: string | null;
   }) =>

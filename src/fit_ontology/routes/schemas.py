@@ -267,6 +267,7 @@ class OverrideResponse(BaseModel):
     system_recommendation: str
     system_confidence: float
     trainer_action: str
+    trainer_recommendation: str | None = None
     applied_load_change_pct: float | None
     trainer_note: str | None
     created_at: datetime
@@ -277,6 +278,7 @@ class OverrideCreate(BaseModel):
     system_recommendation: str
     system_confidence: float = Field(ge=0.0, le=1.0)
     trainer_action: OverrideAction
+    trainer_recommendation: str | None = Field(default=None, max_length=500)
     applied_load_change_pct: float | None = Field(default=None, ge=-100.0, le=100.0)
     trainer_note: str | None = None
 

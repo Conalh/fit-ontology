@@ -48,6 +48,7 @@ def _make_override(client_id: str, week_of: date, action: OverrideAction, **kw) 
         system_recommendation=kw.get("system_recommendation", "Deload week: reduce training load by 20%."),
         system_confidence=kw.get("system_confidence", 0.9),
         trainer_action=action,
+        trainer_recommendation=kw.get("trainer_recommendation"),
         applied_load_change_pct=kw.get("applied_load_change_pct"),
         trainer_note=kw.get("trainer_note"),
         created_at=kw.get("created_at", datetime.now()),
@@ -106,6 +107,29 @@ def test_latest_override_returns_most_recent(tmp_path: Path) -> None:
 
         history = overrides_for_client(con, DEFAULT_TRAINER_ID, client_id)
         assert len(history) == 2  # both preserved
+
+
+def test_override_roundtrip_preserves_exact_trainer_recommendation(tmp_path: Path) -> None:
+    """The trainer's chosen call is load-bearing data, not something we
+    can infer later from accept/edit/reject. A Deload -> Conservative
+    override must roundtrip as Conservative, not just "reject"."""
+    db_path = tmp_path / "test.duckdb"
+    week_of = date(2026, 5, 18)
+
+    with connect(db_path, read_only=False) as con:
+        client_id = _seed_client(con)
+        insert_override(con, DEFAULT_TRAINER_ID, _make_override(
+            client_id,
+            week_of,
+            OverrideAction.REJECT,
+            system_recommendation="Deload week: reduce training load by 20%.",
+            trainer_recommendation="Conservative progression: hold volume, increase load ~5%.",
+            trainer_note="in-person session looked better than wearable data",
+        ))
+
+    with connect(db_path, read_only=True) as con:
+        latest = latest_override_for_week(con, DEFAULT_TRAINER_ID, "c_test", week_of)
+        assert latest.iloc[0]["trainer_recommendation"].startswith("Conservative")
 
 
 def test_reader_tolerates_missing_table(tmp_path: Path) -> None:

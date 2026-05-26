@@ -43,6 +43,7 @@ def post_override(
         system_recommendation=payload.system_recommendation,
         system_confidence=payload.system_confidence,
         trainer_action=payload.trainer_action,
+        trainer_recommendation=payload.trainer_recommendation,
         applied_load_change_pct=payload.applied_load_change_pct,
         trainer_note=payload.trainer_note,
         created_at=datetime.now(),

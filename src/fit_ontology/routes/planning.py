@@ -11,6 +11,7 @@ from ..db import (
     DEFAULT_DB_PATH,
     connect,
     insert_plan,
+    latest_override_for_week,
     match_planned_sessions,
     metrics_for_client,
     plan_for_week,
@@ -53,6 +54,24 @@ def _classify_verdict(rec_text: str) -> Verdict:
     return "STANDARD"
 
 
+def _trainer_override_verdict(row) -> Verdict | None:
+    """Return the trainer's explicit current-week verdict when present.
+
+    Legacy override rows predate ``trainer_recommendation`` and only carry
+    accept/edit/reject, so they deliberately fall back to the system verdict
+    rather than reintroducing the old lossy opposite-verdict inference.
+    """
+    if row.empty:
+        return None
+    raw = row.iloc[0].get("trainer_recommendation")
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text or text.lower() == "nan":
+        return None
+    return _classify_verdict(text)
+
+
 @router.get("/api/clients/{client_id}/plan", response_model=PlanResponse)
 def get_plan(
     client_id: str,
@@ -88,6 +107,11 @@ def get_plan(
             overrides = thresholds_for_client(rcon, trainer_id, client_id)
             rec = generate_recommendation(client_id, metrics, sessions, thresholds=overrides)
         verdict = _classify_verdict(rec.recommendation)
+        override_verdict = _trainer_override_verdict(
+            latest_override_for_week(rcon, trainer_id, client_id, week_of)
+        )
+        if override_verdict is not None:
+            verdict = override_verdict
 
         if not plan:
             # Generate the initial plan from the verdict + recent

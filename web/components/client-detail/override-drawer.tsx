@@ -30,6 +30,8 @@ export function OverrideDrawer({
         system_recommendation: rec.recommendation,
         system_confidence: rec.confidence,
         trainer_action: action,
+        trainer_recommendation:
+          chosen === verdict ? rec.recommendation : recommendationForVerdict(chosen),
         applied_load_change_pct: null,
         trainer_note: [
           Array.from(reasons).join(", "),
@@ -249,4 +251,12 @@ export function OverrideDrawer({
       </div>
     </div>
   );
+}
+
+function recommendationForVerdict(v: Verdict): string {
+  if (v === "DELOAD") return "Deload week: reduce training load by 20%.";
+  if (v === "CONSERVATIVE") {
+    return "Conservative progression: hold volume, increase load ~5%.";
+  }
+  return "Standard progression per ACSM 11e: increase load 5-10%.";
 }

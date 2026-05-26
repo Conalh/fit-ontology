@@ -34,11 +34,15 @@ def override_response(row: dict) -> OverrideResponse:
     note = row.get("trainer_note")
     if note is not None and pd.isna(note):
         note = None
+    trainer_rec = row.get("trainer_recommendation")
+    if trainer_rec is not None and pd.isna(trainer_rec):
+        trainer_rec = None
     return OverrideResponse(
         id=row["id"], client_id=row["client_id"], week_of=row["week_of"],
         system_recommendation=row["system_recommendation"],
         system_confidence=float(row["system_confidence"]),
         trainer_action=str(row["trainer_action"]),
+        trainer_recommendation=trainer_rec,
         applied_load_change_pct=pct,
         trainer_note=note,
         created_at=row["created_at"],
@@ -51,6 +55,7 @@ def override_response_from_model(ov: RecommendationOverride) -> OverrideResponse
         system_recommendation=ov.system_recommendation,
         system_confidence=ov.system_confidence,
         trainer_action=ov.trainer_action.value,
+        trainer_recommendation=ov.trainer_recommendation,
         applied_load_change_pct=ov.applied_load_change_pct,
         trainer_note=ov.trainer_note,
         created_at=ov.created_at,

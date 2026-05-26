@@ -261,6 +261,32 @@ def test_plan_edit_writes_audit_row(app):
     assert "title" in edits[0]["details"]["fields"]
 
 
+def test_plan_generation_uses_latest_trainer_override_verdict(app):
+    """If the trainer overrides this week's call before opening the plan,
+    the first generated plan should follow the trainer's exact call."""
+    client, _ = app
+    today = date.today()
+    week_of = today - timedelta(days=today.weekday())
+
+    r = client.post("/api/clients/c_owned/overrides", json={
+        "week_of": week_of.isoformat(),
+        "system_recommendation": "Deload week: reduce training load by 20%.",
+        "system_confidence": 0.9,
+        "trainer_action": "reject",
+        "trainer_recommendation": "Standard progression per ACSM 11e: increase load 5-10%.",
+        "applied_load_change_pct": None,
+        "trainer_note": "in-person assessment looked stronger than the wearables",
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["trainer_recommendation"].startswith("Standard")
+
+    plan = client.get("/api/clients/c_owned/plan")
+    assert plan.status_code == 200, plan.text
+    body = plan.json()
+    assert body["verdict"] == "STANDARD"
+    assert len(body["sessions"]) == 4
+
+
 def test_share_mint_writes_audit_row(app):
     client, db_path = app
     r = client.post("/api/clients/c_owned/share", json={"trainer_message": None})

@@ -20,6 +20,7 @@ export function oppositeVerdict(v: Verdict): Verdict {
 
 export function trainerVerdictFromOverride(o: OverrideRow): Verdict {
   const engine = textToVerdict(o.system_recommendation);
+  if (o.trainer_recommendation) return textToVerdict(o.trainer_recommendation);
   if (o.trainer_action === "accept") return engine;
   if (o.trainer_action === "reject") return oppositeVerdict(engine);
   return engine;

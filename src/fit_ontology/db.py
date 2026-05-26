@@ -590,8 +590,9 @@ def insert_override(con, trainer_id: str, ov) -> None:
         """
         INSERT INTO recommendation_overrides
         (id, client_id, week_of, system_recommendation, system_confidence,
-         trainer_action, applied_load_change_pct, trainer_note, created_at, trainer_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         trainer_action, trainer_recommendation, applied_load_change_pct,
+         trainer_note, created_at, trainer_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             ov.id,
@@ -600,6 +601,7 @@ def insert_override(con, trainer_id: str, ov) -> None:
             ov.system_recommendation,
             ov.system_confidence,
             ov.trainer_action.value,
+            ov.trainer_recommendation,
             ov.applied_load_change_pct,
             ov.trainer_note,
             ov.created_at,
@@ -617,6 +619,7 @@ def _empty_overrides_df() -> pd.DataFrame:
             "system_recommendation",
             "system_confidence",
             "trainer_action",
+            "trainer_recommendation",
             "applied_load_change_pct",
             "trainer_note",
             "created_at",
@@ -631,7 +634,8 @@ def overrides_for_client(con, trainer_id: str, client_id: str, limit: int = 50) 
         return con.execute(
             """
             SELECT id, client_id, week_of, system_recommendation, system_confidence,
-                   trainer_action, applied_load_change_pct, trainer_note, created_at
+                   trainer_action, trainer_recommendation,
+                   applied_load_change_pct, trainer_note, created_at
             FROM recommendation_overrides
             WHERE trainer_id = ? AND client_id = ?
             ORDER BY created_at DESC
@@ -649,7 +653,8 @@ def latest_override_for_week(con, trainer_id: str, client_id: str, week_of) -> p
         return con.execute(
             """
             SELECT id, client_id, week_of, system_recommendation, system_confidence,
-                   trainer_action, applied_load_change_pct, trainer_note, created_at
+                   trainer_action, trainer_recommendation,
+                   applied_load_change_pct, trainer_note, created_at
             FROM recommendation_overrides
             WHERE trainer_id = ? AND client_id = ? AND week_of = ?
             ORDER BY created_at DESC
@@ -715,7 +720,8 @@ def all_overrides(con, trainer_id: str, limit: int = 1000) -> pd.DataFrame:
         return con.execute(
             """
             SELECT id, client_id, week_of, system_recommendation, system_confidence,
-                   trainer_action, applied_load_change_pct, trainer_note, created_at
+                   trainer_action, trainer_recommendation,
+                   applied_load_change_pct, trainer_note, created_at
             FROM recommendation_overrides
             WHERE trainer_id = ?
             ORDER BY created_at DESC

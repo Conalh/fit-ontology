@@ -214,6 +214,7 @@ class RecommendationOverride(BaseModel):
     system_recommendation: str
     system_confidence: float = Field(ge=0.0, le=1.0)
     trainer_action: OverrideAction
+    trainer_recommendation: str | None = None
     applied_load_change_pct: float | None = Field(default=None, ge=-100.0, le=100.0)
     trainer_note: str | None = None
     created_at: datetime
@@ -295,6 +296,7 @@ CREATE TABLE IF NOT EXISTS recommendation_overrides (
     system_recommendation    VARCHAR NOT NULL,
     system_confidence        DOUBLE NOT NULL,
     trainer_action           VARCHAR NOT NULL,
+    trainer_recommendation   VARCHAR,
     applied_load_change_pct  DOUBLE,
     trainer_note             VARCHAR,
     created_at               TIMESTAMP NOT NULL
@@ -432,6 +434,7 @@ ALTER TABLE sessions                 ADD COLUMN IF NOT EXISTS trainer_id VARCHAR
 ALTER TABLE metrics                  ADD COLUMN IF NOT EXISTS trainer_id VARCHAR;
 ALTER TABLE recommendations          ADD COLUMN IF NOT EXISTS trainer_id VARCHAR;
 ALTER TABLE recommendation_overrides ADD COLUMN IF NOT EXISTS trainer_id VARCHAR;
+ALTER TABLE recommendation_overrides ADD COLUMN IF NOT EXISTS trainer_recommendation VARCHAR;
 ALTER TABLE planned_sessions         ADD COLUMN IF NOT EXISTS trainer_id VARCHAR;
 ALTER TABLE client_thresholds        ADD COLUMN IF NOT EXISTS trainer_id VARCHAR;
 
