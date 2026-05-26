@@ -72,6 +72,25 @@ class ShareViewResponse(BaseModel):
     expires_at: datetime
 
 
+# ─── Intake tokens (Phase 3b) ───────────────────────────────────────
+
+class IntakeMintRequest(BaseModel):
+    """Trainer POST body. trainer_message is the optional welcome blurb
+    the prospective client sees above the form — kept short by the
+    same length cap as the share-link note so trainers don't paste a
+    wall of text the client won't read."""
+    trainer_message: str | None = Field(default=None, max_length=500)
+
+
+class IntakeMintResponse(BaseModel):
+    """Returns just the token + expiry. The front-end builds the full
+    URL (``${origin}/intake?t=<token>``) since the server doesn't
+    know which hostname the trainer is using — same posture as
+    ShareCreateResponse."""
+    token: str
+    expires_at: datetime
+
+
 # ─── Auth (Phase 2b-α) ──────────────────────────────────────────────
 
 class LoginRequest(BaseModel):

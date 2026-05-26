@@ -33,6 +33,7 @@ from .routes import (
     calibration,
     clients,
     coach,
+    intake,
     metrics,
     overrides,
     pdf,
@@ -237,6 +238,7 @@ def health() -> dict:
 # → exports → assistant → roster).
 app.include_router(auth.router)
 app.include_router(share.router)
+app.include_router(intake.router)
 app.include_router(clients.router)
 app.include_router(metrics.router)
 app.include_router(recommendation.router)

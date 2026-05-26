@@ -123,3 +123,13 @@ COACH_DRAFT_LIMIT = RateLimit(
 ASK_LIMIT so chatting in /ask doesn't lock the trainer out of
 drafting check-ins (or vice versa). At ~$0.001 per Haiku draft
 this is also a soft floor on the per-hour API spend."""
+
+INTAKE_MINT_LIMIT = RateLimit(
+    name="intake.mint",
+    window_seconds=3600,
+    max_attempts=20,
+)
+"""20 intake-link mints per hour per trainer. Same shape as
+SHARE_MINT_LIMIT — the case is an accidental click-loop or double-
+bound button, not adversarial. A real trainer mints maybe one
+intake link per new client per week."""

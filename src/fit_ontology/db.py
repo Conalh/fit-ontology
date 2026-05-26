@@ -322,6 +322,46 @@ def ensure_client(con, trainer_id: str, client_id: str,
     )
 
 
+def insert_client_from_payload(con, trainer_id: str, payload) -> str:
+    """Insert one client row from a ``ClientCreate``-shaped payload and
+    return the generated id.
+
+    Extracted from ``routes/clients.py:post_client`` so both the
+    authed POST /api/clients route and the public intake-submit route
+    (Phase 3b) share one INSERT chokepoint. Audit logging stays at
+    the route layer because the action name differs by entry point
+    (``client.created`` for the authed UI, ``intake.submitted`` for
+    a token-bound public submission).
+
+    ``payload`` is duck-typed on the attribute names the existing
+    ClientCreate model exposes (name / sex / age / height_cm /
+    weight_kg / goal / injury_history). ``sex`` may be a Sex enum or
+    a raw string — we normalize to .value so the column stays
+    VARCHAR-shaped regardless of where the call came from.
+    """
+    client_id = f"c_{uuid.uuid4().hex[:12]}"
+    sex_value = payload.sex.value if hasattr(payload.sex, "value") else payload.sex
+    con.execute(
+        """
+        INSERT INTO clients
+          (id, trainer_id, name, sex, age, height_cm, weight_kg, goal, injury_history, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """,
+        [
+            client_id,
+            trainer_id,
+            payload.name,
+            sex_value,
+            payload.age,
+            payload.height_cm,
+            payload.weight_kg,
+            payload.goal,
+            payload.injury_history,
+        ],
+    )
+    return client_id
+
+
 def insert_sessions(con, trainer_id: str, df: pd.DataFrame) -> None:
     """Bulk insert of sessions for one trainer. See ``insert_clients``
     for the trainer_id stamping rationale."""

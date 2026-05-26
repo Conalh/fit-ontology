@@ -1,12 +1,16 @@
 """CRUD on the clients table."""
 from __future__ import annotations
 
-import uuid
-
 import duckdb
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ..db import DEFAULT_DB_PATH, connect, list_clients, record_audit
+from ..db import (
+    DEFAULT_DB_PATH,
+    connect,
+    insert_client_from_payload,
+    list_clients,
+    record_audit,
+)
 from ..ontology import Sex
 from .deps import current_trainer_id, forbid_demo_trainer, read_only_conn
 from .schemas import ClientCreate, ClientSummary, ClientUpdate
@@ -52,28 +56,10 @@ def post_client(
 ) -> dict:
     """Create a new client. Returns the generated id so the front-end
     can navigate straight to the detail page."""
-    client_id = f"c_{uuid.uuid4().hex[:12]}"
     client_ip = request.client.host if request.client else None
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as con:
-            con.execute(
-                """
-                INSERT INTO clients
-                  (id, trainer_id, name, sex, age, height_cm, weight_kg, goal, injury_history, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """,
-                [
-                    client_id,
-                    trainer_id,
-                    payload.name,
-                    payload.sex.value,
-                    payload.age,
-                    payload.height_cm,
-                    payload.weight_kg,
-                    payload.goal,
-                    payload.injury_history,
-                ],
-            )
+            client_id = insert_client_from_payload(con, trainer_id, payload)
             # Audit name only — the rest is PII we don't want in the
             # log row even though the row itself is trainer-scoped.
             record_audit(
