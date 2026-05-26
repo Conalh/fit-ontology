@@ -17,6 +17,10 @@ from fit_ontology.ontology import MetricKind
 from fit_ontology.reasoning import (
     BASELINE_WINDOW_CHOICES,
     CITATIONS,
+    LEVEL_DOMINATES_RECOVERY_FLOOR,
+    TREND_SIGNAL_KINDS,
+    Signal,
+    _apply_level_dominates,
     compute_recovery_score,
     detect_acwr_signal,
     detect_hrv_trend_signal,
@@ -501,3 +505,135 @@ def test_sleep_signal_counts_nights_below_floor():
     # Both the mean and the count of below-floor nights should appear.
     assert "4 of 7" in sig.summary
     assert "h floor" in sig.summary
+
+
+# ─── E4: Level-dominates-trend safety rule ───────────────────────────
+
+
+def test_e4_unit_demotes_only_trend_signals():
+    """The helper demotes trend-kind signals by one band and leaves
+    level-kind signals alone. Mild trend signals drop entirely."""
+    signals = [
+        Signal(kind="hrv_trend_down", severity="severe", summary="trend"),
+        Signal(kind="hrv_below_baseline", severity="moderate", summary="level"),
+        Signal(kind="sleep_trend_down", severity="mild", summary="weak trend"),
+        Signal(kind="acwr_high", severity="moderate", summary="load"),
+    ]
+    out, n_changed = _apply_level_dominates(signals)
+    assert n_changed == 2  # hrv_trend severe→mod, sleep_trend mild→dropped
+    kinds = {s.kind: s.severity for s in out}
+    # Trend signals demoted
+    assert kinds["hrv_trend_down"] == "moderate"
+    # Level signals untouched
+    assert kinds["hrv_below_baseline"] == "moderate"
+    assert kinds["acwr_high"] == "moderate"
+    # Mild trend dropped below threshold → not in output
+    assert "sleep_trend_down" not in kinds
+
+
+def test_e4_unit_no_change_when_all_signals_are_levels():
+    """If no trend signals are present the helper is a no-op — the rule
+    only suppresses noise, never level evidence."""
+    signals = [
+        Signal(kind="hrv_below_baseline", severity="severe", summary="."),
+        Signal(kind="sleep_deficit", severity="moderate", summary="."),
+    ]
+    out, n_changed = _apply_level_dominates(signals)
+    assert n_changed == 0
+    assert [s.severity for s in out] == ["severe", "moderate"]
+
+
+def test_e4_trend_signal_kinds_match_detector_outputs():
+    """If we add a new trend detector but forget to update
+    TREND_SIGNAL_KINDS, this test catches it. The frozenset is the
+    contract — the helper uses it for membership testing."""
+    assert "hrv_trend_down" in TREND_SIGNAL_KINDS
+    assert "rhr_trend_up" in TREND_SIGNAL_KINDS
+    assert "sleep_trend_down" in TREND_SIGNAL_KINDS
+    # Level kinds should NOT be in there
+    assert "hrv_below_baseline" not in TREND_SIGNAL_KINDS
+    assert "acwr_high" not in TREND_SIGNAL_KINDS
+
+
+def _trending_hrv_with_clean_levels(client_id: str, today: date) -> pd.DataFrame:
+    """Construct an HRV series that holds steady at baseline 55 for the
+    older 28 days, then drops linearly from 60 → 52 across the last 7
+    days. Acute MEAN sits near baseline (so the level detector doesn't
+    fire) but the acute SLOPE is steep enough to trigger a severe
+    trend signal. This is the engineered shape of the Bennet-style
+    contradiction the E4 rule is meant to neutralise."""
+    rows: list[dict] = []
+    # Older 28 days: stable at 55
+    for offset in range(35, 7, -1):
+        rows.append(dict(
+            id=f"hrv-old-{offset}", client_id=client_id,
+            date=today - timedelta(days=offset),
+            source="garmin", kind=MetricKind.HRV_RMSSD.value,
+            value=55.0, unit="ms",
+        ))
+    # Last 7 days: 60 → 52 ramp. Mean ≈ 56 (near baseline), slope ≈ -1.33 ms/day.
+    ramp = [60, 59, 58, 56, 55, 53, 52]
+    for offset, value in zip(range(7, 0, -1), ramp, strict=True):
+        rows.append(dict(
+            id=f"hrv-acute-{offset}", client_id=client_id,
+            date=today - timedelta(days=offset),
+            source="garmin", kind=MetricKind.HRV_RMSSD.value,
+            value=float(value), unit="ms",
+        ))
+    return pd.DataFrame(rows)
+
+
+def test_e4_integration_high_recovery_suppresses_trend_driven_deload():
+    """The headline integration case. Clean levels (HRV holding near
+    baseline, no sleep deficit, RHR stable) plus an acute downward
+    HRV slope that on its own would fire a severe trend signal. With
+    high composite recovery the rule should demote it; the verdict
+    should not be Deload."""
+    today = date(2026, 6, 1)
+    # HRV: trending in acute window but levels stay near baseline.
+    hrv = _trending_hrv_with_clean_levels("c1", today)
+    # Sleep + RHR rock-solid so composite recovery climbs high.
+    rhr_rows = _stable_metric(
+        "c1", MetricKind.RESTING_HR.value, 56, today,
+        days=35, jitter=0.5, unit="bpm",
+    )
+    sleep_rows = _stable_metric(
+        "c1", MetricKind.SLEEP_HOURS.value, 8.0, today,
+        days=35, jitter=0.2, unit="h",
+    )
+    m = pd.concat([hrv, pd.DataFrame(rhr_rows), pd.DataFrame(sleep_rows)], ignore_index=True)
+    s = _sessions("c1", today=today, rpe_baseline=5)
+
+    # Sanity-check the fixture: composite should land at the floor or above.
+    rec_score = compute_recovery_score(m, s, today=today)
+    assert rec_score.composite is not None and rec_score.composite >= LEVEL_DOMINATES_RECOVERY_FLOOR, (
+        f"fixture composite {rec_score.composite} too low to exercise the rule"
+    )
+
+    r = generate_recommendation("c1", m, s, today=today)
+    # Without E4 this profile lands Deload; with E4 the trend signal
+    # is demoted enough that the count rules don't trigger.
+    assert "deload" not in r.recommendation.lower(), (
+        f"E4 should have suppressed the trend-driven Deload, got: {r.recommendation}"
+    )
+    # The rationale should explain that the rule fired.
+    assert "downweighted" in r.rationale.lower()
+    assert "early-warning" in r.rationale.lower()
+
+
+def test_e4_low_recovery_leaves_trend_signals_intact():
+    """Inverse case: low composite recovery + same kind of trend signal
+    → the rule doesn't fire, the verdict stands. This proves E4 isn't
+    a blanket "everyone gets a free pass on trend signals" rule."""
+    today = date(2026, 6, 1)
+    # HRV crashing both in levels AND trend.
+    m = _metrics("c1", today=today, hrv_baseline=55, hrv_acute=42,
+                 rhr_baseline=58, rhr_acute=66, sleep_acute=5.8)
+    s = _sessions("c1", today=today, rpe_baseline=7)
+    rec_score = compute_recovery_score(m, s, today=today)
+    assert rec_score.composite is None or rec_score.composite < LEVEL_DOMINATES_RECOVERY_FLOOR
+
+    r = generate_recommendation("c1", m, s, today=today)
+    # With recovery below the floor, the rule shouldn't fire and the
+    # rationale shouldn't claim it did.
+    assert "downweighted" not in r.rationale.lower()

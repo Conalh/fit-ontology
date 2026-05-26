@@ -106,6 +106,39 @@ CHRONIC_SLOPE_MILD_SD_PER_DAY = 0.02
 CHRONIC_SLOPE_MODERATE_SD_PER_DAY = 0.04
 CHRONIC_SLOPE_SEVERE_SD_PER_DAY = 0.08
 
+# E4 — Level-dominates-trend safety rule.
+#
+# When a client's composite recovery score is ≥ this threshold, the
+# engine demotes every trend signal (hrv_trend_down / rhr_trend_up /
+# sleep_trend_down) by one severity band before the verdict combiner
+# runs. Levels-based signals (HRV below baseline, sleep deficit,
+# ACWR, RPE rising) are unaffected — if the levels are still good
+# AND a level signal is firing, that signal is the truth, not the
+# trend reading.
+#
+# 90 was picked from the original screen-test: Bennet at composite 97
+# with two trend signals that the recovery-score narrative
+# ("strong recovery markers across the board") visibly contradicted.
+# Holmes at composite 86 is intentionally below the threshold — his
+# acute HRV drop IS real, just chronic-unconfirmed, and that's
+# already handled by E3's combiner. The rule's job is the
+# tail-of-the-distribution case where recovery is genuinely
+# excellent, not the borderline-good middle.
+#
+# Tunable per-client via the existing thresholds plumbing (added to
+# DEFAULT_THRESHOLDS below). A coach with an outlier athlete who
+# runs hot recovery numbers under cumulative load could lower it.
+LEVEL_DOMINATES_RECOVERY_FLOOR = 90
+
+# Trend-signal kinds the E4 rule downweights. Spelled out as a set so
+# adding a new trend detector (e.g. body-battery trend) is a one-line
+# change here, not a hunt across the file.
+TREND_SIGNAL_KINDS: frozenset[str] = frozenset({
+    "hrv_trend_down",
+    "rhr_trend_up",
+    "sleep_trend_down",
+})
+
 # Progression magnitudes from ACSM 11e Ch. 6 (cardiorespiratory) and
 # Ch. 7 (resistance). Conservative end picked when any signal is present.
 ACSM_STANDARD_RANGE = (0.05, 0.10)
@@ -188,6 +221,7 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "chronic_slope_mild_sd_per_day":     CHRONIC_SLOPE_MILD_SD_PER_DAY,
     "chronic_slope_moderate_sd_per_day": CHRONIC_SLOPE_MODERATE_SD_PER_DAY,
     "chronic_slope_severe_sd_per_day":   CHRONIC_SLOPE_SEVERE_SD_PER_DAY,
+    "level_dominates_recovery_floor":    float(LEVEL_DOMINATES_RECOVERY_FLOOR),
     # Per-client tunable baseline window. 28 days follows Plews & Laursen
     # 2017; some highly-variable athletes benefit from a tighter 14-day
     # window (more responsive to recent state) while very stable elite
@@ -510,6 +544,46 @@ _SEVERITY_RANK: dict[Severity | None, int] = {
     None: 0, "mild": 1, "moderate": 2, "severe": 3,
 }
 _RANK_SEVERITY: list[Severity | None] = [None, "mild", "moderate", "severe"]
+
+
+def _demote_one_band(s: Severity) -> Severity | None:
+    """Drop a severity by one band. mild → none (which the caller maps
+    to dropping the signal). Used by the E4 level-dominates-trend rule.
+    """
+    if s == "severe":
+        return "moderate"
+    if s == "moderate":
+        return "mild"
+    return None  # mild → drop
+
+
+def _apply_level_dominates(signals: list[Signal]) -> tuple[list[Signal], int]:
+    """E4: demote every trend signal in ``signals`` by one severity
+    band. Signals demoted from mild → none are dropped from the
+    returned list entirely; the trainer doesn't need to see a
+    "would-have-fired-but-suppressed" chip on top of a Standard
+    verdict (the rationale sentence captures the rule firing).
+
+    Returns (filtered_signals, n_demoted_or_dropped).
+    """
+    out: list[Signal] = []
+    n_changed = 0
+    for s in signals:
+        if s.kind not in TREND_SIGNAL_KINDS:
+            out.append(s)
+            continue
+        new_severity = _demote_one_band(s.severity)
+        if new_severity != s.severity:
+            n_changed += 1
+        if new_severity is None:
+            continue  # dropped below threshold; suppress entirely
+        out.append(Signal(
+            kind=s.kind,
+            severity=new_severity,
+            summary=s.summary,
+            source_metric_ids=s.source_metric_ids,
+        ))
+    return out, n_changed
 
 
 def combine_acute_chronic(
@@ -1354,6 +1428,21 @@ def generate_recommendation(
         if sig:
             signals.append(sig)
 
+    # E4: level-dominates-trend safety rule. Compute the recovery
+    # composite first; if it's at or above the floor (default 90), demote
+    # every trend signal by one band before the verdict combiner reads
+    # severity counts. Levels-based signals stay as-is — the rule is
+    # specifically about trend noise on a clean recovery picture, not a
+    # blanket "ignore everything when recovery is high."
+    th = _merge_thresholds(thresholds)
+    level_floor = int(th["level_dominates_recovery_floor"])
+    recovery = compute_recovery_score(metrics, sessions, today=today, thresholds=thresholds)
+    level_dominates_fired = False
+    n_demoted = 0
+    if recovery.composite is not None and recovery.composite >= level_floor:
+        signals, n_demoted = _apply_level_dominates(signals)
+        level_dominates_fired = n_demoted > 0
+
     # Severity counts — ACWR-low is informational, not a recovery flag.
     weighting_signals = [s for s in signals if s.kind != "acwr_low"]
     severe = sum(1 for s in weighting_signals if s.severity == "severe")
@@ -1377,6 +1466,13 @@ def generate_recommendation(
         rationale += f" Flags: {', '.join(flags)}."
     else:
         rationale = "Recovery markers within baseline range; no flags. Proceed with planned progression."
+
+    if level_dominates_fired and recovery.composite is not None:
+        plural = "signal" if n_demoted == 1 else "signals"
+        rationale += (
+            f" Recovery composite {recovery.composite}/100 — {n_demoted} trend "
+            f"{plural} downweighted (early-warning only; levels still strong)."
+        )
 
     source_ids: list[str] = []
     for s in signals:

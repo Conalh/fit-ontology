@@ -207,46 +207,6 @@ class RecoveryScoreResponse(BaseModel):
     acwr: int | None
 
 
-class TrendSignalDetail(BaseModel):
-    """E2 debug — one detector's output for a single signal kind.
-
-    Populated when GET /api/clients/{id}/recommendation is called with
-    ``?explain_trend=1``. Lets a developer inspect both detectors'
-    numerical outputs side-by-side during E3 threshold tuning, without
-    needing to scrape DB rows or rerun the engine in a notebook. The
-    field gets removed in E4 once the dual-detector verdict combiner
-    is shipped — these fields are not a public API.
-    """
-    method: str  # "ols" (acute) or "ewma" (chronic)
-    window_days: int
-    slope_per_day: float
-    n_samples: int
-    confidence_weight: float
-    # |slope| / baseline_sd — the engine's actual decision input,
-    # normalized so the same severity thresholds apply across HRV /
-    # RHR / sleep. None if baseline_sd couldn't be computed (too few
-    # samples for the baseline window).
-    sd_per_day: float | None
-
-
-class TrendExplainEntry(BaseModel):
-    """E2 debug — both detectors' output for one signal kind."""
-    kind: str  # raw MetricKind value, e.g. "hrv_rmssd"
-    baseline_sd: float | None
-    acute: TrendSignalDetail | None  # 7-day OLS — None if window too short
-    chronic: TrendSignalDetail | None  # 28-day EWMA — None if window too short
-
-
-class TrendExplain(BaseModel):
-    """E2 debug payload. Verdict logic is unchanged by E2; this exists
-    only so the chronic (EWMA) and acute (OLS) detectors can be
-    compared visually before E3 wires the chronic path into the
-    combiner. Three signal kinds: HRV, resting HR, sleep."""
-    hrv: TrendExplainEntry
-    rhr: TrendExplainEntry
-    sleep: TrendExplainEntry
-
-
 class RecommendationResponse(BaseModel):
     id: str
     client_id: str
@@ -267,9 +227,6 @@ class RecommendationResponse(BaseModel):
     # surfaces these on flag chip tooltips + a methodology footer
     # rather than embedding the citations in the rationale text itself.
     flag_citations: dict[str, str] = {}
-    # E2 debug field — populated only when ?explain_trend=1. None on
-    # every other request so the regular response stays compact.
-    trend_explain: TrendExplain | None = None
 
 
 # ─── Overrides ──────────────────────────────────────────────────────
