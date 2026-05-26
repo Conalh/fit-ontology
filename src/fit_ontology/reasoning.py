@@ -255,6 +255,32 @@ class Signal:
 
 
 @dataclass
+class TrendSignalDetail:
+    """Per-signal-kind detector diagnostics surfaced to the API for the
+    recommendation card's trend chips. Populated whether or not the
+    signal actually fired — so the frontend can render an "acute fires
+    / chronic doesn't" badge (or vice versa) on a chip the engine
+    decided to surface, plus the underlying numbers in the popover.
+
+    All slope/SD fields are absolute magnitudes — direction is implicit
+    in the signal kind (hrv_trend_down means down, rhr_trend_up means
+    up). The boolean ``acute_fired`` / ``chronic_fired`` flags mean
+    "this window's grade was non-None before the combiner ran" — i.e.
+    its raw severity crossed the relevant threshold.
+    """
+    kind: str                       # e.g. "hrv_trend_down"
+    acute_window_days: int          # always HRV_ACUTE_DAYS (7) today
+    acute_slope_per_day: float | None
+    acute_sd_per_day: float | None
+    acute_fired: bool
+    chronic_window_days: int        # always HRV_CHRONIC_DAYS (28) today
+    chronic_slope_per_day: float | None
+    chronic_sd_per_day: float | None
+    chronic_fired: bool
+    chronic_confidence_weight: float
+
+
+@dataclass
 class SlopeResult:
     """Output of ``compute_trend_slope``. Carries enough metadata that
     the caller can decide whether the slope is trustworthy and which
@@ -997,6 +1023,118 @@ def _dual_window_trend(
         acute_sd = abs(acute.slope_per_day) / baseline_sd
 
     return combined, acute, chronic, acute_sd
+
+
+# E5: per-kind trend diagnostics surfaced to the API so the
+# recommendation card can render acute/chronic distinction on its
+# chips. Each TrendSignalDetail carries enough numbers to populate
+# both the badge and the popover, without the frontend needing a
+# second round-trip.
+_TREND_KIND_MAPPING: tuple[tuple[str, Literal["down", "up"], str], ...] = (
+    (MetricKind.HRV_RMSSD.value, "down", "hrv_trend_down"),
+    (MetricKind.RESTING_HR.value, "up", "rhr_trend_up"),
+    (MetricKind.SLEEP_HOURS.value, "down", "sleep_trend_down"),
+)
+
+
+def _fired_in_direction(
+    sr: SlopeResult | None,
+    *,
+    direction: Literal["down", "up"],
+    baseline_sd: float | None,
+    th: Mapping[str, float],
+    chronic_path: bool,
+) -> tuple[bool, float | None]:
+    """Helper for compute_trend_diagnostics — returns (fired, sd_per_day)
+    for one detector output. Module-level rather than nested so the
+    loop-iteration values don't get captured by closure (ruff B023).
+    """
+    if sr is None:
+        return False, None
+    if direction == "down" and sr.slope_per_day >= 0:
+        return False, None
+    if direction == "up" and sr.slope_per_day <= 0:
+        return False, None
+    if chronic_path and sr.confidence_weight <= 0.0:
+        return False, None
+    if not baseline_sd:
+        return False, None
+    sd = abs(sr.slope_per_day) / baseline_sd
+    grade = (
+        _chronic_trend_severity(sd, th)
+        if chronic_path
+        else _trend_severity(sd, th)
+    )
+    return grade is not None, sd
+
+
+def compute_trend_diagnostics(
+    metrics: pd.DataFrame,
+    today: date,
+    thresholds: Mapping[str, float] | None = None,
+) -> dict[str, TrendSignalDetail]:
+    """Per-kind acute + chronic detector outputs for the three trend
+    signals (HRV down, RHR up, sleep down). The frontend's
+    recommendation card calls into this via the API to render the
+    acute/chronic badge + the dual-window popover.
+
+    Returns details for ALL three signal kinds — caller filters to
+    "the ones that actually fired" by intersecting with rec.flags.
+    Returning the unfired ones too keeps the door open for surfacing
+    chronic-only "watch this" chips in a future iteration.
+
+    The acute kind is picked the same way the engine does for HRV
+    — RMSSD if present, else SDNN. The engine and the diagnostics
+    must agree on which series they're reading, or the popover would
+    show numbers that don't match the verdict.
+    """
+    th = _merge_thresholds(thresholds)
+    out: dict[str, TrendSignalDetail] = {}
+
+    for metric_kind, direction, signal_kind in _TREND_KIND_MAPPING:
+        # HRV is the only one that has a fallback kind; the helper
+        # picks the right one. RHR and sleep are single-kind, so the
+        # tuple kind is what we use directly.
+        kind = _hrv_kind(metrics) if signal_kind == "hrv_trend_down" else metric_kind
+        _, baseline_sd, _ = _baseline(
+            metrics, kind, today, int(th["baseline_window_days"])
+        )
+
+        acute = compute_trend_slope(
+            metrics, kind, today, method="ols", window_days=HRV_ACUTE_DAYS,
+        )
+        chronic = compute_trend_slope(
+            metrics, kind, today, method="ewma", window_days=HRV_CHRONIC_DAYS,
+        )
+
+        # "Fired" means severity-non-None on this window in the
+        # direction-of-concern. Mirrors the gating in _dual_window_trend.
+        # Loop-iteration values (direction, baseline_sd, th) are passed
+        # explicitly rather than captured by closure so ruff's B023
+        # late-binding lint stays quiet.
+        acute_fired, acute_sd = _fired_in_direction(
+            acute, direction=direction, baseline_sd=baseline_sd, th=th,
+            chronic_path=False,
+        )
+        chronic_fired, chronic_sd = _fired_in_direction(
+            chronic, direction=direction, baseline_sd=baseline_sd, th=th,
+            chronic_path=True,
+        )
+
+        out[signal_kind] = TrendSignalDetail(
+            kind=signal_kind,
+            acute_window_days=HRV_ACUTE_DAYS,
+            acute_slope_per_day=acute.slope_per_day if acute else None,
+            acute_sd_per_day=acute_sd,
+            acute_fired=acute_fired,
+            chronic_window_days=HRV_CHRONIC_DAYS,
+            chronic_slope_per_day=chronic.slope_per_day if chronic else None,
+            chronic_sd_per_day=chronic_sd,
+            chronic_fired=chronic_fired,
+            chronic_confidence_weight=chronic.confidence_weight if chronic else 0.0,
+        )
+
+    return out
 
 
 def detect_hrv_trend_signal(

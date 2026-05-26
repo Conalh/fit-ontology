@@ -142,6 +142,23 @@ export interface RecoveryScore {
   acwr: number | null;
 }
 
+/** Engine-v2 / E5: per-kind acute (7d OLS) + chronic (28d EWMA)
+ *  detector outputs. The recommendation card's trend chip reads the
+ *  ``*_fired`` flags to pick its acute / chronic / both badge, and
+ *  the popover surfaces the slope numbers from both windows. */
+export interface TrendDetail {
+  kind: string;
+  acute_window_days: number;
+  acute_slope_per_day: number | null;
+  acute_sd_per_day: number | null;
+  acute_fired: boolean;
+  chronic_window_days: number;
+  chronic_slope_per_day: number | null;
+  chronic_sd_per_day: number | null;
+  chronic_fired: boolean;
+  chronic_confidence_weight: number;
+}
+
 export interface Recommendation {
   id: string;
   client_id: string;
@@ -155,6 +172,9 @@ export interface Recommendation {
   recovery_score?: RecoveryScore | null;
   /** Flag kind -> source authority (e.g. "Plews & Laursen 2017"). */
   flag_citations?: Record<string, string>;
+  /** Per-trend-kind detector diagnostics. Frontend keys by signal
+   *  kind ("hrv_trend_down" etc) to render the acute/chronic badge. */
+  trend_details?: Record<string, TrendDetail>;
 }
 
 export interface MetricRow {

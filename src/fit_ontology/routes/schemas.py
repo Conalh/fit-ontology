@@ -207,6 +207,29 @@ class RecoveryScoreResponse(BaseModel):
     acwr: int | None
 
 
+class TrendDetailResponse(BaseModel):
+    """E5: per-kind acute (7d OLS) + chronic (28d EWMA) detector
+    outputs surfaced to the rec card's trend chips. Lets the chip
+    render an acute/chronic/both badge AND expose the numbers in its
+    info popover without the frontend doing a second round-trip.
+
+    All slope/SD values are absolute magnitudes — sign is implicit in
+    the signal kind. ``acute_fired`` / ``chronic_fired`` mean "this
+    window's severity grade was non-None before the combiner ran" —
+    i.e. it crossed the relevant threshold. The chip badge reads
+    these to pick its visual: acute-only / chronic-only / both."""
+    kind: str  # e.g. "hrv_trend_down"
+    acute_window_days: int
+    acute_slope_per_day: float | None
+    acute_sd_per_day: float | None
+    acute_fired: bool
+    chronic_window_days: int
+    chronic_slope_per_day: float | None
+    chronic_sd_per_day: float | None
+    chronic_fired: bool
+    chronic_confidence_weight: float
+
+
 class RecommendationResponse(BaseModel):
     id: str
     client_id: str
@@ -227,6 +250,12 @@ class RecommendationResponse(BaseModel):
     # surfaces these on flag chip tooltips + a methodology footer
     # rather than embedding the citations in the rationale text itself.
     flag_citations: dict[str, str] = {}
+    # E5: per-trend-kind detector diagnostics. Keyed by signal kind
+    # ("hrv_trend_down" etc.) — frontend looks up by chip's flag name
+    # to render the acute/chronic badge + popover. Empty on history
+    # rows where we don't recompute the engine; populated on the
+    # current week's recommendation.
+    trend_details: dict[str, TrendDetailResponse] = {}
 
 
 # ─── Overrides ──────────────────────────────────────────────────────

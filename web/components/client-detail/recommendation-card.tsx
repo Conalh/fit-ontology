@@ -36,12 +36,16 @@ export function RecommendationCard({
 
   const flags = useMemo(() => {
     if (!rec || !rec.rationale.includes("Flags:")) return [] as string[];
-    return rec.rationale
-      .split("Flags:", 2)[1]
-      ?.replace(/\.$/, "")
+    // Parse only the comma-list immediately after "Flags:" up to the
+    // first period — anything after that period is additional prose
+    // (e.g. the E4 "Recovery composite N — N trend signals
+    // downweighted" sentence) and must not be treated as flag names.
+    const afterFlags = rec.rationale.split("Flags:", 2)[1] ?? "";
+    const flagsList = afterFlags.split(".", 1)[0];
+    return flagsList
       .split(",")
       .map((s) => s.trim())
-      .filter(Boolean) ?? [];
+      .filter(Boolean);
   }, [rec]);
 
   const summary = useMemo(() => {
@@ -329,12 +333,39 @@ export function RecommendationCard({
               const source = rec?.flag_citations?.[f];
               const fm = flagMeta(f);
               const sourceMeta = source ? citationMeta(source) : null;
+              const detail = rec?.trend_details?.[f];
+              const windowBadge = detail ? trendWindowBadge(detail) : null;
+              const trigger = windowBadge ? (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  {flagDisplay(f)}
+                  <span
+                    style={{
+                      fontSize: 9.5,
+                      fontFamily: "var(--font-mono)",
+                      color: "var(--text-muted)",
+                      letterSpacing: "0.02em",
+                      padding: "0 5px",
+                      borderRadius: 4,
+                      background: "color-mix(in oklab, var(--text) 6%, transparent)",
+                    }}
+                  >
+                    {windowBadge}
+                  </span>
+                </span>
+              ) : (
+                flagDisplay(f)
+              );
+              const body = detail ? (
+                <TrendPopoverBody description={fm.description} detail={detail} />
+              ) : (
+                fm.description
+              );
               return (
                 <InfoPopover
                   key={f}
-                  trigger={flagDisplay(f)}
+                  trigger={trigger}
                   title={flagDisplay(f)}
-                  body={fm.description}
+                  body={body}
                   href={sourceMeta?.href}
                   footer={source ? `Source: ${source}` : undefined}
                   ariaLabel={`About signal: ${flagDisplay(f)}`}
@@ -354,6 +385,108 @@ export function RecommendationCard({
         </div>
       )}
     </section>
+  );
+}
+
+/** E5: turn a trend's dual-detector flags into a compact badge label.
+ *  Reads which windows fired (acute = 7d OLS, chronic = 28d EWMA) and
+ *  picks one of: "7d" (acute-only — often noise), "28d" (chronic-only
+ *  — slow drift below the acute threshold), or "7d + 28d" (both
+ *  detectors agree — the strongest signal). Returns null if no detail
+ *  was supplied (non-trend flag). */
+function trendWindowBadge(detail: import("@/lib/api").TrendDetail): string | null {
+  const a = detail.acute_fired;
+  const c = detail.chronic_fired;
+  if (a && c) return "7d + 28d";
+  if (a) return "7d";
+  if (c) return "28d";
+  return null;
+}
+
+/** E5: extended popover body for a trend signal. Shows the standard
+ *  flag description on top, then a small two-row mini-table of the
+ *  acute (7d) and chronic (28d) numbers so a trainer can audit which
+ *  window is actually firing. */
+function TrendPopoverBody({
+  description,
+  detail,
+}: {
+  description: string;
+  detail: import("@/lib/api").TrendDetail;
+}) {
+  const acuteNum = detail.acute_sd_per_day != null
+    ? `${detail.acute_sd_per_day.toFixed(2)} SD/day`
+    : "—";
+  const chronicNum = detail.chronic_sd_per_day != null
+    ? `${detail.chronic_sd_per_day.toFixed(2)} SD/day`
+    : "—";
+  return (
+    <>
+      <p style={{ margin: 0 }}>{description}</p>
+      <div
+        style={{
+          marginTop: 10,
+          padding: "8px 10px",
+          background: "color-mix(in oklab, var(--text) 4%, transparent)",
+          borderRadius: 6,
+          fontSize: 11.5,
+          lineHeight: 1.55,
+          color: "var(--text)",
+          fontFamily: "var(--font-mono)",
+        }}
+      >
+        <DetailRow
+          window="7d acute"
+          value={acuteNum}
+          fired={detail.acute_fired}
+        />
+        <DetailRow
+          window="28d chronic"
+          value={chronicNum}
+          fired={detail.chronic_fired}
+          dim={detail.chronic_confidence_weight < 1.0}
+        />
+      </div>
+      <p style={{ margin: "8px 0 0", fontSize: 11, color: "var(--text-muted)", lineHeight: 1.45 }}>
+        Both windows are checked; the verdict combiner trusts agreement and
+        demotes acute-only firing. See <em>engine v2</em> in ARCHITECTURE.
+      </p>
+    </>
+  );
+}
+
+function DetailRow({
+  window: w,
+  value,
+  fired,
+  dim,
+}: {
+  window: string;
+  value: string;
+  fired: boolean;
+  dim?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        opacity: dim ? 0.6 : 1,
+        marginTop: 1,
+      }}
+    >
+      <span style={{ color: "var(--text-muted)" }}>{w}</span>
+      <span
+        style={{
+          color: fired ? "var(--text)" : "var(--text-muted)",
+          fontWeight: fired ? 600 : 400,
+        }}
+      >
+        {value}
+        {fired ? "  ⚑" : ""}
+      </span>
+    </div>
   );
 }
 
