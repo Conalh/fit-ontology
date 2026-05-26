@@ -127,6 +127,19 @@ export interface RosterRow {
   stale: boolean;
 }
 
+export interface ActionQueueItem {
+  id: string;
+  client_id: string;
+  client_name: string;
+  client_goal: string;
+  priority: "high" | "medium" | "low" | string;
+  kind: string;
+  title: string;
+  detail: string;
+  cta_label: string;
+  href: string;
+}
+
 export interface Contraindication {
   kind: string;
   title: string;
@@ -393,6 +406,7 @@ export const api = {
       method: "DELETE",
     }),
   roster: () => request<RosterRow[]>("/api/roster"),
+  actionQueue: () => request<ActionQueueItem[]>("/api/action-queue"),
   recommendation: (clientId: string) =>
     request<Recommendation>(`/api/clients/${clientId}/recommendation`),
   recommendationHistory: (clientId: string, limit = 12) =>

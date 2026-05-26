@@ -28,6 +28,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from .config import load_env
 from .db import DEFAULT_DB_PATH, connect
 from .routes import (
+    actions,
     ask,
     auth,
     calibration,
@@ -301,6 +302,7 @@ def health() -> dict:
 # surface (clients → metrics → rec → overrides → calibration → tuning
 # → exports → assistant → roster).
 app.include_router(auth.router)
+app.include_router(actions.router)
 app.include_router(share.router)
 app.include_router(intake.router)
 app.include_router(clients.router)

@@ -8,7 +8,7 @@ import { Sidebar, TopBar, VerdictBadge, labelToVerdict } from "@/components/chro
 import { IntakeLinkModal } from "@/components/intake-link-modal";
 import { Skeleton } from "@/components/skeleton";
 import { defaultAccentForClient, initialsFor, withAlpha } from "@/lib/accent";
-import { api, type RosterRow } from "@/lib/api";
+import { api, type ActionQueueItem, type RosterRow } from "@/lib/api";
 import { flagDisplay } from "@/lib/flag-display";
 
 /**
@@ -20,6 +20,10 @@ export default function RosterPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["roster"],
     queryFn: api.roster,
+  });
+  const queueQ = useQuery({
+    queryKey: ["action-queue"],
+    queryFn: api.actionQueue,
   });
   const [intakeOpen, setIntakeOpen] = useState(false);
 
@@ -90,12 +94,166 @@ export default function RosterPage() {
 
           {data && data.length === 0 && <EmptyRoster />}
 
-          {data && data.length > 0 && <RosterTable rows={data} />}
+          {data && data.length > 0 && (
+            <>
+              <ActionQueuePanel
+                items={queueQ.data ?? []}
+                loading={queueQ.isLoading}
+                error={Boolean(queueQ.error)}
+              />
+              <RosterTable rows={data} />
+            </>
+          )}
         </div>
       </div>
 
       {intakeOpen && <IntakeLinkModal onClose={() => setIntakeOpen(false)} />}
     </div>
+  );
+}
+
+const PRIORITY_ACCENT: Record<string, string> = {
+  high: "var(--danger)",
+  medium: "var(--warn)",
+  low: "var(--ok)",
+};
+
+function ActionQueuePanel({
+  items,
+  loading,
+  error,
+}: {
+  items: ActionQueueItem[];
+  loading: boolean;
+  error: boolean;
+}) {
+  return (
+    <section
+      data-tour="action-queue"
+      style={{
+        border: "1px solid var(--border)",
+        borderRadius: 10,
+        background: "var(--surface)",
+        marginBottom: 18,
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          padding: "12px 16px",
+          background: "var(--surface-2)",
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
+        <div>
+          <h2 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
+            Today&apos;s coaching queue
+          </h2>
+          <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>
+            {loading ? "Loading actions" : `${items.length} open action${items.length === 1 ? "" : "s"}`}
+          </p>
+        </div>
+        {items.length > 0 && (
+          <span
+            style={{
+              fontSize: 11,
+              color: "var(--text-muted)",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {items.filter((i) => i.priority === "high").length} high
+          </span>
+        )}
+      </div>
+
+      {loading && (
+        <div style={{ display: "grid", gap: 10, padding: 14 }}>
+          <Skeleton width="52%" height={18} />
+          <Skeleton width="74%" height={14} />
+        </div>
+      )}
+
+      {!loading && error && (
+        <p style={{ margin: 0, padding: 16, fontSize: 12.5, color: "var(--danger)" }}>
+          Could not load coaching actions.
+        </p>
+      )}
+
+      {!loading && !error && items.length === 0 && (
+        <div style={{ padding: "16px", color: "var(--text-muted)", fontSize: 12.5 }}>
+          Queue clear.
+        </div>
+      )}
+
+      {!loading && !error && items.length > 0 && (
+        <div style={{ display: "grid" }}>
+          {items.slice(0, 5).map((item, index) => {
+            const accent = PRIORITY_ACCENT[item.priority] ?? "var(--accent)";
+            return (
+              <div
+                key={item.id}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 1fr) auto",
+                  gap: 14,
+                  alignItems: "center",
+                  padding: "14px 16px",
+                  borderTop: index === 0 ? "none" : "1px solid var(--border)",
+                  boxShadow: `inset 3px 0 0 ${accent}`,
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                    <span
+                      style={{
+                        width: 7,
+                        height: 7,
+                        borderRadius: 999,
+                        background: accent,
+                        flexShrink: 0,
+                      }}
+                      aria-hidden
+                    />
+                    <h3
+                      style={{
+                        margin: 0,
+                        fontSize: 13.5,
+                        fontWeight: 600,
+                        color: "var(--text)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {item.title}
+                    </h3>
+                  </div>
+                  <p
+                    style={{
+                      margin: "3px 0 0",
+                      color: "var(--text-muted)",
+                      fontSize: 12,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {item.detail}
+                  </p>
+                </div>
+                <Link href={item.href} className="btn-ghost" style={{ whiteSpace: "nowrap" }}>
+                  {item.cta_label}
+                </Link>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 

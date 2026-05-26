@@ -6,8 +6,8 @@ from datetime import date
 import pandas as pd
 from fastapi import APIRouter, Depends
 
-from ..db import list_clients, metrics_for_client, sessions_for_client
-from ..reasoning import generate_recommendation
+from ..db import list_clients
+from ..weekly_state import build_weekly_client_state
 from .deps import current_trainer_id, read_only_conn
 from .helpers import classify_rec
 from .schemas import RosterRow
@@ -32,8 +32,8 @@ def get_roster(
 
     for _, client in clients.iterrows():
         cid = client["id"]
-        metrics = metrics_for_client(con, trainer_id, cid, days=28)
-        sessions = sessions_for_client(con, trainer_id, cid, days=28)
+        state = build_weekly_client_state(con, trainer_id, cid, include_plan=False)
+        metrics = state.metrics
 
         last_days: int | None = None
         if not metrics.empty:
@@ -48,7 +48,7 @@ def get_roster(
             ))
             continue
 
-        rec = generate_recommendation(cid, metrics, sessions)
+        rec = state.recommendation
         label = classify_rec(rec.recommendation)
         flags: list[str] = []
         if "Flags:" in rec.rationale:

@@ -191,6 +191,59 @@ def test_get_roster_includes_seeded_client(app_with_db):
     assert me["label"] in {"Standard", "Conservative", "Deload", "No recent data"}
 
 
+def test_roster_uses_stored_weekly_recommendation(app_with_db):
+    week_of = date.today() - timedelta(days=date.today().weekday())
+    with connect(recommendation_routes.DEFAULT_DB_PATH, read_only=False) as con:
+        insert_recommendation(
+            con,
+            DEFAULT_TRAINER_ID,
+            Recommendation(
+                id="rec_roster_sentinel",
+                client_id="c_test",
+                generated_at=datetime.now(),
+                week_of=week_of,
+                recommendation="Deload week: reduce training load by 20%.",
+                rationale="Flags: hrv_below_baseline.",
+                source_metric_ids=["m-hrv-1"],
+                confidence=0.91,
+            ),
+        )
+
+    r = app_with_db.get("/api/roster")
+    assert r.status_code == 200
+    me = next(row for row in r.json() if row["client_id"] == "c_test")
+    assert me["label"] == "Deload"
+    assert me["confidence"] == 0.91
+
+
+def test_action_queue_surfaces_unreviewed_deload_and_missing_plan(app_with_db):
+    week_of = date.today() - timedelta(days=date.today().weekday())
+    with connect(recommendation_routes.DEFAULT_DB_PATH, read_only=False) as con:
+        insert_recommendation(
+            con,
+            DEFAULT_TRAINER_ID,
+            Recommendation(
+                id="rec_queue_deload",
+                client_id="c_test",
+                generated_at=datetime.now(),
+                week_of=week_of,
+                recommendation="Deload week: reduce training load by 20%.",
+                rationale="Flags: hrv_below_baseline.",
+                source_metric_ids=["m-hrv-1"],
+                confidence=0.93,
+            ),
+        )
+
+    r = app_with_db.get("/api/action-queue")
+    assert r.status_code == 200, r.text
+    items = r.json()
+    assert items[0]["kind"] == "review_recommendation"
+    assert items[0]["priority"] == "high"
+    assert items[0]["client_id"] == "c_test"
+    assert "Deload" in items[0]["title"]
+    assert any(item["kind"] == "build_plan" and item["client_id"] == "c_test" for item in items)
+
+
 def test_override_roundtrip(app_with_db):
     payload = {
         "week_of": str(date.today()),

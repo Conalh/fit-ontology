@@ -303,6 +303,25 @@ class RosterRow(BaseModel):
     stale: bool
 
 
+class ActionQueueItem(BaseModel):
+    """One trainer-facing next action on the dashboard.
+
+    The queue is workflow-shaped rather than raw-signal-shaped: each
+    item names the client, why they need attention, and where the
+    trainer should go next.
+    """
+    id: str
+    client_id: str
+    client_name: str
+    client_goal: str
+    priority: str  # "high" | "medium" | "low"
+    kind: str
+    title: str
+    detail: str
+    cta_label: str
+    href: str
+
+
 # ─── Calibration ────────────────────────────────────────────────────
 
 class WeeklyAgreement(BaseModel):
