@@ -154,7 +154,11 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
           <Link href={`/clients/edit?id=${clientId}`} className="btn-ghost">
             Edit
           </Link>
-          <button className="btn-primary" onClick={() => setOverrideOpen((s) => !s)}>
+          <button
+            className="btn-primary"
+            data-tour="override-btn"
+            onClick={() => setOverrideOpen((s) => !s)}
+          >
             Override
           </button>
         </TopBar>
@@ -177,7 +181,7 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
 
           <RecoveryGauge score={recQ.data?.recovery_score ?? null} />
 
-          <div id="fit-tour-rec-anchor">
+          <div id="fit-tour-rec-anchor" data-tour="recommendation">
             <RecommendationCard
               rec={recQ.data}
               isLoading={recQ.isLoading}
@@ -225,7 +229,7 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
         />
       )}
 
-      <TourCoachMark clientName={clientName} />
+      <TourCoachMark />
     </div>
   );
 }

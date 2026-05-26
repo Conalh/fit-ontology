@@ -6,7 +6,10 @@ const ACTION_ORDER = ["accept", "edit", "reject"] as const;
 
 export function Matrix({ data }: { data: CalibrationResponse }) {
   return (
-    <section style={{ border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface)", overflow: "hidden" }}>
+    <section
+      data-tour="cal-matrix"
+      style={{ border: "1px solid var(--border)", borderRadius: 10, background: "var(--surface)", overflow: "hidden" }}
+    >
       <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
         <h2 style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text)", margin: 0, letterSpacing: "-0.005em" }}>
           Agreement matrix

@@ -25,8 +25,9 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { useAuth } from "@/lib/use-auth";
+import { readTourActive, subscribeTour } from "@/lib/tour/steps";
 
 // Normalize so "/login" and "/login/" (Next 16's trailing-slash output)
 // both match. Without this the guard would redirect /login/ → /login →
@@ -41,16 +42,18 @@ function normalizePath(p: string | null): string {
 // Routes that don't require authentication. /share is the public
 // client-portal view (Phase 3a) — the bearer of a valid share token
 // can see one client's read-only view without any login.
-const PUBLIC_PATHS = new Set(["/login", "/share"]);
+const PUBLIC_PATHS = new Set(["/login", "/share", "/tour"]);
+const PUBLIC_PREFIXES = ["/tour/"];
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const isTourActive = useSyncExternalStore(subscribeTour, readTourActive, () => false);
 
   const normalized = normalizePath(pathname);
-  const isPublic = PUBLIC_PATHS.has(normalized);
-  const needsRedirect = !isLoading && !isAuthenticated && !isPublic;
+  const isPublic = PUBLIC_PATHS.has(normalized) || PUBLIC_PREFIXES.some((p) => normalized.startsWith(p));
+  const needsRedirect = !isTourActive && !isLoading && !isAuthenticated && !isPublic;
 
   useEffect(() => {
     if (!needsRedirect) return;
@@ -66,7 +69,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     router.replace(`/login?next=${next}`);
   }, [needsRedirect, normalized, router]);
 
-  if (isLoading) {
+  if (isLoading && !isTourActive) {
     // Blank scaffold — no chrome, no content. Brief (one /me roundtrip)
     // and prevents the flash of wrong-state-UI while we wait.
     return (

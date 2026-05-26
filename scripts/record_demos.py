@@ -37,13 +37,14 @@ fields so the viewer can see what was typed.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 from playwright.async_api import BrowserContext, async_playwright
-
 
 WEB = os.environ.get("FITONTOLOGY_DEMO_URL", "http://127.0.0.1:3000").rstrip("/")
 API = os.environ.get(
@@ -60,13 +61,13 @@ OUT_DIR = ROOT / "docs" / "videos"
 VIEWPORT = {"width": 1280, "height": 800}
 
 
-async def _new_context(browser, *, name: str) -> BrowserContext:
+async def _new_context(browser, *, name: str, raw_dir: Path) -> BrowserContext:
     """Fresh context per flow so each clip writes its own .webm and
     cookies don't bleed between flows."""
     ctx = await browser.new_context(
         viewport=VIEWPORT,
         device_scale_factor=1,
-        record_video_dir=str(OUT_DIR / "_raw" / name),
+        record_video_dir=str(raw_dir / name),
         record_video_size=VIEWPORT,
     )
     return ctx
@@ -88,7 +89,7 @@ async def _finalize_video(ctx: BrowserContext, page, target: Path) -> None:
 
 # ─── Flow: intake end-to-end ─────────────────────────────────────────
 
-async def record_intake_flow(browser) -> Path | None:
+async def record_intake_flow(browser, raw_dir: Path) -> Path | None:
     """Trainer logs in → opens roster → clicks Send intake link →
     mints a token → copies the URL. A second context (no cookie)
     opens the URL, fills the form, submits, sees the confirmation.
@@ -100,7 +101,7 @@ async def record_intake_flow(browser) -> Path | None:
     name = "intake-flow"
     target = OUT_DIR / f"{name}.webm"
 
-    trainer_ctx = await _new_context(browser, name=name)
+    trainer_ctx = await _new_context(browser, name=name, raw_dir=raw_dir)
     trainer = await trainer_ctx.new_page()
 
     # Login out-of-band via the API context so the session cookie is
@@ -142,7 +143,7 @@ async def record_intake_flow(browser) -> Path | None:
     await trainer.wait_for_timeout(900)
 
     # Now switch to the prospective-client side — fresh context, no cookies
-    client_ctx = await _new_context(browser, name=f"{name}-client")
+    client_ctx = await _new_context(browser, name=f"{name}-client", raw_dir=raw_dir)
     client = await client_ctx.new_page()
     await client.goto(url, wait_until="domcontentloaded")
     await client.wait_for_selector("form", timeout=8000)
@@ -210,7 +211,7 @@ async def _login(ctx: BrowserContext) -> None:
 
 # ─── Flow: roster overview ───────────────────────────────────────────
 
-async def record_roster_overview(browser) -> Path | None:
+async def record_roster_overview(browser, raw_dir: Path) -> Path | None:
     """Monday-morning triage view. Trainer opens the roster; the three
     verdicts (Deload / Conservative / Standard) are visible with their
     coloured left-edge stripes and confidence percentages. Cursor
@@ -219,7 +220,7 @@ async def record_roster_overview(browser) -> Path | None:
     name = "roster-overview"
     target = OUT_DIR / f"{name}.webm"
 
-    ctx = await _new_context(browser, name=name)
+    ctx = await _new_context(browser, name=name, raw_dir=raw_dir)
     page = await ctx.new_page()
     await _login(ctx)
 
@@ -250,7 +251,7 @@ async def record_roster_overview(browser) -> Path | None:
 
 # ─── Flow: client detail with citation popover ───────────────────────
 
-async def record_client_detail(browser) -> Path | None:
+async def record_client_detail(browser, raw_dir: Path) -> Path | None:
     """Open Captain Ahab's detail page — the Deload client. Pause on
     the recommendation card, then hover one of the literature
     citation chips to show the popover with the source + DOI link.
@@ -259,7 +260,7 @@ async def record_client_detail(browser) -> Path | None:
     name = "client-detail"
     target = OUT_DIR / f"{name}.webm"
 
-    ctx = await _new_context(browser, name=name)
+    ctx = await _new_context(browser, name=name, raw_dir=raw_dir)
     page = await ctx.new_page()
     await _login(ctx)
 
@@ -290,7 +291,7 @@ async def record_client_detail(browser) -> Path | None:
 
 # ─── Flow: calibration page ──────────────────────────────────────────
 
-async def record_calibration(browser) -> Path | None:
+async def record_calibration(browser, raw_dir: Path) -> Path | None:
     """The /calibration page — system-vs-trainer agreement matrix,
     weekly trend, per-client breakdown, adherence telemetry. The
     'explainable AI' story made visible: nine override pairs across
@@ -299,7 +300,7 @@ async def record_calibration(browser) -> Path | None:
     name = "calibration"
     target = OUT_DIR / f"{name}.webm"
 
-    ctx = await _new_context(browser, name=name)
+    ctx = await _new_context(browser, name=name, raw_dir=raw_dir)
     page = await ctx.new_page()
     await _login(ctx)
 
@@ -318,6 +319,151 @@ async def record_calibration(browser) -> Path | None:
     return target
 
 
+# ─── Flow: full product tour ─────────────────────────────────────────
+
+async def record_full_tour(browser, raw_dir: Path) -> Path | None:
+    """End-to-end walkthrough in one continuous take. Roster → add a
+    new client through the UI → land on the empty detail (no-data
+    banner) → back to roster → open a rich existing client (Captain
+    Ahab, Deload) → scroll the whole detail page (recovery gauge,
+    recommendation, citations, trends, sessions, decision history,
+    thresholds) → peek at the override drawer → end on the roster.
+
+    Single context so it's one .webm. Pacing is deliberately slow
+    (slow_mo + explicit waits) — this is the "show somebody what
+    FitOntology is" clip, not a flow test."""
+    name = "full-tour"
+    target = OUT_DIR / f"{name}.webm"
+
+    ctx = await _new_context(browser, name=name, raw_dir=raw_dir)
+    page = await ctx.new_page()
+    await _login(ctx)
+
+    # ── 1. Land on the roster ──
+    await page.goto(f"{WEB}/", wait_until="domcontentloaded")
+    await page.wait_for_selector(".fit-roster-row", timeout=10000)
+    await page.wait_for_timeout(2400)  # let viewer take in Monday-morning view
+
+    # Hover top-urgency row (Deload) so the row-hover affordance fires
+    rows = page.locator(".fit-roster-row")
+    await rows.first.hover()
+    await page.wait_for_timeout(1200)
+    # Drift the cursor down the list so the viewer's eye follows
+    for i in range(1, min(await rows.count(), 4)):
+        await rows.nth(i).hover()
+        await page.wait_for_timeout(700)
+
+    # Toggle Confidence sort, then back to urgency — quick "this is interactive" beat
+    await page.get_by_role("button", name="CONF").click()
+    await page.wait_for_timeout(1400)
+    await page.get_by_role("button", name="RECOMMENDATION").click()
+    await page.wait_for_timeout(1400)
+
+    # ── 2. Add a new client through the UI ──
+    await page.get_by_role("link", name="+ Add client").click()
+    await page.wait_for_selector("input[placeholder='e.g. Ben Okafor']", timeout=6000)
+    await page.wait_for_timeout(1100)
+
+    # Fill the form slowly enough that each field is readable
+    await page.locator("input[placeholder='e.g. Ben Okafor']").press_sequentially(
+        "Jane Eyre", delay=55
+    )
+    await page.wait_for_timeout(380)
+    await page.select_option("select", "F")
+    await page.wait_for_timeout(320)
+    await page.locator("input[type=number]:not([placeholder])").fill("28")
+    await page.wait_for_timeout(260)
+    await page.locator("input[placeholder=ft]").fill("5")
+    await page.wait_for_timeout(220)
+    await page.locator("input[placeholder=in]").fill("5")
+    await page.wait_for_timeout(260)
+    await page.locator("input[placeholder=lb]").fill("128")
+    await page.wait_for_timeout(360)
+    await page.locator("input[placeholder='e.g. Sub-3:15 Chicago, Oct 11']").press_sequentially(
+        "Walk the moors 5mi — build sustainable base for spring", delay=28
+    )
+    await page.wait_for_timeout(280)
+    await page.locator("textarea").press_sequentially(
+        "Mild lower-back stiffness on long walks; nothing acute", delay=22
+    )
+    await page.wait_for_timeout(900)
+
+    # Submit
+    await page.get_by_role("button", name="Create client").click()
+
+    # Lands on the new client's detail. No data yet — viewer sees the
+    # NoDataBanner and the gauge in its empty state.
+    with contextlib.suppress(Exception):
+        await page.wait_for_selector("h1", timeout=8000)
+    await page.wait_for_timeout(2200)
+    # A small scroll so the no-data state is clearly framed
+    await page.evaluate("window.scrollTo({top: 280, behavior: 'smooth'})")
+    await page.wait_for_timeout(1800)
+    await page.evaluate("window.scrollTo({top: 0, behavior: 'smooth'})")
+    await page.wait_for_timeout(1100)
+
+    # ── 3. Open a rich existing client (Captain Ahab — Deload) ──
+    await page.goto(f"{WEB}/clients/?id=c_ben", wait_until="domcontentloaded")
+    await page.wait_for_selector(".fit-rec-card", timeout=15000)
+    await page.wait_for_timeout(2200)
+
+    # Slow scroll down the page so the camera sweeps every section:
+    # gauge → recommendation → contraindications → plan → trends →
+    # sessions/history → thresholds.
+    for y in (220, 480, 760, 1080, 1440, 1820, 2200, 2600):
+        await page.evaluate(f"window.scrollTo({{top: {y}, behavior: 'smooth'}})")
+        await page.wait_for_timeout(1500)
+
+    # Scroll back up to the recommendation card and hover a citation chip
+    await page.evaluate("window.scrollTo({top: 340, behavior: 'smooth'})")
+    await page.wait_for_timeout(1400)
+    chip = page.locator("button[aria-label^='About citation']").first
+    try:
+        await chip.wait_for(timeout=3000)
+        await chip.scroll_into_view_if_needed(timeout=2000)
+        await page.wait_for_timeout(500)
+        await chip.hover()
+        await page.wait_for_timeout(1800)
+        await chip.click()
+        await page.wait_for_timeout(2200)
+        # Dismiss popover by clicking elsewhere
+        await page.mouse.click(20, 20)
+        await page.wait_for_timeout(700)
+    except Exception as e:
+        print(f"  citation-chip interaction skipped: {e}")
+        await page.wait_for_timeout(800)
+
+    # Peek at the Override drawer (open + close)
+    try:
+        await page.get_by_role("button", name="Override").click()
+        await page.wait_for_timeout(2000)
+        # Close via the Escape key or a Cancel button — try both
+        try:
+            await page.get_by_role("button", name="Cancel").click(timeout=1500)
+        except Exception:
+            await page.keyboard.press("Escape")
+        await page.wait_for_timeout(900)
+    except Exception as e:
+        print(f"  override drawer skipped: {e}")
+
+    # ── 4. Pivot to a Conservative client (different verdict band) ──
+    await page.goto(f"{WEB}/clients/?id=c_carla", wait_until="domcontentloaded")
+    await page.wait_for_selector(".fit-rec-card", timeout=15000)
+    await page.wait_for_timeout(2000)
+    await page.evaluate("window.scrollTo({top: 380, behavior: 'smooth'})")
+    await page.wait_for_timeout(1800)
+    await page.evaluate("window.scrollTo({top: 900, behavior: 'smooth'})")
+    await page.wait_for_timeout(1800)
+
+    # ── 5. End back on the roster so the new client row is visible ──
+    await page.goto(f"{WEB}/", wait_until="domcontentloaded")
+    await page.wait_for_selector(".fit-roster-row", timeout=8000)
+    await page.wait_for_timeout(2800)  # final settle
+
+    await _finalize_video(ctx, page, target)
+    return target
+
+
 # ─── Registry ────────────────────────────────────────────────────────
 
 FLOWS = {
@@ -325,6 +471,7 @@ FLOWS = {
     "roster": record_roster_overview,
     "client": record_client_detail,
     "calibration": record_calibration,
+    "tour": record_full_tour,
 }
 
 
@@ -337,23 +484,18 @@ async def main() -> int:
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(slow_mo=60)
-        try:
-            for name in requested:
-                print(f"recording {name}…")
-                out = await FLOWS[name](browser)
-                if out:
-                    print(f"  wrote {out.relative_to(ROOT)}")
-        finally:
-            await browser.close()
-
-    # Best-effort cleanup of the random-filename _raw directory
-    raw = OUT_DIR / "_raw"
-    if raw.exists():
-        import shutil
-
-        shutil.rmtree(raw, ignore_errors=True)
+    with tempfile.TemporaryDirectory(prefix="fitontology-demo-raw-") as raw_tmp:
+        raw_dir = Path(raw_tmp)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(slow_mo=60)
+            try:
+                for name in requested:
+                    print(f"recording {name}…")
+                    out = await FLOWS[name](browser, raw_dir)
+                    if out:
+                        print(f"  wrote {out.relative_to(ROOT)}")
+            finally:
+                await browser.close()
     return 0
 
 

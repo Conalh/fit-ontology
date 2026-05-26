@@ -105,6 +105,7 @@ export function SendToClient({
 
   return (
     <section
+      data-tour="send-client"
       style={{
         border: "1px solid var(--border)",
         borderRadius: 10,

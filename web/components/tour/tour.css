@@ -1,0 +1,478 @@
+/* Tour shell — scoped under .fit-tour-root so the main app chrome stays untouched. */
+
+.fit-tour-root {
+  min-height: 100vh;
+  position: relative;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.fit-tour-shell {
+  position: relative;
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 0 24px 64px;
+}
+
+.fit-tour-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin: 0 -24px 28px;
+  padding: 10px 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.fit-tour-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--accent) 35%, var(--border));
+  background: var(--accent-bg);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.fit-tour-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 50%, transparent);
+  animation: fit-tour-pulse 2.4s ease-out infinite;
+}
+
+@keyframes fit-tour-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 45%, transparent); }
+  70% { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+.fit-tour-bar-copy {
+  flex: 1;
+  min-width: 200px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.fit-tour-bar-copy strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.fit-tour-hero {
+  padding: 12px 0 36px;
+  animation: fit-tour-fade-up 520ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.fit-tour-hero h1 {
+  margin: 0;
+  font-size: clamp(28px, 5vw, 40px);
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.08;
+  max-width: 14ch;
+}
+
+.fit-tour-hero p {
+  margin: 14px 0 0;
+  max-width: 52ch;
+  font-size: 15px;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+.fit-tour-section-label {
+  margin: 0 0 12px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.fit-tour-personas {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 36px;
+}
+
+@media (max-width: 820px) {
+  .fit-tour-personas {
+    grid-template-columns: 1fr;
+  }
+}
+
+.fit-tour-persona {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 18px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--surface-2) 88%, transparent);
+  text-decoration: none;
+  color: inherit;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+  animation: fit-tour-fade-up 520ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.fit-tour-persona:nth-child(1) { animation-delay: 60ms; }
+.fit-tour-persona:nth-child(2) { animation-delay: 120ms; }
+.fit-tour-persona:nth-child(3) { animation-delay: 180ms; }
+
+.fit-tour-persona:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in oklab, var(--persona-accent, var(--accent)) 40%, var(--border));
+  box-shadow: 0 1px 0 var(--shadow-sm);
+}
+
+.fit-tour-persona-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.fit-tour-persona-name {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.fit-tour-persona-goal {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.fit-tour-verdict {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+}
+
+.fit-tour-verdict--deload {
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-color: color-mix(in oklab, var(--danger) 25%, transparent);
+}
+
+.fit-tour-verdict--conservative {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: color-mix(in oklab, var(--warn) 25%, transparent);
+}
+
+.fit-tour-verdict--standard {
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: color-mix(in oklab, var(--ok) 25%, transparent);
+}
+
+.fit-tour-persona-hook {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.fit-tour-persona-cta {
+  margin-top: auto;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--persona-accent, var(--accent));
+}
+
+.fit-tour-destinations {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 28px;
+}
+
+@media (max-width: 720px) {
+  .fit-tour-destinations {
+    grid-template-columns: 1fr;
+  }
+}
+
+.fit-tour-dest {
+  display: block;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  text-decoration: none;
+  color: inherit;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.fit-tour-dest:hover {
+  background: var(--surface-2);
+  border-color: color-mix(in oklab, var(--accent) 30%, var(--border));
+}
+
+.fit-tour-dest-label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.fit-tour-dest-desc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.fit-tour-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ─── Guide wizard (/tour/guide) ─────────────────────────────────── */
+
+.fit-tour-guide-card {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in oklab, var(--surface-2) 90%, transparent);
+  padding: 24px 24px 20px;
+  box-shadow: 0 1px 0 var(--shadow-sm);
+  animation: fit-tour-fade-up 480ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.fit-tour-guide-progress {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+
+.fit-tour-guide-dot {
+  height: 4px;
+  flex: 1;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 200ms ease;
+}
+
+.fit-tour-guide-dot--active {
+  background: var(--accent);
+}
+
+.fit-tour-guide-dot--done {
+  background: color-mix(in oklab, var(--accent) 55%, var(--border));
+}
+
+.fit-tour-guide-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+.fit-tour-guide-lead {
+  margin: 10px 0 16px;
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  max-width: 58ch;
+}
+
+.fit-tour-guide-list {
+  margin: 0 0 22px;
+  padding-left: 18px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.fit-tour-guide-list li {
+  margin-bottom: 8px;
+}
+
+.fit-tour-guide-list li::marker {
+  color: var(--accent);
+}
+
+.fit-tour-guide-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.fit-tour-guide-step-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+/* ─── Spotlight tour (real UI walkthrough) ─────────────────────────── */
+
+.fit-tour-spotlight-root {
+  position: fixed;
+  inset: 0;
+  z-index: 9990;
+  pointer-events: none;
+}
+
+.fit-tour-spotlight-ring {
+  position: fixed;
+  border-radius: 10px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
+  border: 2px solid var(--accent, #818cf8);
+  pointer-events: none;
+  transition: top 0.18s ease, left 0.18s ease, width 0.18s ease, height 0.18s ease;
+}
+
+.fit-tour-spotlight-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: auto;
+}
+
+.fit-tour-spotlight-panel {
+  position: fixed;
+  z-index: 9991;
+  width: min(360px, calc(100vw - 32px));
+  padding: 16px 18px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 8px 32px var(--shadow-md);
+  pointer-events: auto;
+}
+
+.fit-tour-spotlight-kicker {
+  margin: 0 0 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.fit-tour-spotlight-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.fit-tour-spotlight-body {
+  margin: 8px 0 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.fit-tour-spotlight-wait {
+  margin: -8px 0 10px;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.fit-tour-spotlight-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fit-tour-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.fit-tour-btn:hover {
+  opacity: 0.92;
+  transform: translateY(-1px);
+}
+
+.fit-tour-btn--primary {
+  background: var(--text);
+  color: var(--surface);
+  border-color: var(--text);
+}
+
+.fit-tour-btn--ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+.fit-tour-btn--ghost:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+@keyframes fit-tour-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fit-tour-hero,
+  .fit-tour-persona,
+  .fit-tour-guide-card {
+    animation: none;
+  }
+  .fit-tour-pulse {
+    animation: none;
+  }
+  .fit-tour-persona:hover,
+  .fit-tour-btn:hover {
+    transform: none;
+  }
+}

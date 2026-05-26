@@ -5,6 +5,7 @@ import { useState } from "react";
 import { AuthGuard } from "@/components/auth-guard";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { ToastProvider } from "@/components/toast";
+import { TourProvider } from "@/components/tour/tour-provider";
 
 /**
  * Client-side providers stack:
@@ -38,7 +39,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <ErrorBoundary>
       <ToastProvider>
         <QueryClientProvider client={client}>
-          <AuthGuard>{children}</AuthGuard>
+          <AuthGuard>
+            <TourProvider>{children}</TourProvider>
+          </AuthGuard>
         </QueryClientProvider>
       </ToastProvider>
     </ErrorBoundary>

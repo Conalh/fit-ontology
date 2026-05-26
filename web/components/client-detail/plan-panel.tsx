@@ -55,6 +55,7 @@ export function PlanPanel({ clientId }: { clientId: string }) {
 
   return (
     <section
+      data-tour="plan"
       style={{
         border: "1px solid var(--border)",
         borderRadius: 10,

@@ -280,6 +280,7 @@ function RosterTable({ rows }: { rows: RosterRow[] }) {
 
   return (
     <section
+      data-tour="roster-table"
       style={{
         border: "1px solid var(--border)",
         borderRadius: 10,
@@ -321,6 +322,7 @@ function RosterTable({ rows }: { rows: RosterRow[] }) {
             key={row.client_id}
             href={`/clients?id=${row.client_id}`}
             className="fit-roster-row"
+            data-tour={row.client_id === "c_ben" ? "roster-ben" : undefined}
             style={{
               display: "grid",
               gridTemplateColumns: gridCols,

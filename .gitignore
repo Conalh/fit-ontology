@@ -46,6 +46,11 @@ web/.next/
 web/out/
 web/node_modules/
 
+# Demo recording scratch files. Final curated clips under docs/videos/*.webm
+# may be committed intentionally, but Playwright raw chunks are large and
+# regenerable.
+docs/videos/_raw/
+
 # Test runner artifacts. pytest-cov writes .coverage (sqlite) on every
 # test run and coverage.xml when --cov-report=xml is set; CI uploads
 # coverage.xml as a build artifact (see .github/workflows/tests.yml)
