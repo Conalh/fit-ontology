@@ -387,6 +387,10 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
+  deleteClient: (clientId: string) =>
+    request<{ ok: boolean; name: string }>(`/api/clients/${clientId}`, {
+      method: "DELETE",
+    }),
   roster: () => request<RosterRow[]>("/api/roster"),
   recommendation: (clientId: string) =>
     request<Recommendation>(`/api/clients/${clientId}/recommendation`),

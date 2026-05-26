@@ -322,6 +322,73 @@ def ensure_client(con, trainer_id: str, client_id: str,
     )
 
 
+def delete_client_cascade(con, trainer_id: str, client_id: str) -> dict | None:
+    """Hard-delete a client and every row that FK-references them.
+
+    Returns the deleted client's snapshot (id, name) so the route layer
+    can audit-log the name even though the row is gone after this
+    call. Returns None if the client doesn't exist OR doesn't belong
+    to ``trainer_id`` — same shape as a missing-client lookup, so the
+    route can map None → 404.
+
+    DuckDB enforces foreign-key constraints strictly: deleting a
+    client while sessions/metrics/etc still reference it raises
+    ConstraintException. Deletes have to walk the dependent tables
+    first, in roughly reverse-FK-depth order. Caller is expected to
+    wrap this in a single ``with connect(..., read_only=False)``
+    context — every statement here lands on the same connection so
+    DuckDB's per-file writer lock serialises them naturally; an
+    explicit BEGIN TRANSACTION around the lot would be ideal but the
+    DuckDB Python connector's transaction handling is inconsistent
+    across versions, and the per-connection serialisation gets us
+    the same partial-write protection in practice.
+
+    The ``client_intake_tokens`` table is special-cased: its
+    ``consumed_client_id`` is a stamp that records "this token
+    submitted into client X" rather than a structural FK, so we
+    NULL it out rather than dropping the historical mint event —
+    the trainer still wants to be able to answer "did this intake
+    URL get used?" after the resulting client was deleted.
+    """
+    # Ownership-and-existence check + capture the name for the audit
+    # log before we lose the row.
+    row = con.execute(
+        "SELECT id, name FROM clients WHERE id = ? AND trainer_id = ?",
+        [client_id, trainer_id],
+    ).fetchone()
+    if not row:
+        return None
+    snapshot = {"id": row[0], "name": row[1]}
+
+    # Order matters — leaf rows first so each DELETE's FK targets are
+    # all unreferenced before it runs. Intake tokens' consumed_client_id
+    # is NULL'd rather than deleted (see docstring).
+    con.execute(
+        "UPDATE client_intake_tokens SET consumed_client_id = NULL "
+        "WHERE consumed_client_id = ? AND trainer_id = ?",
+        [client_id, trainer_id],
+    )
+    for table in (
+        "client_share_tokens",
+        "client_thresholds",
+        "planned_sessions",
+        "recommendation_overrides",
+        "recommendations",
+        "metrics",
+        "sessions",
+    ):
+        con.execute(
+            f"DELETE FROM {table} WHERE client_id = ? AND trainer_id = ?",
+            [client_id, trainer_id],
+        )
+    # Finally the parent row itself.
+    con.execute(
+        "DELETE FROM clients WHERE id = ? AND trainer_id = ?",
+        [client_id, trainer_id],
+    )
+    return snapshot
+
+
 def insert_client_from_payload(con, trainer_id: str, payload) -> str:
     """Insert one client row from a ``ClientCreate``-shaped payload and
     return the generated id.

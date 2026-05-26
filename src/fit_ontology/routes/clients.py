@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ..db import (
     DEFAULT_DB_PATH,
     connect,
+    delete_client_cascade,
     insert_client_from_payload,
     list_clients,
     record_audit,
@@ -104,3 +105,47 @@ def patch_client(
     except duckdb.IOException as e:
         raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
     return {"ok": True, "updated": list(updates.keys())}
+
+
+@router.delete("/api/clients/{client_id}")
+def delete_client(
+    client_id: str,
+    request: Request,
+    trainer_id: str = Depends(forbid_demo_trainer),
+) -> dict:
+    """Hard-delete a client and every row that FK-references them
+    (sessions, metrics, recommendations, overrides, planned sessions,
+    thresholds, share tokens; intake tokens get their consumed_client_id
+    NULL'd to preserve the mint-event trail).
+
+    Returns ``{"ok": True, "name": "..."}`` so the front-end can show
+    a "Deleted Captain Ahab" toast without having to remember which
+    client just disappeared. 404 if the client doesn't belong to the
+    calling trainer — same shape as a missing client, so we don't
+    leak the difference between "doesn't exist" and "isn't yours."
+
+    The audit row captures the client's name in ``details`` so the
+    trail survives even after the row is gone. This is the one piece
+    of PII we deliberately put in the log (name only; goal / injury
+    history stay on the row, which is now deleted) — without it the
+    audit table would carry "client.deleted" events that point at
+    nonexistent ids, and a year from now the trainer can't answer
+    "what was client_id c_abc?".
+    """
+    client_ip = request.client.host if request.client else None
+    try:
+        with connect(DEFAULT_DB_PATH, read_only=False) as con:
+            snapshot = delete_client_cascade(con, trainer_id, client_id)
+            if snapshot is None:
+                raise HTTPException(
+                    status_code=404, detail=f"No client with id {client_id}"
+                )
+            record_audit(
+                con, trainer_id, "client.deleted",
+                target_type="client", target_id=client_id,
+                details={"name": snapshot["name"]},
+                ip=client_ip,
+            )
+    except duckdb.IOException as e:
+        raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
+    return {"ok": True, "name": snapshot["name"]}
