@@ -93,6 +93,19 @@ SLOPE_MILD_SD_PER_DAY = 0.05
 SLOPE_MODERATE_SD_PER_DAY = 0.10
 SLOPE_SEVERE_SD_PER_DAY = 0.20
 
+# Chronic-trend (EWMA, 28-day) thresholds. The chronic detector
+# applies the smoother *before* OLS so the resulting slope reflects
+# sustained direction rather than week-over-week fluctuation. On the
+# synthetic dataset that drops the slope-magnitude variance roughly
+# in half, so chronic thresholds sit at about half the acute values.
+# Calibrated empirically (E3) against the five-client lit roster —
+# the goal was to keep chronic firing on the clients designed to need
+# it (Macbeth, Quixote: chronic HRV ~0.03-0.05 SD/day) while staying
+# silent on the noise-only case (Holmes: chronic HRV 0.001).
+CHRONIC_SLOPE_MILD_SD_PER_DAY = 0.02
+CHRONIC_SLOPE_MODERATE_SD_PER_DAY = 0.04
+CHRONIC_SLOPE_SEVERE_SD_PER_DAY = 0.08
+
 # Progression magnitudes from ACSM 11e Ch. 6 (cardiorespiratory) and
 # Ch. 7 (resistance). Conservative end picked when any signal is present.
 ACSM_STANDARD_RANGE = (0.05, 0.10)
@@ -172,6 +185,9 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "slope_mild_sd_per_day":     SLOPE_MILD_SD_PER_DAY,
     "slope_moderate_sd_per_day": SLOPE_MODERATE_SD_PER_DAY,
     "slope_severe_sd_per_day":   SLOPE_SEVERE_SD_PER_DAY,
+    "chronic_slope_mild_sd_per_day":     CHRONIC_SLOPE_MILD_SD_PER_DAY,
+    "chronic_slope_moderate_sd_per_day": CHRONIC_SLOPE_MODERATE_SD_PER_DAY,
+    "chronic_slope_severe_sd_per_day":   CHRONIC_SLOPE_SEVERE_SD_PER_DAY,
     # Per-client tunable baseline window. 28 days follows Plews & Laursen
     # 2017; some highly-variable athletes benefit from a tighter 14-day
     # window (more responsive to recent state) while very stable elite
@@ -418,7 +434,11 @@ def compute_trend_slope(
 
 
 def _trend_severity(sd_per_day: float, th: Mapping[str, float]) -> Severity | None:
-    """Map an absolute SD/day slope magnitude to a severity bucket."""
+    """Map an absolute SD/day slope magnitude to a severity bucket using
+    the *acute* (7-day OLS) thresholds. The acute detector's job is
+    early warning, so its thresholds are deliberately sensitive.
+    The chronic detector uses tighter thresholds — see
+    ``_chronic_trend_severity``."""
     if sd_per_day >= th["slope_severe_sd_per_day"]:
         return "severe"
     if sd_per_day >= th["slope_moderate_sd_per_day"]:
@@ -426,6 +446,109 @@ def _trend_severity(sd_per_day: float, th: Mapping[str, float]) -> Severity | No
     if sd_per_day >= th["slope_mild_sd_per_day"]:
         return "mild"
     return None
+
+
+def _chronic_trend_severity(
+    sd_per_day: float, th: Mapping[str, float],
+) -> Severity | None:
+    """Map an absolute SD/day slope magnitude to a severity bucket
+    using the *chronic* (28-day EWMA) thresholds. Calibrated against
+    the synthetic dataset to fire on real sustained drift while
+    staying silent on the noise-floor that acute trips over.
+    """
+    if sd_per_day >= th["chronic_slope_severe_sd_per_day"]:
+        return "severe"
+    if sd_per_day >= th["chronic_slope_moderate_sd_per_day"]:
+        return "moderate"
+    if sd_per_day >= th["chronic_slope_mild_sd_per_day"]:
+        return "mild"
+    return None
+
+
+# E3: acute (7-day OLS) and chronic (28-day EWMA) severity grades
+# combine into one final grade per signal kind. The combiner encodes
+# three rules; the decision table below is what they produce.
+#
+# Rules (apply in order):
+#   1. If chronic is silent (none), the acute reading is unconfirmed.
+#      Demote it by one band — a noise-driven acute that the chronic
+#      detector doesn't see is most likely just noise. This is the
+#      headline fix for the Holmes case: HRV acute severe + chronic
+#      flat collapses to moderate.
+#   2. If chronic is stronger than acute (e.g. mild acute + moderate
+#      chronic), promote acute by one band. The chronic detector is
+#      seeing a slow drift the acute window can't fully resolve yet —
+#      surfacing it gives the trainer early warning.
+#   3. Otherwise (chronic confirms acute at the same or weaker level),
+#      hold at the acute reading. The chronic doesn't have to MATCH
+#      acute to confirm — it just has to be non-zero in the same
+#      direction. A severe acute + mild chronic is "the trend is real,
+#      acute is showing the acute phase of it" → keep severe.
+#
+# Decision table the rules produce (matches the docstring above):
+#
+#   Acute    Chronic   →  Final     Notes
+#   severe   severe       severe    full agreement
+#   severe   moderate     severe    chronic confirms acute
+#   severe   mild         severe    chronic confirms direction
+#   severe   none         moderate  noise-only acute, demote (rule 1)
+#   moderate severe       severe    chronic-led, promote (rule 2)
+#   moderate moderate     moderate  consistent
+#   moderate mild         moderate  chronic confirms
+#   moderate none         mild      acute-only, demote (rule 1)
+#   mild     severe       moderate  promote (rule 2)
+#   mild     moderate     moderate  promote (rule 2)
+#   mild     mild         mild      both weak, hold
+#   mild     none         none      acute-only weak signal, suppress (rule 1)
+#   none     severe       mild      chronic-only, surface weakly
+#   none     moderate     none      chronic alone too weak below severe
+#   none     mild         none      noise
+#   none     none         none      clean
+#
+# Ranking levels low→high: none(0) → mild(1) → moderate(2) → severe(3).
+_SEVERITY_RANK: dict[Severity | None, int] = {
+    None: 0, "mild": 1, "moderate": 2, "severe": 3,
+}
+_RANK_SEVERITY: list[Severity | None] = [None, "mild", "moderate", "severe"]
+
+
+def combine_acute_chronic(
+    acute: Severity | None,
+    chronic: Severity | None,
+) -> Severity | None:
+    """Combine acute and chronic severity grades into a final grade
+    per the E3 decision table.
+
+    Three principles encoded:
+      - **Acute alone is noise-prone.** When acute fires but chronic
+        is silent, demote the final by one band. Holmes' HRV (acute
+        severe, chronic flat) drops to moderate; an acute mild without
+        chronic backing suppresses to none entirely.
+      - **Chronic stronger than acute = early warning of a slow drift.**
+        Promote acute by one band when chronic is on a higher tier —
+        the chronic detector is seeing what the acute window can't yet.
+      - **Chronic confirms acute even at a weaker level.** A severe
+        acute + mild chronic isn't "partial confirmation, demote" — it's
+        "sustained trend in acute phase, hold severe."
+
+    See the lookup table comment above for the full 4×4 mapping.
+    """
+    a = _SEVERITY_RANK[acute]
+    c = _SEVERITY_RANK[chronic]
+    if a == 0 and c == 0:
+        return None
+    if a == 0:
+        # Chronic-only: severe → mild surface, weaker → none.
+        return "mild" if c == 3 else None
+    if c == 0:
+        # Acute-only: demote by one band. severe→moderate, mod→mild,
+        # mild→none. The headline noise-suppression rule.
+        return _RANK_SEVERITY[max(0, a - 1)]
+    if c > a:
+        # Chronic stronger: promote acute by one band, cap at severe.
+        return _RANK_SEVERITY[min(3, a + 1)]
+    # Chronic confirms acute at same or lower tier: trust the acute.
+    return _RANK_SEVERITY[a]
 
 
 # --- Per-signal detectors -------------------------------------------------
@@ -726,38 +849,120 @@ def _hrv_kind(metrics: pd.DataFrame) -> str:
     return MetricKind.HRV_RMSSD.value
 
 
+# Chronic-trend window. 28 days matches Plews & Laursen 2013's
+# recommendation for rolling-mean HRV monitoring (≈4 weeks of data
+# smooths out training-week boundaries). Engine v2 / E3.
+HRV_CHRONIC_DAYS = 28
+
+
+def _dual_window_trend(
+    metrics: pd.DataFrame,
+    kind: str,
+    today: date,
+    th: Mapping[str, float],
+    *,
+    direction: Literal["down", "up"],
+) -> tuple[Severity | None, SlopeResult | None, SlopeResult | None, float | None]:
+    """Compute acute + chronic detectors for one signal kind and
+    combine their severities via the E3 decision table. Returns the
+    combined severity, both raw SlopeResults (for the caller's
+    rationale string), and the acute-window SD/day value (the number
+    the trainer is used to seeing in the rationale).
+
+    ``direction`` is the concerning sign: "down" for HRV/sleep (where
+    a falling slope is bad), "up" for RHR (where rising is bad). The
+    helper folds the sign check in so the three detectors stay
+    one-liners around it.
+    """
+    _, baseline_sd, _ = _baseline(metrics, kind, today, int(th["baseline_window_days"]))
+    if not baseline_sd:
+        return None, None, None, None
+
+    acute = compute_trend_slope(
+        metrics, kind, today, method="ols", window_days=HRV_ACUTE_DAYS,
+    )
+    chronic = compute_trend_slope(
+        metrics, kind, today, method="ewma", window_days=HRV_CHRONIC_DAYS,
+    )
+
+    def _grade(
+        sr: SlopeResult | None,
+        *,
+        method: Literal["acute", "chronic"],
+    ) -> Severity | None:
+        if sr is None:
+            return None
+        # Direction check: rule out slopes pointing the "good" way.
+        if direction == "down" and sr.slope_per_day >= 0:
+            return None
+        if direction == "up" and sr.slope_per_day <= 0:
+            return None
+        # Chronic with weight=0 (insufficient samples) is reported as
+        # silent so the combiner falls back to acute-only. The acute
+        # detector doesn't use confidence_weight (the 7-day window
+        # either has enough data or returns None).
+        if method == "chronic" and sr.confidence_weight <= 0.0:
+            return None
+        sd_per_day = abs(sr.slope_per_day) / baseline_sd
+        return (
+            _trend_severity(sd_per_day, th)
+            if method == "acute"
+            else _chronic_trend_severity(sd_per_day, th)
+        )
+
+    acute_severity = _grade(acute, method="acute")
+    chronic_severity = _grade(chronic, method="chronic")
+    combined = combine_acute_chronic(acute_severity, chronic_severity)
+
+    # The legacy summary string reports the acute SD/day even when the
+    # combiner downgraded from severe → moderate — that's the number
+    # the trainer recognizes from the chart. E5 will surface chronic
+    # context alongside.
+    acute_sd: float | None = None
+    if acute is not None and baseline_sd:
+        acute_sd = abs(acute.slope_per_day) / baseline_sd
+
+    return combined, acute, chronic, acute_sd
+
+
 def detect_hrv_trend_signal(
     metrics: pd.DataFrame,
     today: date,
     thresholds: Mapping[str, float] | None = None,
 ) -> Signal | None:
-    """7-day slope of HRV. A still-falling HRV at a given level is more
-    concerning than the same level holding steady — Plews & Laursen
-    (2017) recommend reacting to the trajectory, not the instantaneous
-    value. We measure slope in baseline-SD units per day so the same
-    severity bands apply across athletes with different absolute HRV.
+    """Dual-window HRV trend detector (engine-v2 / E3).
+
+    Computes both the acute (7-day OLS) and chronic (28-day EWMA)
+    slopes and combines them per the ``combine_acute_chronic``
+    decision table. The acute window catches recent changes; the
+    chronic window confirms whether the change is a sustained pattern
+    or short-window noise. A severe acute + flat chronic — the
+    headline Holmes false-alarm case — downgrades to moderate; a
+    chronic-confirmed acute trend stays at its full severity.
+
+    Plews & Laursen 2013 recommend reacting to trajectory rather than
+    instantaneous values; the dual-window combiner is what that
+    recommendation looks like once you account for short-window noise
+    sensitivity.
     """
     th = _merge_thresholds(thresholds)
     kind = _hrv_kind(metrics)
-    slope = compute_trend_slope(metrics, kind, today, method="ols", window_days=HRV_ACUTE_DAYS)
-    _, baseline_sd, _ = _baseline(metrics, kind, today, int(th["baseline_window_days"]))
-    if slope is None or not baseline_sd:
+    severity, acute, chronic, acute_sd = _dual_window_trend(
+        metrics, kind, today, th, direction="down",
+    )
+    if severity is None or acute is None or acute_sd is None:
         return None
-    # Only flag a *downward* trend — rising HRV is a good thing.
-    if slope.slope_per_day >= 0:
-        return None
-    sd_per_day = abs(slope.slope_per_day) / baseline_sd
-    severity = _trend_severity(sd_per_day, th)
-    if severity is None:
-        return None
+    ids = list(acute.source_ids)
+    if chronic is not None:
+        ids.extend(chronic.source_ids)
     return Signal(
         kind="hrv_trend_down",
         severity=severity,
         summary=(
-            f"HRV trending down: {slope.slope_per_day:+.1f} ms/day across the last {HRV_ACUTE_DAYS} days "
-            f"({sd_per_day:.2f} SD/day)."
+            f"HRV trending down: {acute.slope_per_day:+.1f} ms/day across the last "
+            f"{HRV_ACUTE_DAYS} days ({acute_sd:.2f} SD/day)."
         ),
-        source_metric_ids=slope.source_ids,
+        source_metric_ids=ids,
     )
 
 
@@ -766,31 +971,27 @@ def detect_rhr_trend_signal(
     today: date,
     thresholds: Mapping[str, float] | None = None,
 ) -> Signal | None:
-    """7-day slope of resting HR. A rising RHR — even before it crosses
-    the absolute +5 bpm Buchheit threshold — signals accumulating
-    autonomic stress, especially when paired with falling HRV.
-    """
+    """Dual-window resting HR trend detector. Same combiner logic as
+    HRV — rising RHR is the concerning direction; acute reads early
+    warning, chronic confirms sustained drift."""
     th = _merge_thresholds(thresholds)
     kind = MetricKind.RESTING_HR.value
-    slope = compute_trend_slope(metrics, kind, today, method="ols", window_days=HRV_ACUTE_DAYS)
-    _, baseline_sd, _ = _baseline(metrics, kind, today, int(th["baseline_window_days"]))
-    if slope is None or not baseline_sd:
+    severity, acute, chronic, acute_sd = _dual_window_trend(
+        metrics, kind, today, th, direction="up",
+    )
+    if severity is None or acute is None or acute_sd is None:
         return None
-    # Rising RHR is the concerning direction.
-    if slope.slope_per_day <= 0:
-        return None
-    sd_per_day = slope.slope_per_day / baseline_sd
-    severity = _trend_severity(sd_per_day, th)
-    if severity is None:
-        return None
+    ids = list(acute.source_ids)
+    if chronic is not None:
+        ids.extend(chronic.source_ids)
     return Signal(
         kind="rhr_trend_up",
         severity=severity,
         summary=(
-            f"Resting HR trending up: {slope.slope_per_day:+.1f} bpm/day across the last {HRV_ACUTE_DAYS} days "
-            f"({sd_per_day:.2f} SD/day)."
+            f"Resting HR trending up: {acute.slope_per_day:+.1f} bpm/day across the last "
+            f"{HRV_ACUTE_DAYS} days ({acute_sd:.2f} SD/day)."
         ),
-        source_metric_ids=slope.source_ids,
+        source_metric_ids=ids,
     )
 
 
@@ -799,30 +1000,26 @@ def detect_sleep_trend_signal(
     today: date,
     thresholds: Mapping[str, float] | None = None,
 ) -> Signal | None:
-    """7-day slope of nightly sleep hours. Catches the case where mean
-    sleep is technically OK but eroding day-by-day — a useful early
-    warning before the mean crosses the 7 h ACSM floor.
-    """
+    """Dual-window sleep-hours trend detector. Falling sleep is the
+    concerning direction; same combiner logic as HRV."""
     th = _merge_thresholds(thresholds)
     kind = MetricKind.SLEEP_HOURS.value
-    slope = compute_trend_slope(metrics, kind, today, method="ols", window_days=HRV_ACUTE_DAYS)
-    _, baseline_sd, _ = _baseline(metrics, kind, today, int(th["baseline_window_days"]))
-    if slope is None or not baseline_sd:
+    severity, acute, chronic, acute_sd = _dual_window_trend(
+        metrics, kind, today, th, direction="down",
+    )
+    if severity is None or acute is None or acute_sd is None:
         return None
-    if slope.slope_per_day >= 0:
-        return None
-    sd_per_day = abs(slope.slope_per_day) / baseline_sd
-    severity = _trend_severity(sd_per_day, th)
-    if severity is None:
-        return None
+    ids = list(acute.source_ids)
+    if chronic is not None:
+        ids.extend(chronic.source_ids)
     return Signal(
         kind="sleep_trend_down",
         severity=severity,
         summary=(
-            f"Sleep trending down: {slope.slope_per_day:+.2f} h/day across the last {HRV_ACUTE_DAYS} days "
-            f"({sd_per_day:.2f} SD/day)."
+            f"Sleep trending down: {acute.slope_per_day:+.2f} h/day across the last "
+            f"{HRV_ACUTE_DAYS} days ({acute_sd:.2f} SD/day)."
         ),
-        source_metric_ids=slope.source_ids,
+        source_metric_ids=ids,
     )
 
 

@@ -29,7 +29,11 @@ from datetime import date, timedelta
 import pandas as pd
 import pytest
 
-from fit_ontology.reasoning import SlopeResult, compute_trend_slope
+from fit_ontology.reasoning import (
+    SlopeResult,
+    combine_acute_chronic,
+    compute_trend_slope,
+)
 
 
 def _series(values: list[float], today: date, kind: str = "hrv_rmssd") -> pd.DataFrame:
@@ -225,6 +229,58 @@ def test_ewma_too_few_samples_returns_none():
     df = _series([55, 55, 55], today)  # 3 < 4
     r = compute_trend_slope(df, "hrv_rmssd", today, method="ewma", window_days=28)
     assert r is None
+
+
+# ─── Acute/chronic combiner (E3) ─────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "acute, chronic, expected",
+    [
+        # Acute severe — chronic confirms or absent
+        ("severe", "severe", "severe"),
+        ("severe", "moderate", "severe"),
+        ("severe", "mild", "severe"),
+        ("severe", None, "moderate"),
+        # Acute moderate
+        ("moderate", "severe", "severe"),
+        ("moderate", "moderate", "moderate"),
+        ("moderate", "mild", "moderate"),
+        ("moderate", None, "mild"),
+        # Acute mild
+        ("mild", "severe", "moderate"),
+        ("mild", "moderate", "moderate"),
+        ("mild", "mild", "mild"),
+        ("mild", None, None),
+        # Acute silent — chronic-only paths
+        (None, "severe", "mild"),
+        (None, "moderate", None),
+        (None, "mild", None),
+        (None, None, None),
+    ],
+)
+def test_combine_acute_chronic_decision_table(acute, chronic, expected):
+    """Every cell of the 4×4 decision table pinned. If this test
+    needs to change, the docstring + comment table in reasoning.py
+    needs the same edit at the same time — they ARE the contract."""
+    assert combine_acute_chronic(acute, chronic) == expected
+
+
+def test_combine_holmes_noise_case():
+    """The headline case the whole arc is solving: acute fires
+    severely, chronic is flat. The Holmes screen-test bug."""
+    assert combine_acute_chronic("severe", None) == "moderate"
+
+
+def test_combine_genuine_deload_case():
+    """Both detectors agree — should pass through at full severity."""
+    assert combine_acute_chronic("severe", "moderate") == "severe"
+
+
+def test_combine_chronic_only_drift_surfaces_weakly():
+    """A slow drift the acute window hasn't caught up to yet still
+    surfaces as 'mild' so the trainer sees the early warning."""
+    assert combine_acute_chronic(None, "severe") == "mild"
 
 
 def test_returns_sloperesult_dataclass():
