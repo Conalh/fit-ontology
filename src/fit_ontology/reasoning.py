@@ -204,6 +204,44 @@ class Signal:
     source_metric_ids: list[str] = field(default_factory=list)
 
 
+@dataclass
+class SlopeResult:
+    """Output of ``compute_trend_slope``. Carries enough metadata that
+    the caller can decide whether the slope is trustworthy and which
+    direction it's pointing.
+
+    Phase-E1 surface: only the OLS path produces results today, and
+    ``confidence_weight`` is always 1.0 when n_samples ≥ the helper's
+    minimum (4). Phase E2 wires in EWMA which can return weight < 1.0
+    on short windows; the consumers already plumb it through so
+    landing E2 is a one-file change.
+
+    Fields:
+      slope_per_day      Signed slope in metric-units per day. None
+                         when the window had too few samples or was
+                         degenerate (all-equal x values).
+      n_samples          How many daily points contributed.
+      source_ids         Metric row IDs feeding the slope — surfaced
+                         to the trainer as "the data behind this call."
+      method             Which slope estimator produced this result.
+                         Lets the verdict combiner weight acute vs
+                         chronic differently in E3.
+      window_days        The window we tried to use. May be larger
+                         than n_samples if the dataset is short — the
+                         delta is what confidence_weight reflects.
+      confidence_weight  0.0 → ignore; 1.0 → fully trusted. The
+                         combiner multiplies severity-grade impact by
+                         this weight. E1 emits 1.0 for any valid OLS;
+                         E2 will down-weight short EWMA windows.
+    """
+    slope_per_day: float
+    n_samples: int
+    source_ids: list[str]
+    method: Literal["ols", "ewma"]
+    window_days: int
+    confidence_weight: float = 1.0
+
+
 # --- Helpers --------------------------------------------------------------
 
 def _rid() -> str:
@@ -245,20 +283,55 @@ def _recent_mean(metrics: pd.DataFrame, kind: str, today: date, days: int) -> tu
     return float(window["value"].mean()), window["id"].tolist()
 
 
-def _slope_per_day(
-    metrics: pd.DataFrame, kind: str, today: date, days: int = 7,
-) -> tuple[float | None, list[str]]:
-    """Least-squares slope of the metric (value-per-day) over the trailing
-    ``days`` window. Returns ``(None, [])`` if there are fewer than 4
-    daily points — three points is not enough to distinguish trend from
-    noise. Otherwise returns ``(slope, contributing_ids)``.
+def compute_trend_slope(
+    metrics: pd.DataFrame,
+    kind: str,
+    today: date,
+    *,
+    method: Literal["ols", "ewma"] = "ols",
+    window_days: int = 7,
+) -> SlopeResult | None:
+    """Estimate a per-day slope of a metric across a trailing window.
 
-    Pure pandas/numpy math, no scipy. Days-since-window-start is the
-    x-axis so the slope is in metric-units per day.
+    The shared seam for the engine's trend detectors. Phase E1 lands
+    only the ``ols`` path (a one-for-one extraction of the previous
+    ``_slope_per_day`` inline math); E2 will plug in ``ewma`` for the
+    longer-window chronic detector. Both paths return the same
+    ``SlopeResult`` shape so the verdict combiner can treat them
+    uniformly.
+
+    OLS path: ordinary least-squares slope of value-vs-day-index. Pure
+    pandas/numpy, no scipy. Days-since-window-start is the x-axis so
+    the slope is in metric-units per day. Returns ``None`` if there
+    are fewer than 4 daily points (three points cannot distinguish
+    trend from noise) or if the x-variance is zero (all on one day).
+
+    EWMA path: deferred to E2. Calling with ``method="ewma"`` raises
+    ``NotImplementedError`` so a premature consumer surfaces loudly
+    rather than silently producing garbage.
+
+    Args:
+        metrics: long-format wearable dataframe.
+        kind: metric kind (e.g. MetricKind.HRV_RMSSD.value).
+        today: reference date — window is [today - window_days, today).
+        method: estimator. "ols" today; "ewma" lands in E2.
+        window_days: window length in days.
+
+    Returns:
+        ``SlopeResult`` on success, ``None`` if the window is too short
+        or degenerate.
     """
-    window = _window(metrics, kind, today - timedelta(days=days), today)
+    if method == "ewma":
+        raise NotImplementedError(
+            "EWMA trend estimator lands in Phase E2 of the engine-v2 work; "
+            "current callers should pass method='ols'."
+        )
+    if method != "ols":
+        raise ValueError(f"unknown trend slope method: {method!r}")
+
+    window = _window(metrics, kind, today - timedelta(days=window_days), today)
     if len(window) < 4:
-        return None, []
+        return None
     df = window.sort_values("date")
     dates = pd.to_datetime(df["date"])
     days_x = (dates - dates.iloc[0]).dt.days.astype(float).to_numpy()
@@ -268,8 +341,15 @@ def _slope_per_day(
     num = ((days_x - mean_x) * (values - mean_y)).sum()
     den = ((days_x - mean_x) ** 2).sum()
     if den == 0:
-        return None, []
-    return float(num / den), df["id"].tolist()
+        return None
+    return SlopeResult(
+        slope_per_day=float(num / den),
+        n_samples=len(df),
+        source_ids=df["id"].tolist(),
+        method="ols",
+        window_days=window_days,
+        confidence_weight=1.0,
+    )
 
 
 def _trend_severity(sd_per_day: float, th: Mapping[str, float]) -> Severity | None:
@@ -594,14 +674,14 @@ def detect_hrv_trend_signal(
     """
     th = _merge_thresholds(thresholds)
     kind = _hrv_kind(metrics)
-    slope, ids = _slope_per_day(metrics, kind, today, HRV_ACUTE_DAYS)
+    slope = compute_trend_slope(metrics, kind, today, method="ols", window_days=HRV_ACUTE_DAYS)
     _, baseline_sd, _ = _baseline(metrics, kind, today, int(th["baseline_window_days"]))
     if slope is None or not baseline_sd:
         return None
     # Only flag a *downward* trend — rising HRV is a good thing.
-    if slope >= 0:
+    if slope.slope_per_day >= 0:
         return None
-    sd_per_day = abs(slope) / baseline_sd
+    sd_per_day = abs(slope.slope_per_day) / baseline_sd
     severity = _trend_severity(sd_per_day, th)
     if severity is None:
         return None
@@ -609,10 +689,10 @@ def detect_hrv_trend_signal(
         kind="hrv_trend_down",
         severity=severity,
         summary=(
-            f"HRV trending down: {slope:+.1f} ms/day across the last {HRV_ACUTE_DAYS} days "
+            f"HRV trending down: {slope.slope_per_day:+.1f} ms/day across the last {HRV_ACUTE_DAYS} days "
             f"({sd_per_day:.2f} SD/day)."
         ),
-        source_metric_ids=ids,
+        source_metric_ids=slope.source_ids,
     )
 
 
@@ -627,14 +707,14 @@ def detect_rhr_trend_signal(
     """
     th = _merge_thresholds(thresholds)
     kind = MetricKind.RESTING_HR.value
-    slope, ids = _slope_per_day(metrics, kind, today, HRV_ACUTE_DAYS)
+    slope = compute_trend_slope(metrics, kind, today, method="ols", window_days=HRV_ACUTE_DAYS)
     _, baseline_sd, _ = _baseline(metrics, kind, today, int(th["baseline_window_days"]))
     if slope is None or not baseline_sd:
         return None
     # Rising RHR is the concerning direction.
-    if slope <= 0:
+    if slope.slope_per_day <= 0:
         return None
-    sd_per_day = slope / baseline_sd
+    sd_per_day = slope.slope_per_day / baseline_sd
     severity = _trend_severity(sd_per_day, th)
     if severity is None:
         return None
@@ -642,10 +722,10 @@ def detect_rhr_trend_signal(
         kind="rhr_trend_up",
         severity=severity,
         summary=(
-            f"Resting HR trending up: {slope:+.1f} bpm/day across the last {HRV_ACUTE_DAYS} days "
+            f"Resting HR trending up: {slope.slope_per_day:+.1f} bpm/day across the last {HRV_ACUTE_DAYS} days "
             f"({sd_per_day:.2f} SD/day)."
         ),
-        source_metric_ids=ids,
+        source_metric_ids=slope.source_ids,
     )
 
 
@@ -660,13 +740,13 @@ def detect_sleep_trend_signal(
     """
     th = _merge_thresholds(thresholds)
     kind = MetricKind.SLEEP_HOURS.value
-    slope, ids = _slope_per_day(metrics, kind, today, HRV_ACUTE_DAYS)
+    slope = compute_trend_slope(metrics, kind, today, method="ols", window_days=HRV_ACUTE_DAYS)
     _, baseline_sd, _ = _baseline(metrics, kind, today, int(th["baseline_window_days"]))
     if slope is None or not baseline_sd:
         return None
-    if slope >= 0:
+    if slope.slope_per_day >= 0:
         return None
-    sd_per_day = abs(slope) / baseline_sd
+    sd_per_day = abs(slope.slope_per_day) / baseline_sd
     severity = _trend_severity(sd_per_day, th)
     if severity is None:
         return None
@@ -674,10 +754,10 @@ def detect_sleep_trend_signal(
         kind="sleep_trend_down",
         severity=severity,
         summary=(
-            f"Sleep trending down: {slope:+.2f} h/day across the last {HRV_ACUTE_DAYS} days "
+            f"Sleep trending down: {slope.slope_per_day:+.2f} h/day across the last {HRV_ACUTE_DAYS} days "
             f"({sd_per_day:.2f} SD/day)."
         ),
-        source_metric_ids=ids,
+        source_metric_ids=slope.source_ids,
     )
 
 
