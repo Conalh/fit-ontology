@@ -391,6 +391,37 @@ CREATE INDEX IF NOT EXISTS idx_share_tokens_token ON client_share_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_share_tokens_trainer_client
     ON client_share_tokens(trainer_id, client_id);
 
+CREATE TABLE IF NOT EXISTS client_intake_tokens (
+    -- Phase 3b: opaque token → public intake form, no login. Inverse of
+    -- client_share_tokens — that one is outbound (trainer publishes a
+    -- read-only client view), this one is inbound (client submits the
+    -- form that creates their row in the trainer's roster). The token
+    -- is tied to a trainer_id only; the client_id doesn't exist until
+    -- the form is submitted, at which point consumed_client_id is
+    -- stamped for the audit trail.
+    --
+    -- One-shot by design: ``consumed_at`` flips from NULL to a timestamp
+    -- the moment a submission lands, and consume_intake_token() does
+    -- that as an atomic UPDATE ... WHERE consumed_at IS NULL so two
+    -- in-flight submissions can't both succeed. The token then sits in
+    -- the table as an audit row (who submitted, when, into which client)
+    -- rather than being deleted — same posture as audit_log: keep the
+    -- evidence even after the action is done.
+    --
+    -- 14-day expiry matches client_share_tokens; if the client doesn't
+    -- fill the form in two weeks the trainer mints a fresh link.
+    id                  VARCHAR PRIMARY KEY,
+    token               VARCHAR NOT NULL UNIQUE,
+    trainer_id          VARCHAR NOT NULL,
+    trainer_message     VARCHAR,
+    created_at          TIMESTAMP NOT NULL,
+    expires_at          TIMESTAMP NOT NULL,
+    consumed_at         TIMESTAMP,
+    consumed_client_id  VARCHAR
+);
+CREATE INDEX IF NOT EXISTS idx_intake_tokens_token   ON client_intake_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_intake_tokens_trainer ON client_intake_tokens(trainer_id);
+
 -- ─── Phase 2a multi-tenant scoping ──────────────────────────────────
 -- Add trainer_id to every client-data table. ADD COLUMN IF NOT EXISTS
 -- so a fresh DB and an existing DB both end up with the column. The

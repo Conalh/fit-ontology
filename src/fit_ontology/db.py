@@ -994,3 +994,137 @@ def revoke_share_token(con, trainer_id: str, token: str) -> bool:
         [token, trainer_id],
     )
     return True
+
+
+# ─── Intake tokens (Phase 3b) ────────────────────────────────────────
+#
+# Inbound counterpart to client_share_tokens. The trainer mints one of
+# these per "send intake link" action and shares the resulting URL with
+# a prospective client; the client opens it, fills the form, and the
+# submission inserts a row into ``clients`` scoped to the token's
+# trainer_id. One-shot by design — a submitted token is dead, a fresh
+# link is one new client.
+#
+#   create_intake_token   trainer-scoped write — mints a fresh token
+#                         not yet tied to any client
+#   intake_lookup         public read — resolves a token to the data
+#                         needed to render the form (trainer name +
+#                         optional welcome message), distinguishing
+#                         unknown / expired / already-consumed
+#   consume_intake_token  public write — atomic single-claim; flips
+#                         consumed_at NULL → now() exactly once, returns
+#                         True only for the caller that won the claim
+#
+# Same token-shape and storage posture as share tokens (32-byte
+# URL-safe random, stored cleartext, 256 bits of entropy is the secret).
+
+
+INTAKE_TTL_DAYS_DEFAULT = 14
+
+
+def create_intake_token(
+    con,
+    trainer_id: str,
+    trainer_message: str | None = None,
+    ttl_days: int = INTAKE_TTL_DAYS_DEFAULT,
+) -> tuple[str, datetime]:
+    """Mint a fresh intake token for ``trainer_id``.
+
+    Unlike ``create_share_token`` there's no client_id to check
+    ownership against — the client doesn't exist yet. We do verify
+    the trainer row exists, so a typo in trainer_id surfaces here
+    instead of as a dangling token that no submission can resolve
+    against (intake_lookup would still work, but the resulting
+    INSERT would fail the FK on whatever trainer_id we passed
+    through). Returns (token, expires_at); caller turns the token
+    into a full URL.
+    """
+    owns = con.execute(
+        "SELECT 1 FROM trainers WHERE id = ?",
+        [trainer_id],
+    ).fetchone()
+    if not owns:
+        raise ValueError(f"No trainer with id {trainer_id}")
+
+    token = secrets.token_urlsafe(32)
+    now = datetime.utcnow()
+    expires_at = now + timedelta(days=ttl_days)
+    con.execute(
+        """
+        INSERT INTO client_intake_tokens
+          (id, token, trainer_id, trainer_message, created_at, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        [
+            f"it_{uuid.uuid4().hex[:12]}",
+            token,
+            trainer_id,
+            (trainer_message or None),
+            now,
+            expires_at,
+        ],
+    )
+    return token, expires_at
+
+
+def intake_lookup(con, token: str):
+    """Resolve a token to ``(trainer_id, trainer_message, expires_at,
+    expired, consumed)`` or None.
+
+    Tolerates a missing table (pre-Phase-3b DB on a read-only
+    connection): returns None. The route layer maps None → 404,
+    ``expired=True`` → 410, ``consumed=True`` → 410 with a
+    different message ("this form has already been submitted").
+    """
+    try:
+        row = con.execute(
+            """
+            SELECT trainer_id, trainer_message, expires_at, consumed_at
+            FROM client_intake_tokens
+            WHERE token = ?
+            """,
+            [token],
+        ).fetchone()
+    except duckdb.CatalogException:
+        return None
+    if not row:
+        return None
+    trainer_id, msg, expires_at, consumed_at = row
+    return {
+        "trainer_id": trainer_id,
+        "trainer_message": msg,
+        "expires_at": expires_at,
+        "expired": expires_at < datetime.utcnow(),
+        "consumed": consumed_at is not None,
+        "consumed_at": consumed_at,
+    }
+
+
+def consume_intake_token(con, token: str, client_id: str) -> bool:
+    """Atomically claim a token for ``client_id``.
+
+    Flips ``consumed_at`` NULL → now() and stamps
+    ``consumed_client_id``, in a single UPDATE guarded by ``WHERE
+    consumed_at IS NULL`` so two in-flight submissions for the
+    same token can't both succeed. Returns True if this caller
+    claimed the token, False if it was already consumed (or
+    doesn't exist / is expired — the caller has already done the
+    intake_lookup precheck for those, so a False here means the
+    race lost).
+
+    RETURNING id rather than rowcount because DuckDB's Python
+    connector doesn't surface affected-rows reliably across
+    versions (same reason ``revoke_share_token`` uses
+    SELECT-then-DELETE).
+    """
+    now = datetime.utcnow()
+    result = con.execute(
+        """
+        UPDATE client_intake_tokens
+        SET consumed_at = ?, consumed_client_id = ?
+        WHERE token = ? AND consumed_at IS NULL AND expires_at >= ?
+        RETURNING id
+        """,
+        [now, client_id, token, now],
+    ).fetchone()
+    return result is not None
