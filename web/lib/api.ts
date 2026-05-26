@@ -85,6 +85,25 @@ export interface ShareCreate {
   expires_at: string;
 }
 
+/** Phase 3b — public intake form preflight payload. Mirrors the
+ *  backend IntakeViewResponse: just the data the form page needs to
+ *  render its header + decide which state to show. trainer_id is
+ *  intentionally absent — the token is the bearer credential. */
+export interface IntakeView {
+  trainer_name: string;
+  trainer_message: string | null;
+  expires_at: string;
+  consumed: boolean;
+}
+
+/** Phase 3b — what the trainer's mint endpoint returns. Same shape as
+ *  ShareCreate; kept as a distinct type so future divergence (single-
+ *  use status, revoke API, etc.) doesn't churn share consumers. */
+export interface IntakeMint {
+  token: string;
+  expires_at: string;
+}
+
 export interface CoachDraft {
   draft: string;
   model: string;
@@ -317,6 +336,21 @@ export const api = {
       body: JSON.stringify({ trainer_message: trainerMessage }),
     }),
   shareView: (token: string) => request<ShareView>(`/api/share/${encodeURIComponent(token)}`),
+  // Phase 3b intake-link surface. mintIntake is trainer-scoped (carries
+  // the session cookie); getIntake + submitIntake are public — no
+  // cookie required, the token in the URL is the bearer credential.
+  mintIntake: (trainerMessage: string | null) =>
+    request<IntakeMint>("/api/clients/intake/mint", {
+      method: "POST",
+      body: JSON.stringify({ trainer_message: trainerMessage }),
+    }),
+  getIntake: (token: string) =>
+    request<IntakeView>(`/api/intake/${encodeURIComponent(token)}`),
+  submitIntake: (token: string, payload: ClientFormPayload) =>
+    request<{ ok: boolean; id: string }>(`/api/intake/${encodeURIComponent(token)}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   draftCoachMessage: (clientId: string) =>
     request<CoachDraft>(`/api/clients/${clientId}/coach-message/draft`, {
       method: "POST",
