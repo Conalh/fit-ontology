@@ -1,0 +1,212 @@
+[
+  {
+    "date": "2026-04-20",
+    "hrv_rmssd": 56.5,
+    "resting_hr": 60.0,
+    "sleep_hours": 7.4
+  },
+  {
+    "date": "2026-04-21",
+    "hrv_rmssd": 57.3,
+    "resting_hr": 62.0,
+    "sleep_hours": 6.8
+  },
+  {
+    "date": "2026-04-22",
+    "hrv_rmssd": 56.1,
+    "resting_hr": 61.0,
+    "sleep_hours": 7.1
+  },
+  {
+    "date": "2026-04-23",
+    "hrv_rmssd": 57.0,
+    "resting_hr": 61.0,
+    "sleep_hours": 7.9
+  },
+  {
+    "date": "2026-04-24",
+    "hrv_rmssd": 56.7,
+    "resting_hr": 63.0,
+    "sleep_hours": 6.8
+  },
+  {
+    "date": "2026-04-25",
+    "hrv_rmssd": 55.5,
+    "resting_hr": 59.0,
+    "sleep_hours": 7.7
+  },
+  {
+    "date": "2026-04-26",
+    "hrv_rmssd": 59.5,
+    "resting_hr": 60.0,
+    "sleep_hours": 7.6
+  },
+  {
+    "date": "2026-04-27",
+    "hrv_rmssd": 57.9,
+    "resting_hr": 56.0,
+    "sleep_hours": 7.8
+  },
+  {
+    "date": "2026-04-28",
+    "hrv_rmssd": 56.3,
+    "resting_hr": 57.0,
+    "sleep_hours": 7.6
+  },
+  {
+    "date": "2026-04-29",
+    "hrv_rmssd": 58.5,
+    "resting_hr": 59.0,
+    "sleep_hours": 7.4
+  },
+  {
+    "date": "2026-04-30",
+    "hrv_rmssd": 57.6,
+    "resting_hr": 58.0,
+    "sleep_hours": 7.7
+  },
+  {
+    "date": "2026-05-01",
+    "hrv_rmssd": 59.2,
+    "resting_hr": 57.0,
+    "sleep_hours": 7.1
+  },
+  {
+    "date": "2026-05-02",
+    "hrv_rmssd": 55.7,
+    "resting_hr": 56.0,
+    "sleep_hours": 7.0
+  },
+  {
+    "date": "2026-05-03",
+    "hrv_rmssd": 58.2,
+    "resting_hr": 56.0,
+    "sleep_hours": 7.7
+  },
+  {
+    "date": "2026-05-04",
+    "hrv_rmssd": 56.3,
+    "resting_hr": 61.0,
+    "sleep_hours": 7.4
+  },
+  {
+    "date": "2026-05-05",
+    "hrv_rmssd": 60.9,
+    "resting_hr": 57.0,
+    "sleep_hours": 7.4
+  },
+  {
+    "date": "2026-05-06",
+    "hrv_rmssd": 55.6,
+    "resting_hr": 57.0,
+    "sleep_hours": 7.0
+  },
+  {
+    "date": "2026-05-07",
+    "hrv_rmssd": 56.1,
+    "resting_hr": 59.0,
+    "sleep_hours": 6.8
+  },
+  {
+    "date": "2026-05-08",
+    "hrv_rmssd": 56.6,
+    "resting_hr": 59.0,
+    "sleep_hours": 8.0
+  },
+  {
+    "date": "2026-05-09",
+    "hrv_rmssd": 59.2,
+    "resting_hr": 62.0,
+    "sleep_hours": 7.0
+  },
+  {
+    "date": "2026-05-10",
+    "hrv_rmssd": 57.9,
+    "resting_hr": 60.0,
+    "sleep_hours": 7.8
+  },
+  {
+    "date": "2026-05-11",
+    "hrv_rmssd": 57.8,
+    "resting_hr": 56.0,
+    "sleep_hours": 7.3
+  },
+  {
+    "date": "2026-05-12",
+    "hrv_rmssd": 55.3,
+    "resting_hr": 59.0,
+    "sleep_hours": 7.9
+  },
+  {
+    "date": "2026-05-13",
+    "hrv_rmssd": 59.9,
+    "resting_hr": 56.0,
+    "sleep_hours": 7.3
+  },
+  {
+    "date": "2026-05-14",
+    "hrv_rmssd": 58.8,
+    "resting_hr": 56.0,
+    "sleep_hours": 6.9
+  },
+  {
+    "date": "2026-05-15",
+    "hrv_rmssd": 58.4,
+    "resting_hr": 63.0,
+    "sleep_hours": 7.2
+  },
+  {
+    "date": "2026-05-16",
+    "hrv_rmssd": 55.7,
+    "resting_hr": 60.0,
+    "sleep_hours": 7.7
+  },
+  {
+    "date": "2026-05-17",
+    "hrv_rmssd": 59.7,
+    "resting_hr": 59.0,
+    "sleep_hours": 7.1
+  },
+  {
+    "date": "2026-05-18",
+    "hrv_rmssd": 57.1,
+    "resting_hr": 62.0,
+    "sleep_hours": 7.3
+  },
+  {
+    "date": "2026-05-19",
+    "hrv_rmssd": 60.4,
+    "resting_hr": 60.0,
+    "sleep_hours": 7.2
+  },
+  {
+    "date": "2026-05-20",
+    "hrv_rmssd": 58.1,
+    "resting_hr": 63.0,
+    "sleep_hours": 7.7
+  },
+  {
+    "date": "2026-05-21",
+    "hrv_rmssd": 55.7,
+    "resting_hr": 60.0,
+    "sleep_hours": 7.1
+  },
+  {
+    "date": "2026-05-22",
+    "hrv_rmssd": 55.4,
+    "resting_hr": 56.0,
+    "sleep_hours": 7.0
+  },
+  {
+    "date": "2026-05-23",
+    "hrv_rmssd": 54.4,
+    "resting_hr": 60.0,
+    "sleep_hours": 7.3
+  },
+  {
+    "date": "2026-05-24",
+    "hrv_rmssd": 56.2,
+    "resting_hr": 61.0,
+    "sleep_hours": 7.1
+  }
+]

@@ -283,6 +283,39 @@ def _recent_mean(metrics: pd.DataFrame, kind: str, today: date, days: int) -> tu
     return float(window["value"].mean()), window["id"].tolist()
 
 
+# Halflife (days) for the EWMA chronic-trend smoother. Ten days means
+# the most-recent 10-day block holds ~50% of the total weight; older
+# days fade out exponentially. Buchheit (2014) doesn't specify a
+# halflife but recommends "windows comparable to the recovery cycle"
+# (~1-2 weeks). 10 sits in that band and produces a smoother that
+# halves the noise variance of a raw 7-day OLS slope on the synthetic
+# dataset. Tunable later, but parameterizing here means the chronic
+# detector's threshold tuning (E3) is keyed against this constant.
+EWMA_HALFLIFE_DAYS = 10
+
+# Minimum sample count for the EWMA estimator to produce a usable
+# confidence weight. Below this the smoother hasn't accumulated enough
+# data for the slope-on-smoothed-series to be meaningfully different
+# from the OLS one — so we surface a SlopeResult with weight=0 and
+# let the combiner ignore it rather than tripping a false signal off
+# the smoother's initial conditions. Linear ramp 14 → window_days
+# (typically 28) for partial windows.
+EWMA_MIN_SAMPLES = 14
+
+
+def _ols_slope(days_x, values) -> float | None:
+    """OLS slope of values vs days_x. Returns None if x-variance is
+    zero. Shared by both compute_trend_slope methods so the EWMA path
+    and the raw OLS path don't drift apart in numerical details."""
+    mean_x = float(days_x.mean())
+    mean_y = float(values.mean())
+    num = ((days_x - mean_x) * (values - mean_y)).sum()
+    den = ((days_x - mean_x) ** 2).sum()
+    if den == 0:
+        return None
+    return float(num / den)
+
+
 def compute_trend_slope(
     metrics: pd.DataFrame,
     kind: str,
@@ -293,40 +326,43 @@ def compute_trend_slope(
 ) -> SlopeResult | None:
     """Estimate a per-day slope of a metric across a trailing window.
 
-    The shared seam for the engine's trend detectors. Phase E1 lands
-    only the ``ols`` path (a one-for-one extraction of the previous
-    ``_slope_per_day`` inline math); E2 will plug in ``ewma`` for the
-    longer-window chronic detector. Both paths return the same
-    ``SlopeResult`` shape so the verdict combiner can treat them
-    uniformly.
+    The shared seam for the engine's trend detectors. Two methods:
 
-    OLS path: ordinary least-squares slope of value-vs-day-index. Pure
-    pandas/numpy, no scipy. Days-since-window-start is the x-axis so
-    the slope is in metric-units per day. Returns ``None`` if there
-    are fewer than 4 daily points (three points cannot distinguish
-    trend from noise) or if the x-variance is zero (all on one day).
+      ``ols``  Acute detector (default). Ordinary least-squares slope
+               of value-vs-day-index on the raw 7-day window. Fast,
+               responsive to recent changes, but noisy on synthetic
+               data — a ±3-bpm random fluctuation over 7 points can
+               trip a 0.20 SD/day slope by chance. This is the
+               original engine's detector, extracted from inline.
 
-    EWMA path: deferred to E2. Calling with ``method="ewma"`` raises
-    ``NotImplementedError`` so a premature consumer surfaces loudly
-    rather than silently producing garbage.
+      ``ewma`` Chronic detector. EWMA-smooths the value series first
+               (halflife=10 days, see EWMA_HALFLIFE_DAYS) and then
+               takes the OLS slope on the *smoothed* series. The
+               smoothing damps short-window noise so a slope at this
+               layer reflects a sustained direction rather than a
+               recent fluctuation. Recommended window is 28 days;
+               shorter windows produce a weight < 1.0 (or 0 if too
+               short) so the combiner can ignore them gracefully.
+
+    Both paths return the same ``SlopeResult`` shape so the E3 verdict
+    combiner can treat them uniformly.
 
     Args:
         metrics: long-format wearable dataframe.
         kind: metric kind (e.g. MetricKind.HRV_RMSSD.value).
         today: reference date — window is [today - window_days, today).
-        method: estimator. "ols" today; "ewma" lands in E2.
-        window_days: window length in days.
+        method: ``"ols"`` for acute, ``"ewma"`` for chronic.
+        window_days: window length in days. Defaults to 7 (matches
+            the historical acute behaviour); chronic callers pass 28.
 
     Returns:
-        ``SlopeResult`` on success, ``None`` if the window is too short
-        or degenerate.
+        ``SlopeResult`` on success, ``None`` if the window is too
+        short or degenerate (zero x-variance). EWMA results with
+        ``n_samples < EWMA_MIN_SAMPLES`` are still returned but with
+        ``confidence_weight = 0.0`` so the caller can decide whether
+        to drop them.
     """
-    if method == "ewma":
-        raise NotImplementedError(
-            "EWMA trend estimator lands in Phase E2 of the engine-v2 work; "
-            "current callers should pass method='ols'."
-        )
-    if method != "ols":
+    if method not in ("ols", "ewma"):
         raise ValueError(f"unknown trend slope method: {method!r}")
 
     window = _window(metrics, kind, today - timedelta(days=window_days), today)
@@ -335,20 +371,49 @@ def compute_trend_slope(
     df = window.sort_values("date")
     dates = pd.to_datetime(df["date"])
     days_x = (dates - dates.iloc[0]).dt.days.astype(float).to_numpy()
-    values = df["value"].astype(float).to_numpy()
-    mean_x = float(days_x.mean())
-    mean_y = float(values.mean())
-    num = ((days_x - mean_x) * (values - mean_y)).sum()
-    den = ((days_x - mean_x) ** 2).sum()
-    if den == 0:
+    raw_values = df["value"].astype(float).to_numpy()
+
+    if method == "ols":
+        slope = _ols_slope(days_x, raw_values)
+        if slope is None:
+            return None
+        return SlopeResult(
+            slope_per_day=slope,
+            n_samples=len(df),
+            source_ids=df["id"].tolist(),
+            method="ols",
+            window_days=window_days,
+            confidence_weight=1.0,
+        )
+
+    # EWMA path: smooth then OLS-slope on the smoothed series. The
+    # smoother is applied to value order (sorted by date above) so the
+    # exponential weighting respects time, not row order.
+    smoothed = pd.Series(raw_values).ewm(halflife=EWMA_HALFLIFE_DAYS).mean().to_numpy()
+    slope = _ols_slope(days_x, smoothed)
+    if slope is None:
         return None
+
+    # Confidence weight: 0 if we don't have enough samples for the
+    # smoother to stabilise; linearly ramped from 0 → 1 across
+    # [EWMA_MIN_SAMPLES, window_days]; 1.0 at a full window. The
+    # combiner multiplies severity by this weight, so a 5-day EWMA on
+    # a newly-onboarded client effectively contributes nothing — and
+    # the acute (OLS) signal carries the verdict alone, as intended.
+    n = len(df)
+    if n < EWMA_MIN_SAMPLES:
+        weight = 0.0
+    elif n >= window_days:
+        weight = 1.0
+    else:
+        weight = (n - EWMA_MIN_SAMPLES) / max(1, window_days - EWMA_MIN_SAMPLES)
     return SlopeResult(
-        slope_per_day=float(num / den),
-        n_samples=len(df),
+        slope_per_day=slope,
+        n_samples=n,
         source_ids=df["id"].tolist(),
-        method="ols",
+        method="ewma",
         window_days=window_days,
-        confidence_weight=1.0,
+        confidence_weight=float(weight),
     )
 
 

@@ -20,9 +20,22 @@ from ..db import (
     thresholds_for_client,
 )
 from ..demo import is_demo_trainer
-from ..reasoning import FLAG_CITATIONS, compute_recovery_score, generate_recommendation
+from ..ontology import MetricKind
+from ..reasoning import (
+    FLAG_CITATIONS,
+    compute_recovery_score,
+    compute_trend_slope,
+    generate_recommendation,
+)
 from .deps import current_trainer_id, read_only_conn
-from .schemas import ContraindicationItem, RecommendationResponse, RecoveryScoreResponse
+from .schemas import (
+    ContraindicationItem,
+    RecommendationResponse,
+    RecoveryScoreResponse,
+    TrendExplain,
+    TrendExplainEntry,
+    TrendSignalDetail,
+)
 
 router = APIRouter()
 
@@ -30,6 +43,7 @@ router = APIRouter()
 @router.get("/api/clients/{client_id}/recommendation", response_model=RecommendationResponse)
 def get_recommendation(
     client_id: str,
+    explain_trend: bool = False,
     trainer_id: str = Depends(current_trainer_id),
 ) -> RecommendationResponse:
     """Return the recommendation for the current week, persisting it on
@@ -107,6 +121,14 @@ def get_recommendation(
         acwr=score.acwr,
     )
 
+    # E2 debug payload — only computed when explicitly asked for via
+    # ?explain_trend=1. Surfaces both detectors (7-day OLS acute + 28-
+    # day EWMA chronic) side-by-side for each of HRV/RHR/sleep so
+    # threshold tuning in E3 can be data-driven. Verdict logic is
+    # unchanged by E2; this is purely diagnostic and gets removed in
+    # E4 once the chronic path is wired into the verdict combiner.
+    trend_explain = _build_trend_explain(metrics, today) if explain_trend else None
+
     assert rec is not None  # for type-checkers; the branches above both set it
     return RecommendationResponse(
         id=rec.id, client_id=rec.client_id, week_of=rec.week_of,
@@ -116,6 +138,56 @@ def get_recommendation(
         contraindications=contras,
         recovery_score=recovery,
         flag_citations=FLAG_CITATIONS,
+        trend_explain=trend_explain,
+    )
+
+
+def _build_trend_explain(metrics: pd.DataFrame, today: date) -> TrendExplain:
+    """Build the E2 debug payload — both detectors' output for HRV,
+    resting HR, and sleep hours. Helper kept route-local because the
+    payload format is route-specific (verdict-builder doesn't need
+    these structured shapes) and the lifecycle is short (gone in E4)."""
+    return TrendExplain(
+        hrv=_explain_one(metrics, MetricKind.HRV_RMSSD.value, today),
+        rhr=_explain_one(metrics, MetricKind.RESTING_HR.value, today),
+        sleep=_explain_one(metrics, MetricKind.SLEEP_HOURS.value, today),
+    )
+
+
+def _explain_one(metrics: pd.DataFrame, kind: str, today: date) -> TrendExplainEntry:
+    """Compute acute (OLS@7d) + chronic (EWMA@28d) for a single signal
+    kind, plus the baseline_sd both share for normalization."""
+    # Lazy imports — both helpers live in reasoning.py and the route
+    # already imports compute_trend_slope; pulling _baseline + _hrv_kind
+    # here keeps the route's import block focused on what generate_-
+    # recommendation actually needs at runtime.
+    from ..reasoning import _baseline
+
+    # For HRV the engine picks RMSSD-or-SDNN; for the debug payload we
+    # use whatever's stored under the requested kind verbatim so the
+    # numbers match what a developer would inspect manually.
+    acute = compute_trend_slope(metrics, kind, today, method="ols", window_days=7)
+    chronic = compute_trend_slope(metrics, kind, today, method="ewma", window_days=28)
+    _, baseline_sd, _ = _baseline(metrics, kind, today, 28)
+
+    def _detail(r) -> TrendSignalDetail | None:
+        if r is None:
+            return None
+        sd = abs(r.slope_per_day) / baseline_sd if baseline_sd else None
+        return TrendSignalDetail(
+            method=r.method,
+            window_days=r.window_days,
+            slope_per_day=r.slope_per_day,
+            n_samples=r.n_samples,
+            confidence_weight=r.confidence_weight,
+            sd_per_day=sd,
+        )
+
+    return TrendExplainEntry(
+        kind=kind,
+        baseline_sd=baseline_sd,
+        acute=_detail(acute),
+        chronic=_detail(chronic),
     )
 
 

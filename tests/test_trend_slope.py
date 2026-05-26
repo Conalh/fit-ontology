@@ -119,14 +119,17 @@ def test_window_days_respected():
     assert r.window_days == 14
 
 
-def test_ewma_method_raises_not_implemented():
-    """E1 lands the seam, not the method. EWMA callers should fail
-    loudly until E2 wires it in — a silent fallback to OLS would
-    produce identical-looking but quietly-wrong verdicts."""
+def test_ewma_method_runs_after_e2_landed():
+    """E2 wires the EWMA path in. Sanity check it doesn't raise on a
+    valid call; full EWMA contracts are pinned in their own block
+    below."""
     today = date(2026, 6, 1)
     df = _series([55] * 7, today)
-    with pytest.raises(NotImplementedError):
-        compute_trend_slope(df, "hrv_rmssd", today, method="ewma", window_days=28)
+    # Window=28 with only 7 samples — degraded weight expected, but
+    # the call shouldn't raise.
+    r = compute_trend_slope(df, "hrv_rmssd", today, method="ewma", window_days=28)
+    assert r is not None
+    assert r.method == "ewma"
 
 
 def test_unknown_method_raises_value_error():
@@ -136,6 +139,92 @@ def test_unknown_method_raises_value_error():
         compute_trend_slope(
             df, "hrv_rmssd", today, method="lowess", window_days=7  # type: ignore[arg-type]
         )
+
+
+# ─── EWMA path (E2) ──────────────────────────────────────────────────
+
+
+def test_ewma_monotonic_up_yields_positive_slope():
+    """A 28-day monotonic ramp survives the smoother — slope on the
+    EWMA-smoothed series is still positive and close to the raw
+    slope. (Smoothing reduces noise, not signal.)"""
+    today = date(2026, 6, 1)
+    df = _series([50.0 + i * 0.5 for i in range(28)], today)
+    r = compute_trend_slope(df, "hrv_rmssd", today, method="ewma", window_days=28)
+    assert r is not None
+    assert r.method == "ewma"
+    assert r.slope_per_day > 0.3  # raw slope is 0.5; EWMA preserves direction
+    assert r.confidence_weight == 1.0
+    assert r.n_samples == 28
+
+
+def test_ewma_monotonic_down_yields_negative_slope():
+    today = date(2026, 6, 1)
+    df = _series([78.0 - i * 0.5 for i in range(28)], today)
+    r = compute_trend_slope(df, "hrv_rmssd", today, method="ewma", window_days=28)
+    assert r is not None
+    assert r.slope_per_day < -0.3
+
+
+def test_ewma_dampens_noise_vs_ols():
+    """The whole point of the EWMA path. Same noisy series, both
+    methods. EWMA slope magnitude must be measurably smaller than the
+    OLS slope magnitude — that's what 'dampens noise' means."""
+    today = date(2026, 6, 1)
+    # Mean-reverting random walk around 55, deliberately constructed
+    # so OLS sees a spurious upward slope (last few values happen to
+    # be higher).
+    values = [55, 53, 57, 54, 56, 53, 57, 55, 54, 56, 55, 54, 56, 55,
+              53, 57, 54, 56, 55, 54, 56, 53, 57, 54, 58, 56, 59, 57]
+    df = _series(values, today)
+    ols = compute_trend_slope(df, "hrv_rmssd", today, method="ols", window_days=28)
+    ewma = compute_trend_slope(df, "hrv_rmssd", today, method="ewma", window_days=28)
+    assert ols is not None and ewma is not None
+    # The EWMA slope on a noisy series is biased toward zero — its
+    # magnitude must be smaller. Not asserting sign match because
+    # smoothing can flip a near-zero noisy slope.
+    assert abs(ewma.slope_per_day) <= abs(ols.slope_per_day) + 0.01
+
+
+def test_ewma_short_window_returns_zero_confidence():
+    """Newly-onboarded client edge case: 10 days of data, requesting
+    28-day window. EWMA returns a result so the debug endpoint can
+    surface it, but confidence_weight=0 so the combiner discards it."""
+    today = date(2026, 6, 1)
+    df = _series([55, 54, 53, 52, 51, 50, 49, 48, 47, 46], today)
+    r = compute_trend_slope(df, "hrv_rmssd", today, method="ewma", window_days=28)
+    assert r is not None
+    assert r.method == "ewma"
+    assert r.confidence_weight == 0.0  # n=10 < EWMA_MIN_SAMPLES (14)
+
+
+def test_ewma_partial_window_ramps_confidence_linearly():
+    """Confidence interpolates between EWMA_MIN_SAMPLES (14) and the
+    requested window length (28). At 21 days, weight should sit near
+    the midpoint."""
+    today = date(2026, 6, 1)
+    df = _series([55.0 - i * 0.1 for i in range(21)], today)
+    r = compute_trend_slope(df, "hrv_rmssd", today, method="ewma", window_days=28)
+    assert r is not None
+    # n=21, min=14, max=28 → weight = (21-14)/(28-14) = 0.5
+    assert r.confidence_weight == pytest.approx(0.5, abs=0.01)
+
+
+def test_ewma_full_window_full_confidence():
+    today = date(2026, 6, 1)
+    df = _series([55.0] * 28, today)
+    r = compute_trend_slope(df, "hrv_rmssd", today, method="ewma", window_days=28)
+    assert r is not None
+    assert r.confidence_weight == 1.0
+
+
+def test_ewma_too_few_samples_returns_none():
+    """Below the helper's hard floor of 4 samples, neither method can
+    produce anything — even EWMA bails."""
+    today = date(2026, 6, 1)
+    df = _series([55, 55, 55], today)  # 3 < 4
+    r = compute_trend_slope(df, "hrv_rmssd", today, method="ewma", window_days=28)
+    assert r is None
 
 
 def test_returns_sloperesult_dataclass():
