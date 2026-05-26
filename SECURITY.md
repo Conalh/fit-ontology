@@ -20,7 +20,8 @@ is the *adversarial what-if*.
   per trainer, with action / target / IP / details JSON.
 - **In-process rate limiting** on login (10/min per IP+email),
   Anthropic-quota-burning endpoints (30/min per trainer for /ask,
-  20/hour each for share mint + coach draft).
+  20/hour each for share mint + intake mint + coach draft, and
+  10/hour per IP on the public intake submit).
 - **Defense-in-depth security headers** (X-Frame-Options,
   X-Content-Type-Options, Referrer-Policy, HSTS, CSP).
 - **Public read-only demo mode** that returns 403 on every mutation,
@@ -89,6 +90,8 @@ The exposed surface of a running deployment:
 | Profile lookup | `GET /api/auth/me` | Yes | Yes (or demo) |
 | Trainer API | `GET/POST/PATCH /api/clients/*`, etc. | Yes (trainer-scoped) | Yes (or demo for reads) |
 | Public share view | `GET /api/share/{token}` | Yes | Token-only |
+| Public intake preflight | `GET /api/intake/{token}` | Yes | Token-only |
+| Public intake submit | `POST /api/intake/{token}` | Yes | Token-only |
 | Conversational LLM | `POST /api/ask` | Yes | Yes |
 | Coach Assistant draft | `POST /api/clients/{id}/coach-message/draft` | Yes | Yes |
 | Health check | `GET /api/health` | Yes | No |
@@ -298,6 +301,49 @@ by `tests/test_share.py:test_get_share_omits_pii`.
 
 **Defense, transport.** All tokens travel over HTTPS; HSTS forces
 the upgrade.
+
+### Intake-token misuse
+
+**Class:** Attacker obtains a leaked intake token and submits a
+form, OR floods the public submit endpoint with garbage to spam
+a trainer's roster.
+
+**Defense, scope.** Intake tokens don't read any existing data —
+the preflight `GET /api/intake/{token}` returns only the trainer's
+display name, the optional welcome message, the expiry, and the
+consumed flag. No client list, no internal IDs (the response
+deliberately omits `trainer_id`), no metrics. Leaking a token only
+exposes who minted it, not what they have.
+
+**Defense, one-shot.** A submission flips `consumed_at` from NULL
+to a timestamp via `UPDATE ... WHERE consumed_at IS NULL AND
+expires_at >= ? RETURNING id`. The first POST wins; every
+subsequent POST gets 410 (and the helper-level atomicity is also
+pinned by `tests/test_intake_tokens.py:test_consume_is_atomic_-
+single_claim`). A leaked link can onboard at most one client; the
+trainer mints a fresh URL if they want to onboard another.
+
+**Defense, atomicity.** Insert-client + consume-token run inside
+one DuckDB transaction. A race-lost claim (two concurrent submits
+on the same token) rolls back the insert so the trainer's roster
+doesn't gain a stranded row from the losing request. Tested by
+`tests/test_intake_public.py:test_submit_is_one_shot`.
+
+**Defense, rate limit.** `INTAKE_SUBMIT_LIMIT = 10/hour per IP`
+caps form-spam between mint and the legitimate submission. Keyed
+on IP rather than trainer (the trainer isn't known until the
+token resolves, and the threat is one-source flooding, not one-
+trainer abuse). Mint itself is `INTAKE_MINT_LIMIT = 20/hour per
+trainer`, same shape as `SHARE_MINT_LIMIT`.
+
+**Defense, mint-time check.** `create_intake_token` verifies the
+trainer row exists before writing. A typo in trainer_id (or a
+race with a trainer-deletion) produces a clear ValueError at the
+mint site rather than a dangling token whose submission would FK-
+fail far from the cause.
+
+**Defense, transport.** Same posture as share tokens — HTTPS +
+HSTS in production.
 
 ### Demo-mode write attempts
 

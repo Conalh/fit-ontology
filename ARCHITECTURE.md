@@ -118,6 +118,7 @@ Three middleware in `api.py`:
 | `planning.py` | `/api/clients/{id}/plan` `/plan/{slot}` | weekly plan generation + in-place slot editing |
 | `thresholds.py` | `/api/clients/{id}/thresholds` | sparse per-client overrides on reasoning thresholds |
 | `share.py` | `/api/clients/{id}/share` `/api/share/{token}` | public read-only client portal via opaque token |
+| `intake.py` | `/api/clients/intake/mint` `/api/intake/{token}` | trainer mints one-shot link; client fills form at the public URL, row lands in the trainer's roster |
 | `coach.py` | `/api/clients/{id}/coach-message/draft` | LLM-drafted check-in message |
 | `ask.py` | `/api/ask` | conversational tool-use over the ontology |
 | `roster.py` | `/api/roster` | computed roster with recommendations per client |
@@ -394,6 +395,6 @@ web/
 data/synthetic/         Seed data for build_db.py + demo mode
 
 scripts/                build_db, sync_garmin, trainer admin CLI
-tests/                  pytest, 209 tests
+tests/                  pytest, 239 tests
 docs/                   deploy runbook
 ```

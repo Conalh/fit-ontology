@@ -36,9 +36,11 @@ Ships as a Next.js + Tailwind dashboard backed by a FastAPI service over a singl
 
 ## Screenshots
 
-| Roster (Monday triage) | Client detail (recovery + plan) | Calibration (system vs trainer) |
-| --- | --- | --- |
-| ![Roster](docs/screenshots/roster.png) | ![Client detail](docs/screenshots/client-detail.png) | ![Calibration](docs/screenshots/calibration.png) |
+| Roster (Monday triage) | Client detail (recovery + plan) |
+| --- | --- |
+| ![Roster](docs/screenshots/roster.png) | ![Client detail](docs/screenshots/client-detail.png) |
+| **Calibration (system vs trainer)** | **Intake (public form for prospective clients)** |
+| ![Calibration](docs/screenshots/calibration.png) | ![Intake](docs/screenshots/intake.png) |
 
 ## Why this exists
 
@@ -196,6 +198,7 @@ Five screens, all sharing the same chrome:
 - **`/`** — Roster: every client ranked by recommendation urgency, mobile-first layout. Click through to detail.
 - **`/clients/?id=…`** — Client detail: the recommendation hero card, recovery gauge (composite + four sub-components), confidence + agreement donuts, hover-inspect trends grid with 28d baseline ribbons, ACWR + load bars, last-synced wearable chips, the structured weekly plan (in-place editable per slot), recent sessions, decision history, contraindications, the override drawer, and a "Send to client" card that exports a one-page PDF with an optional coach's note.
 - **`/clients/new`** and **`/clients/edit?id=…`** — Add or edit a client from the UI; intake form uses American units (ft·in, lb) and captures injury history that feeds contraindications.
+- **`/intake?t=<token>`** — Public intake form for prospective clients. Trainer mints a one-shot URL from the roster (`Send intake link` in the TopBar), shares it out-of-band, the client fills it on their phone, the row lands in the trainer's roster. Atomic insert-then-consume; per-IP rate-limited; 14-day TTL. See [`src/fit_ontology/routes/intake.py`](src/fit_ontology/routes/intake.py).
 - **`/clients/upload?id=…`** — Drop a wearable export (Apple Health zip/xml, Strava CSV, Whoop JSON); format detected server-side.
 - **`/calibration`** — System-vs-trainer agreement matrix across every override, weekly trend, per-client breakdown, plan-vs-execution adherence telemetry, plus the qualitative trail and adherence-aware suggestions for which thresholds to tune.
 - **`/ask`** — Conversational layer powered by Claude with structured tool use against the ontology.
@@ -228,7 +231,7 @@ pip install -e .[dev]
 pytest -q
 ```
 
-209 tests covering the reasoning branches (level + trend detectors, recovery score, baseline-window auto-fit, per-client threshold overrides), the planning templates and plan-vs-execution matcher, contraindications routing, the override log roundtrip, the assistant tool routing, the Apple Health and Garmin activity parsers, the PDF report, the deterministic metric-ID dedup, multi-tenant isolation across reads + writes, the audit log + rate-limit + security-header + CSP middleware, the share-token surface, the Coach Assistant draft endpoint, demo-mode write-rejection, and every FastAPI route. CI runs the same suite on Python 3.11 and 3.12 for every push and PR
+239 tests covering the reasoning branches (level + trend detectors, recovery score, baseline-window auto-fit, per-client threshold overrides), the planning templates and plan-vs-execution matcher, contraindications routing, the override log roundtrip, the assistant tool routing, the Apple Health and Garmin activity parsers, the PDF report, the deterministic metric-ID dedup, multi-tenant isolation across reads + writes, the audit log + rate-limit + security-header + CSP middleware, the share-token surface, the intake-token surface (helpers + mint + public submit), the Coach Assistant draft endpoint, demo-mode write-rejection, and every FastAPI route. CI runs the same suite on Python 3.11 and 3.12 for every push and PR
 ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)).
 
 ## Deploy
