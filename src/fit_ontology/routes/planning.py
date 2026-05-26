@@ -149,8 +149,11 @@ def get_plan(
                 # Re-read to pick up executed_session_id values the
                 # matcher just wrote.
                 plan = plan_for_week(wcon, trainer_id, client_id, week_of)
-        except duckdb.IOException as e:
-            raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
+        except (duckdb.IOException, duckdb.ConnectionException):
+            # Client-detail renders fan out several read queries in parallel.
+            # If one is still open, DuckDB can refuse a write-mode handle.
+            # Return the generated plan in memory; a later GET will persist it.
+            plan = new_plan
     else:
         # Plan already existed — opportunistically run the matcher in
         # case sessions landed since last fetch. Cheap (LEFT JOIN with an
@@ -160,7 +163,7 @@ def get_plan(
                 linked = match_planned_sessions(wcon, trainer_id, client_id)
                 if linked > 0:
                     plan = plan_for_week(wcon, trainer_id, client_id, week_of)
-        except duckdb.IOException:
+        except (duckdb.IOException, duckdb.ConnectionException):
             # Background match failed — not fatal, just skip the refresh.
             pass
 

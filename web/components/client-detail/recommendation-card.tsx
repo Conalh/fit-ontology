@@ -21,18 +21,24 @@ export function RecommendationCard({
   rec,
   isLoading,
   overrides,
+  onRefreshRecommendation,
+  isRefreshing = false,
 }: {
   rec: Recommendation | undefined;
   isLoading: boolean;
   overrides: OverrideRow[];
+  onRefreshRecommendation?: () => void;
+  isRefreshing?: boolean;
 }) {
   const verdict = useMemo<Verdict>(() => {
     if (!rec) return "STANDARD";
-    const low = rec.recommendation.toLowerCase();
-    if (low.startsWith("deload")) return "DELOAD";
-    if (low.startsWith("conservative")) return "CONSERVATIVE";
-    return "STANDARD";
+    return verdictFromRecommendation(rec.recommendation);
   }, [rec]);
+  const preview = rec?.preview_differs && rec.live_preview ? rec.live_preview : null;
+  const previewVerdict = useMemo<Verdict>(() => {
+    if (!preview) return "STANDARD";
+    return verdictFromRecommendation(preview.recommendation);
+  }, [preview]);
 
   const flags = useMemo(() => {
     if (!rec || !rec.rationale.includes("Flags:")) return [] as string[];
@@ -105,6 +111,10 @@ export function RecommendationCard({
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
             style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
               fontSize: 10.5,
               color: "var(--text-muted)",
               textTransform: "uppercase",
@@ -113,7 +123,21 @@ export function RecommendationCard({
               marginBottom: 12,
             }}
           >
-            {rec ? `Week of ${rec.week_of}` : "Loading"} · This week&apos;s call
+            <span>{rec ? `Week of ${rec.week_of}` : "Loading"} · This week&apos;s call</span>
+            {rec?.is_locked && (
+              <span
+                style={{
+                  padding: "2px 6px",
+                  borderRadius: 5,
+                  border: "1px solid var(--border)",
+                  background: "var(--surface-2)",
+                  color: "var(--text)",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                Locked
+              </span>
+            )}
           </div>
 
           <div
@@ -197,6 +221,60 @@ export function RecommendationCard({
                 <path d="M10 6v4l3 2" strokeLinecap="round" />
               </svg>
               <span style={{ flex: 1, lineHeight: 1.4 }}>{rec.recommendation}</span>
+            </div>
+          )}
+
+          {preview && (
+            <div
+              style={{
+                marginTop: 12,
+                padding: "12px 14px",
+                border: "1px solid color-mix(in oklab, var(--accent) 35%, var(--border))",
+                borderRadius: 7,
+                background: "color-mix(in oklab, var(--accent) 8%, var(--surface))",
+                display: "flex",
+                alignItems: "center",
+                gap: 14,
+                flexWrap: "wrap",
+              }}
+            >
+              <div style={{ flex: "1 1 340px", minWidth: 220 }}>
+                <div
+                  style={{
+                    fontSize: 10.5,
+                    color: "var(--text-muted)",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.08em",
+                    fontWeight: 600,
+                    marginBottom: 4,
+                  }}
+                >
+                  Live preview
+                </div>
+                <div style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.45 }}>
+                  New data points to{" "}
+                  <strong style={{ color: verdictColorFor(previewVerdict) }}>
+                    {verdictLabel(previewVerdict)}
+                  </strong>{" "}
+                  at {Math.round(preview.confidence * 100)}%. {preview.recommendation}
+                </div>
+              </div>
+              {onRefreshRecommendation && (
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={onRefreshRecommendation}
+                  disabled={isRefreshing}
+                  style={{
+                    minWidth: 120,
+                    justifyContent: "center",
+                    opacity: isRefreshing ? 0.65 : 1,
+                    cursor: isRefreshing ? "wait" : "pointer",
+                  }}
+                >
+                  {isRefreshing ? "Refreshing..." : "Refresh week"}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -386,6 +464,13 @@ export function RecommendationCard({
       )}
     </section>
   );
+}
+
+function verdictFromRecommendation(text: string): Verdict {
+  const low = text.toLowerCase();
+  if (low.startsWith("deload")) return "DELOAD";
+  if (low.startsWith("conservative")) return "CONSERVATIVE";
+  return "STANDARD";
 }
 
 /** E5: turn a trend's dual-detector flags into a compact badge label.

@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
@@ -35,6 +36,9 @@ from fit_ontology.routes import (
 )
 from fit_ontology.routes import (
     pdf as pdf_routes,
+)
+from fit_ontology.routes import (
+    planning as planning_routes,
 )
 from fit_ontology.routes import (
     recommendation as recommendation_routes,
@@ -87,7 +91,7 @@ def app_with_db(tmp_path: Path, monkeypatch):
     # Each route module did ``from ..db import DEFAULT_DB_PATH`` at load
     # time, so the constant is bound separately in each module's namespace.
     # Patch every module that opens its own write connection.
-    for mod in (clients_routes, metrics_routes, overrides_routes, recommendation_routes, thresholds_routes):
+    for mod in (clients_routes, metrics_routes, overrides_routes, planning_routes, recommendation_routes, thresholds_routes):
         monkeypatch.setattr(mod, "DEFAULT_DB_PATH", db_path)
 
     def _ro():
@@ -148,6 +152,124 @@ def test_recommendation_is_lazy_persisted_and_stable(app_with_db):
     second = app_with_db.get("/api/clients/c_test/recommendation").json()
     assert first["id"] == second["id"], "second GET should return the stored row"
     assert first["week_of"] == second["week_of"]
+
+
+def test_recommendation_marks_stored_week_as_locked_with_live_preview(app_with_db):
+    """A stored weekly call remains canonical, while today's engine
+    output is exposed separately when it has drifted."""
+    week_of = date.today() - timedelta(days=date.today().weekday())
+    with connect(recommendation_routes.DEFAULT_DB_PATH, read_only=False) as con:
+        insert_recommendation(
+            con,
+            DEFAULT_TRAINER_ID,
+            Recommendation(
+                id="rec_locked_sentinel",
+                client_id="c_test",
+                generated_at=datetime.now(),
+                week_of=week_of,
+                recommendation="Locked trainer-facing verdict.",
+                rationale="This is the stable weekly recommendation.",
+                source_metric_ids=["m-hrv-1"],
+                confidence=0.41,
+            ),
+        )
+
+    r = app_with_db.get("/api/clients/c_test/recommendation")
+
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["id"] == "rec_locked_sentinel"
+    assert data["recommendation"] == "Locked trainer-facing verdict."
+    assert data["is_locked"] is True
+    assert data["preview_differs"] is True
+    assert data["live_preview"] is not None
+    assert data["live_preview"]["recommendation"] != data["recommendation"]
+
+
+def test_refresh_recommendation_replaces_current_week_snapshot(app_with_db):
+    week_of = date.today() - timedelta(days=date.today().weekday())
+    with connect(recommendation_routes.DEFAULT_DB_PATH, read_only=False) as con:
+        insert_recommendation(
+            con,
+            DEFAULT_TRAINER_ID,
+            Recommendation(
+                id="rec_refresh_sentinel",
+                client_id="c_test",
+                generated_at=datetime.now(),
+                week_of=week_of,
+                recommendation="Locked stale verdict.",
+                rationale="This should be replaced by an explicit refresh.",
+                source_metric_ids=["m-hrv-1"],
+                confidence=0.25,
+            ),
+        )
+
+    refreshed = app_with_db.post("/api/clients/c_test/recommendation/refresh")
+
+    assert refreshed.status_code == 200, refreshed.text
+    refreshed_data = refreshed.json()
+    assert refreshed_data["id"] != "rec_refresh_sentinel"
+    assert refreshed_data["recommendation"] != "Locked stale verdict."
+    assert refreshed_data["is_locked"] is True
+    assert refreshed_data["preview_differs"] is False
+    assert refreshed_data["live_preview"] is None
+
+    current = app_with_db.get("/api/clients/c_test/recommendation").json()
+    assert current["id"] == refreshed_data["id"]
+    assert current["recommendation"] == refreshed_data["recommendation"]
+
+
+def test_recommendation_get_returns_live_compute_when_initial_persist_writer_is_busy(app_with_db, monkeypatch):
+    real_connect = recommendation_routes.connect
+
+    def busy_on_write(db_path, *, read_only=False):
+        if not read_only:
+            raise duckdb.ConnectionException("writer busy")
+        return real_connect(db_path, read_only=read_only)
+
+    monkeypatch.setattr(recommendation_routes, "connect", busy_on_write)
+
+    r = app_with_db.get("/api/clients/c_test/recommendation")
+
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert "recommendation" in data
+    assert data["is_locked"] is False
+    assert data["preview_differs"] is False
+    assert data["live_preview"] is None
+
+
+def test_refresh_recommendation_returns_503_when_writer_is_busy(app_with_db, monkeypatch):
+    week_of = date.today() - timedelta(days=date.today().weekday())
+    with connect(recommendation_routes.DEFAULT_DB_PATH, read_only=False) as con:
+        insert_recommendation(
+            con,
+            DEFAULT_TRAINER_ID,
+            Recommendation(
+                id="rec_busy_refresh",
+                client_id="c_test",
+                generated_at=datetime.now(),
+                week_of=week_of,
+                recommendation="Locked stale verdict.",
+                rationale="This should be replaced by an explicit refresh.",
+                source_metric_ids=["m-hrv-1"],
+                confidence=0.25,
+            ),
+        )
+
+    real_connect = recommendation_routes.connect
+
+    def busy_on_write(db_path, *, read_only=False):
+        if not read_only:
+            raise duckdb.ConnectionException("writer busy")
+        return real_connect(db_path, read_only=read_only)
+
+    monkeypatch.setattr(recommendation_routes, "connect", busy_on_write)
+
+    r = app_with_db.post("/api/clients/c_test/recommendation/refresh")
+
+    assert r.status_code == 503, r.text
+    assert "DB busy" in r.json()["detail"]
 
 
 def test_recommendation_history_endpoint(app_with_db):
@@ -242,6 +364,24 @@ def test_action_queue_surfaces_unreviewed_deload_and_missing_plan(app_with_db):
     assert items[0]["client_id"] == "c_test"
     assert "Deload" in items[0]["title"]
     assert any(item["kind"] == "build_plan" and item["client_id"] == "c_test" for item in items)
+
+
+def test_plan_get_returns_in_memory_plan_when_writer_is_busy(app_with_db, monkeypatch):
+    real_connect = planning_routes.connect
+
+    def busy_on_write(db_path, *, read_only=False):
+        if not read_only:
+            raise duckdb.ConnectionException("writer busy")
+        return real_connect(db_path, read_only=read_only)
+
+    monkeypatch.setattr(planning_routes, "connect", busy_on_write)
+
+    r = app_with_db.get("/api/clients/c_test/plan")
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["sessions"]
+    assert body["verdict"] in {"DELOAD", "CONSERVATIVE", "STANDARD"}
 
 
 def test_override_roundtrip(app_with_db):

@@ -230,6 +230,14 @@ class TrendDetailResponse(BaseModel):
     chronic_confidence_weight: float
 
 
+class RecommendationPreviewResponse(BaseModel):
+    recommendation: str
+    rationale: str
+    source_metric_ids: list[str]
+    confidence: float
+    generated_at: datetime
+
+
 class RecommendationResponse(BaseModel):
     id: str
     client_id: str
@@ -256,6 +264,13 @@ class RecommendationResponse(BaseModel):
     # rows where we don't recompute the engine; populated on the
     # current week's recommendation.
     trend_details: dict[str, TrendDetailResponse] = {}
+    # True when this is the persisted weekly snapshot instead of an
+    # ephemeral in-memory compute.
+    is_locked: bool = False
+    # Current engine output when it would differ from the locked weekly
+    # snapshot. Kept separate so trainers see drift without silent churn.
+    live_preview: RecommendationPreviewResponse | None = None
+    preview_differs: bool = False
 
 
 # ─── Overrides ──────────────────────────────────────────────────────

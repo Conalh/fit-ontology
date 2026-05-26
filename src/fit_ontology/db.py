@@ -470,6 +470,25 @@ def insert_recommendation(con, trainer_id: str, rec) -> None:
     )
 
 
+def replace_recommendation_for_week(con, trainer_id: str, rec) -> None:
+    """Replace the trainer-scoped recommendation snapshot for rec.week_of.
+
+    recommendations.id is random, so INSERT OR REPLACE only replaces a
+    row when the caller already has that exact id. An explicit refresh is
+    week-scoped: it must retire the old current-week snapshot before the
+    newly generated one is inserted.
+    """
+    _assert_clients_owned(con, trainer_id, [rec.client_id])
+    con.execute(
+        """
+        DELETE FROM recommendations
+        WHERE trainer_id = ? AND client_id = ? AND week_of = ?
+        """,
+        [trainer_id, rec.client_id, rec.week_of],
+    )
+    insert_recommendation(con, trainer_id, rec)
+
+
 def list_clients(con, trainer_id: str) -> pd.DataFrame:
     """Roster view: every client this trainer owns. The trainer_id
     filter is the multi-tenant gate — without it the dashboard would

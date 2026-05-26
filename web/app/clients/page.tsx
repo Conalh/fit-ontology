@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";
 import type { CSSProperties } from "react";
@@ -43,6 +43,7 @@ export default function ClientDetailPage() {
 
 function ClientDetailInner({ clientId }: { clientId: string }) {
   const missing = !clientId;
+  const qc = useQueryClient();
   // Hooks must be called unconditionally — pass a stable placeholder
   // when the id is missing; we render a redirect-style message below.
   const [accentHex, setAccentHex] = useClientAccent(clientId || "_unknown");
@@ -83,6 +84,16 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
     queryKey: ["rec-history", clientId],
     queryFn: () => api.recommendationHistory(clientId, 12),
     enabled: !missing,
+  });
+  const refreshRecommendation = useMutation({
+    mutationFn: () => api.refreshRecommendation(clientId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["rec", clientId] });
+      qc.invalidateQueries({ queryKey: ["rec-history", clientId] });
+      qc.invalidateQueries({ queryKey: ["plan", clientId] });
+      qc.invalidateQueries({ queryKey: ["roster"] });
+      qc.invalidateQueries({ queryKey: ["action-queue"] });
+    },
   });
 
   if (missing) {
@@ -186,6 +197,8 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
               rec={recQ.data}
               isLoading={recQ.isLoading}
               overrides={overridesQ.data ?? []}
+              onRefreshRecommendation={() => refreshRecommendation.mutate()}
+              isRefreshing={refreshRecommendation.isPending}
             />
           </div>
 

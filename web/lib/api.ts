@@ -172,6 +172,14 @@ export interface TrendDetail {
   chronic_confidence_weight: number;
 }
 
+export interface RecommendationPreview {
+  recommendation: string;
+  rationale: string;
+  source_metric_ids: string[];
+  confidence: number;
+  generated_at: string;
+}
+
 export interface Recommendation {
   id: string;
   client_id: string;
@@ -188,6 +196,9 @@ export interface Recommendation {
   /** Per-trend-kind detector diagnostics. Frontend keys by signal
    *  kind ("hrv_trend_down" etc) to render the acute/chronic badge. */
   trend_details?: Record<string, TrendDetail>;
+  is_locked: boolean;
+  live_preview?: RecommendationPreview | null;
+  preview_differs: boolean;
 }
 
 export interface MetricRow {
@@ -409,6 +420,10 @@ export const api = {
   actionQueue: () => request<ActionQueueItem[]>("/api/action-queue"),
   recommendation: (clientId: string) =>
     request<Recommendation>(`/api/clients/${clientId}/recommendation`),
+  refreshRecommendation: (clientId: string) =>
+    request<Recommendation>(`/api/clients/${clientId}/recommendation/refresh`, {
+      method: "POST",
+    }),
   recommendationHistory: (clientId: string, limit = 12) =>
     request<Recommendation[]>(`/api/clients/${clientId}/recommendations?limit=${limit}`),
   metrics: (clientId: string, days = 35) =>
