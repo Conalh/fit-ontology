@@ -53,6 +53,21 @@ dev = [
     # ImageDraw API got tighter type annotations in that line.
     "Pillow>=10.0",
 ]
+# Optional extra for the backup_db.py script. Only installed when the
+# deploy actually runs the backup job — keeps the default runtime
+# image lean (boto3 + botocore is ~10MB on disk). Compatible with any
+# S3-shaped endpoint: Tigris, Backblaze B2, Cloudflare R2, AWS S3.
+backup = [
+    "boto3>=1.34",
+]
+# Optional extra for Sentry error monitoring. Enabled per-deploy by
+# setting FIT_ONTOLOGY_SENTRY_DSN; when unset, the SDK isn't imported
+# and dev runs unaffected. The [fastapi] extra pulls in the FastAPI
+# integration; the SDK detects the running framework anyway, but
+# pinning the extra keeps the install reproducible.
+monitoring = [
+    "sentry-sdk[fastapi]>=2.0",
+]
 
 [project.urls]
 Repository = "https://github.com/Conalh/fit-ontology"

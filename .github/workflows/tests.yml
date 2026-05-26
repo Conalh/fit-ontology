@@ -55,3 +55,48 @@ jobs:
           name: coverage-xml
           path: coverage.xml
           retention-days: 14
+
+  # ─── Frontend build + typecheck ────────────────────────────────────
+  #
+  # Separate job from pytest so the two run in parallel on different
+  # runners — faster end-to-end on PR builds, and a Python failure
+  # doesn't mask a frontend regression (or vice versa). Node 20 LTS
+  # matches @types/node ^20 in web/package.json; Next 16 supports
+  # Node 18.18+ but 20 has the longer LTS runway.
+  #
+  # Two gates run here:
+  #   - tsc --noEmit catches type-only regressions that the Python
+  #     test suite can't see (E5 in the engine v2 arc landed a couple
+  #     of TS issues that only showed up in `npx tsc` locally; this
+  #     step would have caught them at PR time).
+  #   - next build is the production-bundle check. Catches HTML/CSS
+  #     emit issues, unused-import errors that escape tsc, and the
+  #     output:export step that turns dynamic routes into static
+  #     files. Doesn't deploy the artifact — it's a "does this build"
+  #     gate, not a "publish web/out/" job.
+  web-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        # ``npm ci`` (clean install from lockfile) instead of ``npm
+        # install`` so the CI build is exactly reproducible and a
+        # malformed lockfile fails loud here, not in the next deploy.
+        run: npm ci
+
+      - name: Typecheck (tsc --noEmit)
+        run: npx tsc --noEmit
+
+      - name: Production build (next build, output:export)
+        run: npm run build

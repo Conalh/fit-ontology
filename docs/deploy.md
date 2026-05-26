@@ -145,9 +145,104 @@ To restore from a snapshot, create a new volume from it and update
 fly volumes create fit_data_restored --snapshot-id <snapshot-id> --region sjc
 ```
 
-For higher-bar durability (Phase 5b/c), add Litestream replication
-to S3-compatible storage — the application is single-writer so
-Litestream's continuous-replication model fits without changes.
+### Off-volume backup to S3-compatible storage
+
+Fly's volume snapshots cover most recovery paths, but they're
+single-zone — a region-level outage takes both the volume and the
+snapshots with it. `scripts/backup_db.py` uploads the DuckDB file
+to any S3-shaped bucket (Tigris, Backblaze B2, Cloudflare R2, AWS
+S3) so a copy lives outside the Fly region.
+
+**1. Pick a bucket provider.** Tigris is the path-of-least-friction
+on Fly — same dashboard, free tier covers the working-set:
+
+```bash
+fly storage create fit-ontology-backups   # creates a Tigris bucket
+# Fly auto-injects AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY /
+# AWS_ENDPOINT_URL_S3 secrets into the app.
+```
+
+B2 / R2 / S3 work identically — set the same env vars manually via
+`fly secrets set`.
+
+**2. Set the bucket name** (the only non-Tigris-default we need):
+
+```bash
+fly secrets set FIT_ONTOLOGY_BACKUP_BUCKET=fit-ontology-backups
+```
+
+**3. Schedule the backup.** Two ways:
+
+- **One-shot machine on a daily schedule** (recommended for Fly):
+
+  ```bash
+  fly machine run \
+      --schedule daily \
+      --region sjc \
+      --volume fit_data:/data \
+      --env FIT_ONTOLOGY_DB=/data/fit.duckdb \
+      registry.fly.io/fit-ontology:latest \
+      python scripts/backup_db.py
+  ```
+
+  The machine wakes once a day, runs the backup script, exits.
+  Costs ~free (the machine lives <60 seconds per day).
+
+- **External cron** (GitHub Actions or your laptop), invoking the
+  script against a downloaded copy of the volume. Workable but more
+  moving parts; prefer the Fly machine schedule.
+
+**4. Verify.** Check the bucket after the first scheduled run, or
+trigger it manually:
+
+```bash
+fly ssh console -C "python scripts/backup_db.py"
+```
+
+Backups land at `s3://<bucket>/fit-ontology/YYYYMMDD-HHMMSSZ-fit.duckdb`.
+Retention defaults to 14 days (`FIT_ONTOLOGY_BACKUP_RETAIN`); older
+ones are pruned automatically.
+
+**Restoring from S3** is a `fly ssh console` + `aws s3 cp` away;
+no special tooling required since the backup is just the raw
+DuckDB file.
+
+### Error monitoring (Sentry)
+
+Optional. When `FIT_ONTOLOGY_SENTRY_DSN` is set, uncaught
+exceptions in route handlers + WARNING+ log lines flow to Sentry
+with the FastAPI integration. Without the DSN, the SDK isn't
+imported and the deploy is unaffected.
+
+**1. Create a Sentry project** (free tier covers a portfolio app:
+~5000 events/mo). Pick "FastAPI" as the platform; copy the DSN.
+
+**2. Install the optional extra in the runtime image.** The simplest
+path is to bake the `monitoring` extra into the Dockerfile install:
+
+```dockerfile
+# in the runtime stage of Dockerfile, replace `pip install .` with:
+RUN pip install --no-cache-dir .[monitoring]
+```
+
+(Or skip the extra and install `sentry-sdk[fastapi]` directly —
+both work.)
+
+**3. Set the secret and deploy:**
+
+```bash
+fly secrets set FIT_ONTOLOGY_SENTRY_DSN=https://...ingest.sentry.io/...
+fly deploy
+```
+
+The next deploy will start reporting; check the Sentry dashboard
+for the first event within a few minutes (the FastAPI `/api/health`
+check might be enough to trigger a startup-context event).
+
+**Toggling environments.** `FIT_ONTOLOGY_SENTRY_ENV` defaults to
+`production`; set to `staging` / `preview` to filter events in the
+Sentry UI. Trace + profile sampling default to 10% — raise via the
+SDK config if event volume is sparse.
 
 ## Removing demo mode
 

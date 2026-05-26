@@ -53,6 +53,70 @@ _read_only_conn = read_only_conn
 load_env()
 
 
+def _init_sentry() -> None:
+    """Initialise Sentry if FIT_ONTOLOGY_SENTRY_DSN is set.
+
+    No-op when the env var is empty (the dev + portfolio-demo default)
+    so the sentry-sdk dependency stays optional and the SDK doesn't
+    silently send error telemetry from a developer's laptop. Same
+    posture as the demo-mode and require-auth flags: every prod-only
+    behaviour is opt-in via env var.
+
+    sentry-sdk is imported lazily so a build without the dep can still
+    boot — the only cost is a no-op call to this function. The
+    FastAPI integration auto-captures uncaught exceptions in route
+    handlers + middleware; logging integration ships every WARNING+
+    log line as a breadcrumb so the operator gets context on the
+    state leading up to a crash.
+    """
+    dsn = os.environ.get("FIT_ONTOLOGY_SENTRY_DSN", "").strip()
+    if not dsn:
+        return
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.logging import LoggingIntegration
+    except ImportError:
+        import sys
+        print(
+            "[fit_ontology.api] WARNING: FIT_ONTOLOGY_SENTRY_DSN is set but "
+            "sentry-sdk is not installed. Install with `pip install -e .[monitoring]` "
+            "to enable error reporting.",
+            file=sys.stderr,
+        )
+        return
+    # ``environment`` is what the Sentry UI uses to filter dev vs prod;
+    # the same DSN can carry both. Default to "production" since this
+    # function only runs when the DSN is configured at all, which
+    # rarely happens locally.
+    environment = os.environ.get("FIT_ONTOLOGY_SENTRY_ENV", "production")
+    # ``release`` carries the app version so Sentry can correlate
+    # errors against deploys. Matches the FastAPI version string below.
+    release = os.environ.get("FIT_ONTOLOGY_RELEASE", "fit-ontology@0.5.1")
+    sentry_sdk.init(
+        dsn=dsn,
+        environment=environment,
+        release=release,
+        # Performance + profiling sampling at 0.1 = capture 10% of
+        # request traces. A free-tier-budget-friendly default for a
+        # portfolio app; raise if events get sparse.
+        traces_sample_rate=0.1,
+        profiles_sample_rate=0.1,
+        integrations=[
+            FastApiIntegration(transaction_style="endpoint"),
+            LoggingIntegration(level=None, event_level=None),
+        ],
+        # Don't send PII automatically (route params, request bodies,
+        # user-Agent etc.). Trainer + client emails are PII; an
+        # uncaught exception in an auth route would otherwise surface
+        # the attempted email in the Sentry event.
+        send_default_pii=False,
+    )
+
+
+_init_sentry()
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     """Open one write-mode connection at startup so the schema DDL +
