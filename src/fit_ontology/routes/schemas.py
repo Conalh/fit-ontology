@@ -91,6 +91,22 @@ class IntakeMintResponse(BaseModel):
     expires_at: datetime
 
 
+class IntakeViewResponse(BaseModel):
+    """Public payload for the intake form page. Carries trainer name
+    (for personalization) and optional welcome message, plus the
+    ``consumed`` flag so the page can render an "already submitted"
+    state with the trainer's name still visible — more useful UX
+    than a generic 410, which we reserve for expired-and-unusable.
+
+    Deliberately omits trainer_id and any other internal identifier
+    — those are server-side only. The token in the URL is the
+    bearer credential; the response just carries display data."""
+    trainer_name: str
+    trainer_message: str | None
+    expires_at: datetime
+    consumed: bool
+
+
 # ─── Auth (Phase 2b-α) ──────────────────────────────────────────────
 
 class LoginRequest(BaseModel):

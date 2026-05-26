@@ -133,3 +133,17 @@ INTAKE_MINT_LIMIT = RateLimit(
 SHARE_MINT_LIMIT — the case is an accidental click-loop or double-
 bound button, not adversarial. A real trainer mints maybe one
 intake link per new client per week."""
+
+INTAKE_SUBMIT_LIMIT = RateLimit(
+    name="intake.submit",
+    window_seconds=3600,
+    max_attempts=10,
+)
+"""10 intake submissions per hour per IP. The other limits in this
+file are keyed by trainer_id because the route is authed; intake
+submit is the only public-write surface and the trainer isn't
+known until the token resolves. Per-IP is the natural bucket: a
+legitimate client submits once, full stop. The cap defends against
+form-spam against a leaked link before the one-shot consume kicks
+in (one valid submission claims the token, but a flood between
+"trainer minted" and "client submitted" could DoS the surface)."""
