@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { Sidebar, TopBar, VerdictBadge, labelToVerdict } from "@/components/chrome";
+import { IntakeLinkModal } from "@/components/intake-link-modal";
 import { Skeleton } from "@/components/skeleton";
 import { defaultAccentForClient, initialsFor, withAlpha } from "@/lib/accent";
 import { api, type RosterRow } from "@/lib/api";
@@ -20,6 +21,7 @@ export default function RosterPage() {
     queryKey: ["roster"],
     queryFn: api.roster,
   });
+  const [intakeOpen, setIntakeOpen] = useState(false);
 
   // Page-level accent is the neutral indigo when no client is in focus.
   const accentHex = "#4F46E5";
@@ -46,6 +48,14 @@ export default function RosterPage() {
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <TopBar breadcrumb={<span style={{ color: "var(--text)", fontWeight: 500 }}>Roster</span>}>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => setIntakeOpen(true)}
+            title="Mint a one-shot intake link to share with a prospective client"
+          >
+            Send intake link
+          </button>
           <Link href="/clients/new" className="btn-primary">
             + Add client
           </Link>
@@ -83,6 +93,8 @@ export default function RosterPage() {
           {data && data.length > 0 && <RosterTable rows={data} />}
         </div>
       </div>
+
+      {intakeOpen && <IntakeLinkModal onClose={() => setIntakeOpen(false)} />}
     </div>
   );
 }
