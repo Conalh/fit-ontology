@@ -42,6 +42,6 @@ def test_demo_raw_video_artifacts_are_not_committable():
     ignore = read(".gitignore")
     recorder = read("scripts/record_demos.py")
 
-    assert "docs/videos/_raw/" in ignore
+    assert "docs/videos/" in ignore
     assert "TemporaryDirectory" in recorder
     assert 'record_video_dir=str(raw_dir / name)' in recorder
