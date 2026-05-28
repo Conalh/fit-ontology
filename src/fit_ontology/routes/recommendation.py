@@ -10,18 +10,21 @@ from ..db import (
     DEFAULT_DB_PATH,
     connect,
     insert_recommendation,
+    match_planned_sessions,
     recommendations_for_client,
+    replace_plan_for_week,
     replace_recommendation_for_week,
 )
 from ..demo import is_demo_trainer
 from ..ontology import Recommendation
+from ..planning import Verdict, generate_plan
 from ..reasoning import (
     FLAG_CITATIONS,
     compute_trend_diagnostics,
     generate_recommendation,
 )
 from ..weekly_state import ClientNotFoundError, WeeklyClientState, build_weekly_client_state
-from .deps import current_trainer_id, read_only_conn
+from .deps import current_trainer_id, forbid_demo_trainer, read_only_conn
 from .schemas import (
     ContraindicationItem,
     RecommendationPreviewResponse,
@@ -31,6 +34,22 @@ from .schemas import (
 )
 
 router = APIRouter()
+
+
+def _plan_verdict(rec_text: str) -> Verdict:
+    low = rec_text.lower()
+    if low.startswith("deload"):
+        return "DELOAD"
+    if low.startswith("conservative"):
+        return "CONSERVATIVE"
+    return "STANDARD"
+
+
+def _all_engine_generated(plan) -> bool:
+    return bool(plan) and all(
+        (ps.source.value if hasattr(ps.source, "value") else str(ps.source)) == "engine"
+        for ps in plan
+    )
 
 
 def _recommendations_differ(a: Recommendation, b: Recommendation) -> bool:
@@ -167,12 +186,9 @@ def get_recommendation(
 @router.post("/api/clients/{client_id}/recommendation/refresh", response_model=RecommendationResponse)
 def refresh_recommendation(
     client_id: str,
-    trainer_id: str = Depends(current_trainer_id),
+    trainer_id: str = Depends(forbid_demo_trainer),
 ) -> RecommendationResponse:
     """Explicitly replace this week's locked recommendation with a fresh compute."""
-    if is_demo_trainer(trainer_id):
-        raise HTTPException(status_code=403, detail="Demo trainer cannot refresh recommendations")
-
     with connect(DEFAULT_DB_PATH, read_only=True) as rcon:
         try:
             state = build_weekly_client_state(rcon, trainer_id, client_id)
@@ -189,6 +205,17 @@ def refresh_recommendation(
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as wcon:
             replace_recommendation_for_week(wcon, trainer_id, rec)
+            if _all_engine_generated(state.plan):
+                new_plan = generate_plan(
+                    client_id=client_id,
+                    week_of=state.week_of,
+                    verdict=_plan_verdict(rec.recommendation),
+                    sessions=state.sessions,
+                    contraindications=[c.advice for c in state.contraindications],
+                    today=state.today,
+                )
+                replace_plan_for_week(wcon, trainer_id, client_id, state.week_of, new_plan)
+                match_planned_sessions(wcon, trainer_id, client_id)
     except (duckdb.IOException, duckdb.ConnectionException) as e:
         raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
 

@@ -54,6 +54,7 @@ function UploadInner({ clientId }: { clientId: string }) {
       qc.invalidateQueries({ queryKey: ["sessions", clientId] });
       qc.invalidateQueries({ queryKey: ["weekly-delta", clientId] });
       qc.invalidateQueries({ queryKey: ["roster"] });
+      qc.invalidateQueries({ queryKey: ["action-queue"] });
       toast.show(`Imported ${data.inserted} row${data.inserted === 1 ? "" : "s"}.`);
     },
     onError: (e: Error) => toast.show(`Upload failed: ${e.message}`, "error"),

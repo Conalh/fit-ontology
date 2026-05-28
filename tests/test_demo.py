@@ -326,6 +326,24 @@ def test_coach_draft_blocked_for_demo(demo_app, monkeypatch):
     assert r.status_code == 403
 
 
+def test_ask_blocked_for_demo(demo_app, monkeypatch):
+    """Ask FitOntology also burns Anthropic quota, so it should have
+    the same demo-mode posture as coach draft."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    client, _db = demo_app
+    r = client.post("/api/ask", json={"question": "who needs attention?", "history": []})
+    assert r.status_code == 403
+
+
+def test_recommendation_refresh_blocked_for_demo_by_dependency():
+    source = Path("src/fit_ontology/routes/recommendation.py").read_text(encoding="utf-8")
+    refresh_section = source.split("def refresh_recommendation", 1)[1].split(
+        "def get_recommendation_history", 1
+    )[0]
+
+    assert "Depends(forbid_demo_trainer)" in refresh_section
+
+
 def test_demo_mode_off_means_normal_auth_behavior(tmp_path: Path, monkeypatch):
     """Sanity: with DEMO_MODE off and REQUIRE_AUTH on, /me 401s for
     an unauthenticated visitor. The demo behavior is opt-in."""

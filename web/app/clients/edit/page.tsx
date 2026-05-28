@@ -43,6 +43,7 @@ function EditInner({ clientId }: { clientId: string }) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["roster"] });
       qc.invalidateQueries({ queryKey: ["client", clientId] });
+      qc.invalidateQueries({ queryKey: ["action-queue"] });
       toast.show("Changes saved.");
       router.push(`/clients/?id=${clientId}`);
     },
@@ -60,6 +61,7 @@ function EditInner({ clientId }: { clientId: string }) {
     mutationFn: () => api.deleteClient(clientId),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["roster"] });
+      qc.invalidateQueries({ queryKey: ["action-queue"] });
       toast.show(`Deleted ${data.name}.`);
       router.push("/");
     },

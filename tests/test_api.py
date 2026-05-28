@@ -47,6 +47,7 @@ from fit_ontology.routes import (
 from fit_ontology.routes import (
     thresholds as thresholds_routes,
 )
+from fit_ontology.weekly_delta import build_weekly_delta
 
 
 @pytest.fixture()
@@ -489,6 +490,95 @@ def test_weekly_delta_summarizes_plan_vs_reality(app_with_db):
     assert any("50% above target" in bullet for bullet in data["bullets"])
 
 
+def test_weekly_delta_does_not_flag_uncompleted_plan_early_week(app_with_db):
+    early_week = date(2026, 5, 26)  # Tuesday
+    week_of = early_week - timedelta(days=early_week.weekday())
+
+    with connect(recommendation_routes.DEFAULT_DB_PATH, read_only=False) as con:
+        ensure_client(con, DEFAULT_TRAINER_ID, "c_early_plan", name="Early Plan")
+        insert_plan(
+            con,
+            DEFAULT_TRAINER_ID,
+            [
+                PlannedSession(
+                    id="p_early_1",
+                    client_id="c_early_plan",
+                    week_of=week_of,
+                    slot=1,
+                    type=SessionType.STRENGTH,
+                    title="Strength",
+                    description="Planned for later this week.",
+                    target_duration_min=60,
+                    target_load_au=300,
+                    target_rpe=5,
+                    contraindications=[],
+                    source=PlanSource.ENGINE,
+                    generated_at=datetime.now(),
+                    executed_session_id=None,
+                )
+            ],
+        )
+
+        delta = build_weekly_delta(con, DEFAULT_TRAINER_ID, "c_early_plan", today=early_week)
+
+    assert delta.completed_sessions == 0
+    assert delta.completion_rate == 0.0
+    assert delta.status == "on_track"
+
+
+def test_weekly_delta_matches_sessions_without_visiting_plan_first(app_with_db):
+    today = date.today()
+    week_of = today - timedelta(days=today.weekday())
+
+    with connect(recommendation_routes.DEFAULT_DB_PATH, read_only=False) as con:
+        ensure_client(con, DEFAULT_TRAINER_ID, "c_match_delta", name="Match Delta")
+        insert_sessions(
+            con,
+            DEFAULT_TRAINER_ID,
+            pd.DataFrame([
+                {
+                    "id": "s_match_done",
+                    "client_id": "c_match_delta",
+                    "date": week_of + timedelta(days=1),
+                    "type": "strength",
+                    "duration_min": 60,
+                    "rpe": 8,
+                    "notes": "",
+                }
+            ]),
+        )
+        insert_plan(
+            con,
+            DEFAULT_TRAINER_ID,
+            [
+                PlannedSession(
+                    id="p_match_1",
+                    client_id="c_match_delta",
+                    week_of=week_of,
+                    slot=1,
+                    type=SessionType.STRENGTH,
+                    title="Strength",
+                    description="Do the work.",
+                    target_duration_min=60,
+                    target_load_au=300,
+                    target_rpe=5,
+                    contraindications=[],
+                    source=PlanSource.ENGINE,
+                    generated_at=datetime.now(),
+                    executed_session_id=None,
+                )
+            ],
+        )
+
+    r = app_with_db.get("/api/clients/c_match_delta/weekly-delta")
+
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["completed_sessions"] == 1
+    assert data["actual_load_au"] == 480
+    assert data["matched_load_delta_pct"] == 60.0
+
+
 def test_weekly_delta_404s_for_unknown_client(app_with_db):
     r = app_with_db.get("/api/clients/c_missing/weekly-delta")
     assert r.status_code == 404
@@ -572,6 +662,162 @@ def test_action_queue_surfaces_plan_reality_drift(app_with_db):
     assert drift["priority"] == "high"
     assert "plan drift" in drift["title"].lower()
     assert "50% above target" in drift["detail"]
+
+
+def test_refresh_recommendation_rebuilds_untouched_engine_plan(app_with_db, monkeypatch):
+    today = date.today()
+    week_of = today - timedelta(days=today.weekday())
+
+    with connect(recommendation_routes.DEFAULT_DB_PATH, read_only=False) as con:
+        ensure_client(con, DEFAULT_TRAINER_ID, "c_refresh_plan", name="Refresh Plan")
+        insert_recommendation(
+            con,
+            DEFAULT_TRAINER_ID,
+            Recommendation(
+                id="rec_refresh_plan_old",
+                client_id="c_refresh_plan",
+                generated_at=datetime.now(),
+                week_of=week_of,
+                recommendation="Standard progression per ACSM 11e: increase load 5-10%.",
+                rationale="Old weekly snapshot.",
+                source_metric_ids=[],
+                confidence=0.78,
+            ),
+        )
+        insert_plan(
+            con,
+            DEFAULT_TRAINER_ID,
+            [
+                PlannedSession(
+                    id="p_refresh_old_1",
+                    client_id="c_refresh_plan",
+                    week_of=week_of,
+                    slot=1,
+                    type=SessionType.STRENGTH,
+                    title="Old standard heavy strength",
+                    description="This was generated from the old standard verdict.",
+                    target_duration_min=60,
+                    target_load_au=500,
+                    target_rpe=8,
+                    contraindications=[],
+                    source=PlanSource.ENGINE,
+                    generated_at=datetime.now(),
+                    executed_session_id=None,
+                )
+            ],
+        )
+
+    def deload_recommendation(client_id, metrics, sessions, today=None, thresholds=None):
+        today = today or date.today()
+        return Recommendation(
+            id="rec_refresh_plan_new",
+            client_id=client_id,
+            generated_at=datetime.now(),
+            week_of=today - timedelta(days=today.weekday()),
+            recommendation="Deload week: reduce training load by 40%.",
+            rationale="Flags: hrv_below_baseline.",
+            source_metric_ids=[],
+            confidence=0.9,
+        )
+
+    monkeypatch.setattr(recommendation_routes, "generate_recommendation", deload_recommendation)
+
+    refreshed = app_with_db.post("/api/clients/c_refresh_plan/recommendation/refresh")
+    assert refreshed.status_code == 200, refreshed.text
+
+    plan = app_with_db.get("/api/clients/c_refresh_plan/plan")
+
+    assert plan.status_code == 200, plan.text
+    data = plan.json()
+    assert data["verdict"] == "DELOAD"
+    assert "Old standard heavy strength" not in {slot["title"] for slot in data["sessions"]}
+    assert any(slot["title"] == "Mobility + technique" for slot in data["sessions"])
+
+
+def test_refresh_recommendation_preserves_trainer_edited_plan(app_with_db, monkeypatch):
+    today = date.today()
+    week_of = today - timedelta(days=today.weekday())
+
+    with connect(recommendation_routes.DEFAULT_DB_PATH, read_only=False) as con:
+        ensure_client(con, DEFAULT_TRAINER_ID, "c_trainer_plan", name="Trainer Plan")
+        insert_recommendation(
+            con,
+            DEFAULT_TRAINER_ID,
+            Recommendation(
+                id="rec_trainer_plan_old",
+                client_id="c_trainer_plan",
+                generated_at=datetime.now(),
+                week_of=week_of,
+                recommendation="Standard progression per ACSM 11e: increase load 5-10%.",
+                rationale="Old weekly snapshot.",
+                source_metric_ids=[],
+                confidence=0.78,
+            ),
+        )
+        insert_plan(
+            con,
+            DEFAULT_TRAINER_ID,
+            [
+                PlannedSession(
+                    id="p_trainer_plan_1",
+                    client_id="c_trainer_plan",
+                    week_of=week_of,
+                    slot=1,
+                    type=SessionType.STRENGTH,
+                    title="Trainer custom strength adjustment",
+                    description="The trainer already edited this plan for real-life constraints.",
+                    target_duration_min=45,
+                    target_load_au=180,
+                    target_rpe=4,
+                    contraindications=[],
+                    source=PlanSource.TRAINER,
+                    generated_at=datetime.now(),
+                    executed_session_id=None,
+                )
+            ],
+        )
+
+    def deload_recommendation(client_id, metrics, sessions, today=None, thresholds=None):
+        today = today or date.today()
+        return Recommendation(
+            id="rec_trainer_plan_new",
+            client_id=client_id,
+            generated_at=datetime.now(),
+            week_of=today - timedelta(days=today.weekday()),
+            recommendation="Deload week: reduce training load by 40%.",
+            rationale="Flags: hrv_below_baseline.",
+            source_metric_ids=[],
+            confidence=0.9,
+        )
+
+    monkeypatch.setattr(recommendation_routes, "generate_recommendation", deload_recommendation)
+
+    refreshed = app_with_db.post("/api/clients/c_trainer_plan/recommendation/refresh")
+    assert refreshed.status_code == 200, refreshed.text
+
+    plan = app_with_db.get("/api/clients/c_trainer_plan/plan")
+
+    assert plan.status_code == 200, plan.text
+    data = plan.json()
+    assert data["verdict"] == "DELOAD"
+    assert data["sessions"] == [
+        {
+            "id": "p_trainer_plan_1",
+            "client_id": "c_trainer_plan",
+            "week_of": str(week_of),
+            "slot": 1,
+            "type": "strength",
+            "title": "Trainer custom strength adjustment",
+            "description": "The trainer already edited this plan for real-life constraints.",
+            "target_duration_min": 45,
+            "target_load_au": 180,
+            "target_rpe": 4.0,
+            "contraindications": [],
+            "source": "trainer",
+            "generated_at": data["sessions"][0]["generated_at"],
+            "executed_session_id": None,
+        }
+    ]
 
 
 def test_override_roundtrip(app_with_db):
@@ -668,6 +914,14 @@ def test_pdf_endpoint_returns_pdf_bytes(app_with_db):
     assert r.headers["content-type"] == "application/pdf"
     assert r.content.startswith(b"%PDF")
     assert "attachment" in r.headers.get("content-disposition", "")
+
+
+def test_pdf_endpoint_rejects_oversized_coach_message(app_with_db):
+    r = app_with_db.post(
+        "/api/clients/c_test/pdf",
+        json={"coach_message": "x" * 501},
+    )
+    assert r.status_code == 422
 
 
 def test_pdf_endpoint_uses_stored_weekly_recommendation(app_with_db, monkeypatch):
@@ -834,6 +1088,13 @@ def test_upload_checks_client_ownership_before_parsing_file(app_with_db):
     files = {"file": ("notes.txt", b"not a wearable export", "text/plain")}
     r = app_with_db.post("/api/clients/c_other/upload", files=files)
     assert r.status_code == 404
+
+
+def test_upload_rejects_files_over_size_limit(app_with_db, monkeypatch):
+    monkeypatch.setattr(metrics_routes, "MAX_UPLOAD_BYTES", 8)
+    files = {"file": ("export.xml", b"x" * 9, "application/xml")}
+    r = app_with_db.post("/api/clients/c_test/upload", files=files)
+    assert r.status_code == 413
 
 
 def test_override_rejects_cross_trainer_client_id(app_with_db):

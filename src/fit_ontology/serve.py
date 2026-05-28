@@ -7,6 +7,7 @@ as a binary the trainer can run.
 from __future__ import annotations
 
 import argparse
+import os
 
 
 def main() -> int:
@@ -20,7 +21,9 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    os.environ["FIT_ONTOLOGY_BIND_HOST"] = args.host
     import uvicorn
+
     uvicorn.run("fit_ontology.api:app", host=args.host, port=args.port, reload=args.reload)
     return 0
 

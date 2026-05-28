@@ -41,6 +41,8 @@ export function ThresholdsPanel({ clientId }: { clientId: string }) {
     onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ["thresholds", clientId] });
       qc.invalidateQueries({ queryKey: ["rec", clientId] });
+      qc.invalidateQueries({ queryKey: ["roster"] });
+      qc.invalidateQueries({ queryKey: ["action-queue"] });
       const n = Object.keys(variables).length;
       toast.show(`Thresholds saved — ${n} change${n === 1 ? "" : "s"}.`);
       setEdits({});

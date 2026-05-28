@@ -45,6 +45,7 @@ export function OverrideDrawer({
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["overrides", clientId] });
+      qc.invalidateQueries({ queryKey: ["action-queue"] });
       qc.invalidateQueries({ queryKey: ["calibration"] });
       toast.show(
         chosen === verdict

@@ -28,6 +28,7 @@ export default function NewClientPage() {
     mutationFn: (payload: ClientFormPayload) => api.createClient(payload),
     onSuccess: (result, payload) => {
       qc.invalidateQueries({ queryKey: ["roster"] });
+      qc.invalidateQueries({ queryKey: ["action-queue"] });
       toast.show(`Client added: ${payload.name}.`);
       router.push(`/clients/?id=${result.id}`);
     },

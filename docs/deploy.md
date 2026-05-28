@@ -70,6 +70,13 @@ Non-secret env values (`FIT_ONTOLOGY_DB`, `FIT_ONTOLOGY_REQUIRE_AUTH`,
 in `fly.toml`'s `[env]` block — they're not secrets, just
 configuration.
 
+Advanced self-hosted deployments can set `FIT_ONTOLOGY_PERIMETER_AUTH=1`
+instead of `FIT_ONTOLOGY_REQUIRE_AUTH=1` only when every request is
+already protected by a trusted upstream gate such as Cloudflare Access.
+This flag only tells the startup guard that the perimeter is responsible
+for access control; it does not map upstream identities into trainers.
+Keep it off for Fly's public demo and normal app-auth deployments.
+
 ### 4. Deploy
 
 ```bash

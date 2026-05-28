@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..rate_limit import ASK_LIMIT, enforce
-from .deps import current_trainer_id
+from .deps import forbid_demo_trainer
 from .schemas import AskRequest, AskResponse, AskTrace
 
 router = APIRouter()
@@ -13,7 +13,7 @@ router = APIRouter()
 @router.post("/api/ask", response_model=AskResponse)
 def post_ask(
     payload: AskRequest,
-    trainer_id: str = Depends(current_trainer_id),
+    trainer_id: str = Depends(forbid_demo_trainer),
 ) -> AskResponse:
     """Run one turn of the Ask FitOntology tool-use loop.
 

@@ -15,7 +15,7 @@ from .contraindications import Contraindication, match_contraindications
 from .db import (
     latest_override_for_week,
     metrics_for_client,
-    plan_for_week,
+    plan_for_week_with_matches,
     recommendation_for_week,
     sessions_for_client,
     thresholds_for_client,
@@ -114,6 +114,6 @@ def build_weekly_client_state(
         recommendation_needs_persist=needs_persist,
         recovery_score=score,
         contraindications=match_contraindications(injury_history),
-        plan=plan_for_week(con, trainer_id, client_id, week_of) if include_plan else [],
+        plan=plan_for_week_with_matches(con, trainer_id, client_id, week_of) if include_plan else [],
         latest_override=latest_override_for_week(con, trainer_id, client_id, week_of),
     )

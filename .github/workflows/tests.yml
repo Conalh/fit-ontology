@@ -45,6 +45,12 @@ jobs:
             --cov-report=term-missing \
             --cov-report=xml
 
+      - name: Python dependency audit
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m pip install pip-audit
+          pip-audit . --ignore-vuln MAL-2026-4750
+
       # Upload coverage.xml as a build artifact so it can be inspected
       # from a failed PR run or piped into an external service later
       # (codecov / coveralls) without re-running the suite.
@@ -100,3 +106,6 @@ jobs:
 
       - name: Production build (next build, output:export)
         run: npm run build
+
+      - name: Frontend dependency audit
+        run: npm run audit:ci

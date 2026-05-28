@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from .db import plan_for_week
+from .db import plan_for_week_with_matches
 from .weekly_state import ClientNotFoundError, week_start
 
 
@@ -76,6 +76,7 @@ def _status(
     completion_rate: float | None,
     matched_load_delta_pct: float | None,
     week_load_change_pct: float | None,
+    weekday: int,
 ) -> str:
     if planned_sessions == 0:
         return "no_plan"
@@ -85,7 +86,7 @@ def _status(
         return "off_track"
     if matched_load_delta_pct is not None and abs(matched_load_delta_pct) >= 10:
         return "watch"
-    if completion_rate is not None and completion_rate < 0.5:
+    if weekday >= 4 and completion_rate is not None and completion_rate < 0.5:
         return "watch"
     return "on_track"
 
@@ -117,7 +118,7 @@ def build_weekly_delta(
     if row is None:
         raise ClientNotFoundError(client_id)
 
-    plan = plan_for_week(con, trainer_id, client_id, week_of)
+    plan = plan_for_week_with_matches(con, trainer_id, client_id, week_of)
     planned_sessions = len(plan)
     completed = [p for p in plan if p.executed_session_id]
     completed_sessions = len(completed)
@@ -150,6 +151,7 @@ def build_weekly_delta(
         completion_rate=completion_rate,
         matched_load_delta_pct=matched_load_delta_pct,
         week_load_change_pct=week_load_change_pct,
+        weekday=today.weekday(),
     )
 
     bullets: list[str] = []

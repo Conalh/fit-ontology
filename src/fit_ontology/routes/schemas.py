@@ -7,9 +7,11 @@ cross-router imports.
 """
 from __future__ import annotations
 
+import json
+import os
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..ontology import OverrideAction, Sex
 
@@ -511,7 +513,7 @@ class ThresholdsPatch(BaseModel):
 # ─── PDF ────────────────────────────────────────────────────────────
 
 class PdfRequest(BaseModel):
-    coach_message: str | None = None
+    coach_message: str | None = Field(default=None, max_length=500)
 
 
 # ─── Ask FitOntology ────────────────────────────────────────────────
@@ -522,13 +524,57 @@ class AskTrace(BaseModel):
     result_summary: str
 
 
+ASK_QUESTION_MAX_CHARS = 2000
+ASK_HISTORY_MAX_MESSAGES = 40
+ASK_HISTORY_MAX_JSON_CHARS = 16000
+ASK_MODEL_MAX_CHARS = 120
+_DEFAULT_ASK_MODEL = "claude-haiku-4-5-20251001"
+
+
+def _allowed_ask_models() -> set[str]:
+    """Server-side model allowlist for the LLM endpoint.
+
+    The default model stays allowed even when an operator provides an
+    allowlist so a stale client cannot accidentally force an invalid
+    configuration into a 422 loop.
+    """
+    default_model = (
+        os.environ.get("FITONTOLOGY_MODEL", _DEFAULT_ASK_MODEL).strip()
+        or _DEFAULT_ASK_MODEL
+    )
+    raw = os.environ.get("FIT_ONTOLOGY_ALLOWED_ASK_MODELS", "")
+    allowed = {m.strip() for m in raw.split(",") if m.strip()}
+    allowed.add(default_model)
+    return allowed
+
+
 class AskRequest(BaseModel):
-    question: str
+    question: str = Field(min_length=1, max_length=ASK_QUESTION_MAX_CHARS)
     # Anthropic-format message stream from a prior turn — pass back to
     # keep multi-turn context (tool_use + tool_result blocks included,
     # which is what makes the chat actually coherent past turn 1).
-    history: list[dict] = []
-    model: str | None = None
+    history: list[dict] = Field(default_factory=list, max_length=ASK_HISTORY_MAX_MESSAGES)
+    model: str | None = Field(default=None, max_length=ASK_MODEL_MAX_CHARS)
+
+    @field_validator("history")
+    @classmethod
+    def history_must_be_bounded(cls, value: list[dict]) -> list[dict]:
+        try:
+            encoded = json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("history must be JSON-serializable") from exc
+        if len(encoded) > ASK_HISTORY_MAX_JSON_CHARS:
+            raise ValueError("history is too large")
+        return value
+
+    @field_validator("model")
+    @classmethod
+    def model_must_be_allowed(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if value not in _allowed_ask_models():
+            raise ValueError("model is not allowed")
+        return value
 
 
 class AskResponse(BaseModel):

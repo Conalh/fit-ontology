@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import tempfile
 from pathlib import Path
 
@@ -25,6 +26,28 @@ from .deps import current_trainer_id, forbid_demo_trainer, read_only_conn
 from .schemas import MetricRow, SessionRow
 
 router = APIRouter()
+
+MAX_UPLOAD_BYTES = int(
+    os.environ.get("FIT_ONTOLOGY_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024))
+)
+_UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
+
+
+async def _read_upload_limited(file: UploadFile) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Upload too large; limit is {MAX_UPLOAD_BYTES} bytes.",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _ensure_client(con, trainer_id: str, client_id: str) -> None:
@@ -91,7 +114,7 @@ async def post_upload(
     except duckdb.IOException as e:
         raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
 
-    raw = await file.read()
+    raw = await _read_upload_limited(file)
     suffix = Path(file.filename or "").suffix.lower()
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
         tmp_file.write(raw)

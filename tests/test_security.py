@@ -335,6 +335,43 @@ def test_share_mint_rate_limited(app, monkeypatch):
     assert r.status_code == 429
 
 
+def test_ask_rejects_oversized_question_before_llm(app, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    client, _ = app
+    r = client.post("/api/ask", json={"question": "x" * 2001, "history": []})
+    assert r.status_code == 422
+
+
+def test_ask_rejects_oversized_history_before_llm(app, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    client, _ = app
+    r = client.post(
+        "/api/ask",
+        json={"question": "summarize this", "history": [{"role": "user", "content": "x"}] * 41},
+    )
+    assert r.status_code == 422
+
+
+def test_ask_rejects_oversized_history_content_before_llm(app, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    client, _ = app
+    r = client.post(
+        "/api/ask",
+        json={"question": "summarize this", "history": [{"role": "user", "content": "x" * 20000}]},
+    )
+    assert r.status_code == 422
+
+
+def test_ask_rejects_unapproved_model_before_llm(app, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    client, _ = app
+    r = client.post(
+        "/api/ask",
+        json={"question": "summarize this", "history": [], "model": "claude-opus-expensive"},
+    )
+    assert r.status_code == 422
+
+
 def test_login_rate_limit_blocks_after_threshold(tmp_path: Path, monkeypatch):
     """LOGIN_LIMIT is 10/minute. Patch to 2 to keep the test fast."""
     from fit_ontology import rate_limit as rl_mod

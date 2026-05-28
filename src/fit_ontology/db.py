@@ -803,6 +803,19 @@ def insert_plan(con, trainer_id: str, planned_sessions) -> None:
         upsert_planned_session(con, trainer_id, ps)
 
 
+def replace_plan_for_week(con, trainer_id: str, client_id: str, week_of, planned_sessions) -> None:
+    """Replace a trainer-scoped weekly plan with a newly generated plan."""
+    _assert_clients_owned(con, trainer_id, [client_id])
+    con.execute(
+        """
+        DELETE FROM planned_sessions
+        WHERE trainer_id = ? AND client_id = ? AND week_of = ?
+        """,
+        [trainer_id, client_id, week_of],
+    )
+    insert_plan(con, trainer_id, planned_sessions)
+
+
 def match_planned_sessions(con, trainer_id: str, client_id: str) -> int:
     """Link unmatched sessions to unmatched planned_sessions slots.
 
@@ -917,6 +930,58 @@ def plan_for_week(con, trainer_id: str, client_id: str, week_of):
             executed_session_id=r[13],
         ))
     return out
+
+
+def plan_for_week_with_matches(con, trainer_id: str, client_id: str, week_of):
+    """Return the weekly plan with inferred session links applied in memory.
+
+    ``match_planned_sessions`` remains the persistence path. This helper
+    mirrors the same type-first, slot-order matching without writing so
+    read-only surfaces do not report stale adherence just because /plan
+    has not been opened yet.
+    """
+    plan = plan_for_week(con, trainer_id, client_id, week_of)
+    if not plan:
+        return plan
+
+    unmatched = [ps for ps in plan if ps.executed_session_id is None]
+    if not unmatched:
+        return plan
+
+    end = week_of + timedelta(days=7)
+    try:
+        rows = con.execute(
+            """
+            SELECT s.id, s.type
+            FROM sessions s
+            LEFT JOIN planned_sessions ps ON ps.executed_session_id = s.id
+            WHERE s.trainer_id = ?
+              AND s.client_id = ?
+              AND s.date >= ?
+              AND s.date < ?
+              AND ps.id IS NULL
+            ORDER BY s.date
+            """,
+            [trainer_id, client_id, week_of, end],
+        ).fetchall()
+    except duckdb.CatalogException:
+        return plan
+
+    used_session_ids = {ps.executed_session_id for ps in plan if ps.executed_session_id}
+    for session_id, session_type in rows:
+        if session_id in used_session_ids:
+            continue
+        candidates = [ps for ps in unmatched if ps.executed_session_id is None]
+        if not candidates:
+            break
+        same_type = [
+            ps for ps in candidates
+            if (ps.type.value if hasattr(ps.type, "value") else str(ps.type)) == session_type
+        ]
+        chosen = same_type[0] if same_type else candidates[0]
+        chosen.executed_session_id = session_id
+        used_session_ids.add(session_id)
+    return plan
 
 
 # ─── Audit log (Phase 5a) ────────────────────────────────────────────

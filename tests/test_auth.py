@@ -242,3 +242,61 @@ def test_session_rejects_cookie_signed_with_different_secret(monkeypatch):
     token = encode_session("t_x")
     monkeypatch.setenv("FIT_ONTOLOGY_SESSION_SECRET", "rotated-secret")
     assert decode_session(token) is None
+
+
+# ─── Startup posture ────────────────────────────────────────────────────────
+
+def _clear_startup_env(monkeypatch):
+    for key in (
+        "FIT_ONTOLOGY_PRODUCTION",
+        "FIT_ONTOLOGY_BIND_HOST",
+        "FIT_ONTOLOGY_REQUIRE_AUTH",
+        "FIT_ONTOLOGY_DEMO_MODE",
+        "FIT_ONTOLOGY_PERIMETER_AUTH",
+        "FIT_ONTOLOGY_SESSION_SECRET",
+        "FLY_APP_NAME",
+        "FLY_MACHINE_ID",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
+def test_startup_config_allows_local_dev_without_auth(monkeypatch):
+    _clear_startup_env(monkeypatch)
+
+    api_mod._validate_startup_config()
+
+
+def test_startup_config_rejects_public_bind_without_auth_or_demo(monkeypatch):
+    _clear_startup_env(monkeypatch)
+    monkeypatch.setenv("FIT_ONTOLOGY_BIND_HOST", "0.0.0.0")
+    monkeypatch.setenv("FIT_ONTOLOGY_SESSION_SECRET", "test-secret")
+
+    with pytest.raises(RuntimeError, match="FIT_ONTOLOGY_REQUIRE_AUTH"):
+        api_mod._validate_startup_config()
+
+
+def test_startup_config_rejects_production_without_session_secret(monkeypatch):
+    _clear_startup_env(monkeypatch)
+    monkeypatch.setenv("FIT_ONTOLOGY_PRODUCTION", "1")
+    monkeypatch.setenv("FIT_ONTOLOGY_REQUIRE_AUTH", "1")
+
+    with pytest.raises(RuntimeError, match="FIT_ONTOLOGY_SESSION_SECRET"):
+        api_mod._validate_startup_config()
+
+
+def test_startup_config_allows_public_demo_with_session_secret(monkeypatch):
+    _clear_startup_env(monkeypatch)
+    monkeypatch.setenv("FIT_ONTOLOGY_PRODUCTION", "1")
+    monkeypatch.setenv("FIT_ONTOLOGY_DEMO_MODE", "1")
+    monkeypatch.setenv("FIT_ONTOLOGY_SESSION_SECRET", "test-secret")
+
+    api_mod._validate_startup_config()
+
+
+def test_startup_config_allows_public_perimeter_auth_with_session_secret(monkeypatch):
+    _clear_startup_env(monkeypatch)
+    monkeypatch.setenv("FIT_ONTOLOGY_PRODUCTION", "1")
+    monkeypatch.setenv("FIT_ONTOLOGY_PERIMETER_AUTH", "1")
+    monkeypatch.setenv("FIT_ONTOLOGY_SESSION_SECRET", "test-secret")
+
+    api_mod._validate_startup_config()

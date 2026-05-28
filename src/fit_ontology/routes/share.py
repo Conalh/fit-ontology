@@ -1,9 +1,10 @@
 """Share tokens — trainer mints, client reads (no auth).
 
-Two endpoints, deliberately split by auth surface:
+Three endpoints, deliberately split by auth surface:
 
   POST /api/clients/{client_id}/share   trainer-scoped; mints a token
   GET  /api/share/{token}               PUBLIC; renders the client view
+  DELETE /api/share/{token}             trainer-scoped; revokes a token
 
 The public route is the only endpoint in the app that does NOT go
 through ``current_trainer_id``. Its scoping is "the bearer of this
@@ -37,6 +38,7 @@ from ..db import (
     connect,
     create_share_token,
     record_audit,
+    revoke_share_token,
     share_lookup,
 )
 from ..rate_limit import SHARE_MINT_LIMIT, enforce
@@ -97,6 +99,33 @@ def post_share(
         raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
 
     return ShareCreateResponse(token=token, expires_at=expires_at)
+
+
+@router.delete("/api/share/{token}", response_model=dict)
+def delete_share(
+    token: str,
+    request: Request,
+    trainer_id: str = Depends(forbid_demo_trainer),
+) -> dict:
+    """Trainer-scoped revocation for a live share link."""
+    client_ip = request.client.host if request.client else None
+    try:
+        with connect(DEFAULT_DB_PATH, read_only=False) as con:
+            revoked = revoke_share_token(con, trainer_id, token)
+            if not revoked:
+                raise HTTPException(status_code=404, detail="Share link not found")
+            record_audit(
+                con,
+                trainer_id,
+                "share.revoked",
+                target_type="share_token",
+                target_id=token[:12],
+                details={},
+                ip=client_ip,
+            )
+    except duckdb.IOException as e:
+        raise HTTPException(status_code=503, detail=f"DB busy: {e}") from e
+    return {"revoked": True}
 
 
 @router.get("/api/share/{token}", response_model=ShareViewResponse)

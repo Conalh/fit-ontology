@@ -12,7 +12,8 @@ Eight contracts pinned:
   6. POST /api/clients/{id}/share is trainer-scoped — a session cookie
      for trainer A can't mint a share for trainer B's client_id.
   7. GET /api/share/{token} is public — works with NO session cookie.
-  8. The public payload omits intake PII (sex, age, weight, injury).
+  8. DELETE /api/share/{token} lets the owning trainer revoke a live link.
+  9. The public payload omits intake PII (sex, age, weight, injury).
 """
 from __future__ import annotations
 
@@ -261,6 +262,35 @@ def test_get_share_is_public(share_app):
     assert payload["client_first_name"] == "Test"  # "Test Client" → first word
     assert payload["trainer_message"] == "looking strong"
     assert "recommendation" in payload and payload["recommendation"]
+
+
+def test_delete_share_revokes_token_for_owning_trainer(share_app):
+    _login(share_app)
+    token = share_app.post(
+        "/api/clients/c_owned/share",
+        json={"trainer_message": "looking strong"},
+    ).json()["token"]
+
+    deleted = share_app.delete(f"/api/share/{token}")
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json() == {"revoked": True}
+
+    share_app.cookies.clear()
+    assert share_app.get(f"/api/share/{token}").status_code == 404
+
+
+def test_delete_share_requires_owning_trainer(share_app):
+    _login(share_app)
+    token = share_app.post(
+        "/api/clients/c_owned/share",
+        json={"trainer_message": None},
+    ).json()["token"]
+
+    share_app.cookies.clear()
+    deleted = share_app.delete(f"/api/share/{token}")
+
+    assert deleted.status_code == 404
+    assert share_app.get(f"/api/share/{token}").status_code == 200
 
 
 def test_share_and_dashboard_use_same_weekly_recommendation(share_app):

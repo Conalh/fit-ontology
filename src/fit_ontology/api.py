@@ -55,6 +55,60 @@ _read_only_conn = read_only_conn
 load_env()
 
 
+def _truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes"}
+
+
+def _is_public_bind_host(host: str) -> bool:
+    normalized = host.strip().lower()
+    if not normalized:
+        return False
+    return normalized not in {"127.0.0.1", "localhost", "::1"}
+
+
+def _is_production_like_runtime() -> bool:
+    """Return True when insecure dev fallbacks should be refused.
+
+    The ASGI app cannot see Uvicorn's bind host unless the launcher sets
+    it, so ``serve.py`` stamps FIT_ONTOLOGY_BIND_HOST before boot. Docker
+    images set FIT_ONTOLOGY_PRODUCTION=1 directly because they launch
+    Uvicorn without the console wrapper.
+    """
+    return (
+        _truthy_env("FIT_ONTOLOGY_PRODUCTION")
+        or bool(os.environ.get("FLY_APP_NAME") or os.environ.get("FLY_MACHINE_ID"))
+        or _is_public_bind_host(os.environ.get("FIT_ONTOLOGY_BIND_HOST", ""))
+    )
+
+
+def _validate_startup_config() -> None:
+    """Fail closed before serving an internet-facing process.
+
+    Local development keeps the no-auth default trainer fallback. Any
+    production-like runtime must either require app auth, run explicit
+    read-only demo mode, or declare that an external perimeter auth layer
+    is responsible for access control.
+    """
+    if not _is_production_like_runtime():
+        return
+
+    has_app_auth = _truthy_env("FIT_ONTOLOGY_REQUIRE_AUTH")
+    has_demo = _truthy_env("FIT_ONTOLOGY_DEMO_MODE")
+    has_perimeter_auth = _truthy_env("FIT_ONTOLOGY_PERIMETER_AUTH")
+    if not (has_app_auth or has_demo or has_perimeter_auth):
+        raise RuntimeError(
+            "Refusing to start public FitOntology runtime without "
+            "FIT_ONTOLOGY_REQUIRE_AUTH=1, FIT_ONTOLOGY_DEMO_MODE=1, or "
+            "FIT_ONTOLOGY_PERIMETER_AUTH=1."
+        )
+
+    if not os.environ.get("FIT_ONTOLOGY_SESSION_SECRET", "").strip():
+        raise RuntimeError(
+            "Refusing to start public FitOntology runtime without "
+            "FIT_ONTOLOGY_SESSION_SECRET."
+        )
+
+
 def _init_sentry() -> None:
     """Initialise Sentry if FIT_ONTOLOGY_SENTRY_DSN is set.
 
@@ -139,6 +193,7 @@ async def _lifespan(app: FastAPI):
 
     Yields immediately after the bootstrap; no teardown work.
     """
+    _validate_startup_config()
     try:
         with connect(DEFAULT_DB_PATH, read_only=False):
             pass
