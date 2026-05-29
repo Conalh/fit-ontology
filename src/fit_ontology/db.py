@@ -1373,3 +1373,62 @@ def consume_intake_token(con, token: str, client_id: str) -> bool:
         [now, client_id, token, now],
     ).fetchone()
     return result is not None
+
+
+# ─── Ask chat sessions (Phase 7b) ────────────────────────────────────
+#
+# Server-side store for the Ask FitOntology conversation. The browser
+# holds only an opaque session_id and the rendered turns; the canonical
+# Anthropic-format message stream the model reasons over lives here, so a
+# tampered client can't forge prior tool_result / assistant blocks into
+# the history. Every helper is trainer-scoped — a session_id is only
+# resolvable by the trainer that created it, which is also what makes a
+# guessed/stolen id from another trainer a clean "not found."
+
+
+def create_ask_session(con, trainer_id: str, messages: list[dict] | None = None) -> str:
+    """Mint a new chat session for ``trainer_id`` and return its id.
+
+    The id is random (``ask_`` + 16 hex chars), so it's unguessable and
+    can't collide with another trainer's session — the trainer_id filter
+    on read is the real authorization gate, this just avoids minting a
+    predictable handle."""
+    session_id = f"ask_{uuid.uuid4().hex[:16]}"
+    now = datetime.utcnow()
+    con.execute(
+        """
+        INSERT INTO ask_sessions (id, trainer_id, messages, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [session_id, trainer_id, json.dumps(messages or []), now, now],
+    )
+    return session_id
+
+
+def load_ask_session(con, trainer_id: str, session_id: str) -> list[dict] | None:
+    """Return the stored message list for ``(trainer_id, session_id)``,
+    or None if no such session exists for this trainer.
+
+    None covers all the "can't use this" cases identically — unknown id,
+    another trainer's id, a pre-migration DB with no table — so the route
+    maps every one to the same 404 without leaking which it was."""
+    try:
+        row = con.execute(
+            "SELECT messages FROM ask_sessions WHERE id = ? AND trainer_id = ?",
+            [session_id, trainer_id],
+        ).fetchone()
+    except duckdb.CatalogException:
+        return None
+    if not row:
+        return None
+    return json.loads(row[0]) if row[0] else []
+
+
+def update_ask_session(con, trainer_id: str, session_id: str, messages: list[dict]) -> None:
+    """Overwrite the stored messages for a trainer's session. Scoped by
+    trainer_id so a cross-trainer id can't be written even if the load
+    gate were ever bypassed."""
+    con.execute(
+        "UPDATE ask_sessions SET messages = ?, updated_at = ? WHERE id = ? AND trainer_id = ?",
+        [json.dumps(messages), datetime.utcnow(), session_id, trainer_id],
+    )

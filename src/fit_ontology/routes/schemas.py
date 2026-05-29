@@ -7,7 +7,6 @@ cross-router imports.
 """
 from __future__ import annotations
 
-import json
 import os
 from datetime import date, datetime
 
@@ -525,8 +524,12 @@ class AskTrace(BaseModel):
 
 
 ASK_QUESTION_MAX_CHARS = 2000
-ASK_HISTORY_MAX_MESSAGES = 40
-ASK_HISTORY_MAX_JSON_CHARS = 16000
+# Server-side cap on a single conversation's stored message stream. Once
+# a session reaches this many messages the route refuses to extend it and
+# tells the trainer to start a new one — bounds unbounded context growth
+# now that history lives server-side rather than being client-supplied.
+ASK_SESSION_MAX_MESSAGES = 40
+ASK_SESSION_ID_MAX_CHARS = 64
 ASK_MODEL_MAX_CHARS = 120
 _DEFAULT_ASK_MODEL = "claude-haiku-4-5-20251001"
 
@@ -550,22 +553,12 @@ def _allowed_ask_models() -> set[str]:
 
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=ASK_QUESTION_MAX_CHARS)
-    # Anthropic-format message stream from a prior turn — pass back to
-    # keep multi-turn context (tool_use + tool_result blocks included,
-    # which is what makes the chat actually coherent past turn 1).
-    history: list[dict] = Field(default_factory=list, max_length=ASK_HISTORY_MAX_MESSAGES)
+    # Opaque handle to a server-side conversation. Omit (or null) to start
+    # a fresh one; pass the id returned by a prior turn to continue it.
+    # The message stream itself is never round-tripped through the client,
+    # so the browser can't inject fake tool_result / assistant context.
+    session_id: str | None = Field(default=None, max_length=ASK_SESSION_ID_MAX_CHARS)
     model: str | None = Field(default=None, max_length=ASK_MODEL_MAX_CHARS)
-
-    @field_validator("history")
-    @classmethod
-    def history_must_be_bounded(cls, value: list[dict]) -> list[dict]:
-        try:
-            encoded = json.dumps(value, separators=(",", ":"), ensure_ascii=False)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("history must be JSON-serializable") from exc
-        if len(encoded) > ASK_HISTORY_MAX_JSON_CHARS:
-            raise ValueError("history is too large")
-        return value
 
     @field_validator("model")
     @classmethod
@@ -581,4 +574,6 @@ class AskResponse(BaseModel):
     answer: str
     traces: list[AskTrace]
     turns_used: int
-    messages: list[dict]
+    # Opaque handle to continue this conversation on the next turn. The
+    # message stream stays server-side and is deliberately not returned.
+    session_id: str
