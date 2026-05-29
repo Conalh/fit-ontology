@@ -147,7 +147,10 @@ class ClientCreate(BaseModel):
     height_cm: float = Field(gt=100, lt=230)
     weight_kg: float = Field(gt=30, lt=250)
     goal: str = Field(min_length=1, max_length=200)
-    injury_history: str | None = None
+    # Capped like name/goal — and this model backs the *public* intake
+    # submission, so an unbounded free-text field would otherwise be an
+    # unauthenticated way to write arbitrarily large rows.
+    injury_history: str | None = Field(default=None, max_length=1000)
 
 
 class ClientUpdate(BaseModel):
@@ -161,7 +164,7 @@ class ClientUpdate(BaseModel):
     height_cm: float | None = Field(default=None, gt=100, lt=230)
     weight_kg: float | None = Field(default=None, gt=30, lt=250)
     goal: str | None = Field(default=None, min_length=1, max_length=200)
-    injury_history: str | None = None
+    injury_history: str | None = Field(default=None, max_length=1000)
 
 
 # ─── Metrics / sessions ─────────────────────────────────────────────

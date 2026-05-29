@@ -1018,6 +1018,44 @@ def test_patch_client_noop_returns_ok(app_with_db):
     assert r.json()["updated"] == []
 
 
+def test_patch_client_can_clear_injury_history_to_null(app_with_db):
+    """exclude_unset lets an explicit null clear a nullable field —
+    exclude_none used to drop it, so clearing was impossible."""
+    app_with_db.patch(
+        "/api/clients/c_test",
+        json={"injury_history": "old ACL note"},
+    )
+    r = app_with_db.patch("/api/clients/c_test", json={"injury_history": None})
+    assert r.status_code == 200, r.text
+    assert "injury_history" in r.json()["updated"]
+    detail = app_with_db.get("/api/clients/c_test").json()
+    assert detail["injury_history"] is None
+
+
+def test_patch_client_rejects_null_on_required_field(app_with_db):
+    r = app_with_db.patch("/api/clients/c_test", json={"name": None})
+    assert r.status_code == 400
+    assert "cannot be set to null" in r.json()["detail"]
+
+
+def test_patch_client_rejects_overlong_injury_history(app_with_db):
+    r = app_with_db.patch(
+        "/api/clients/c_test",
+        json={"injury_history": "x" * 1001},
+    )
+    assert r.status_code == 422
+
+
+def test_create_client_rejects_overlong_injury_history(app_with_db):
+    payload = {
+        "name": "Long Note", "sex": "F", "age": 30,
+        "height_cm": 168.0, "weight_kg": 60.0, "goal": "general fitness",
+        "injury_history": "x" * 1001,
+    }
+    r = app_with_db.post("/api/clients", json=payload)
+    assert r.status_code == 422
+
+
 def test_thresholds_get_returns_defaults_and_overrides(app_with_db):
     r = app_with_db.get("/api/clients/c_test/thresholds")
     assert r.status_code == 200
