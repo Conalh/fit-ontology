@@ -12,7 +12,7 @@ from ..db import (
     thresholds_for_client,
     upsert_threshold,
 )
-from ..reasoning import DEFAULT_THRESHOLDS, recommend_baseline_window
+from ..reasoning import DEFAULT_THRESHOLDS, recommend_baseline_window, validate_thresholds
 from .deps import current_trainer_id, forbid_demo_trainer, read_only_conn
 from .schemas import BaselineWindowSuggestionResponse, ThresholdsPatch, ThresholdsResponse
 
@@ -59,8 +59,10 @@ def patch_thresholds(
 ) -> ThresholdsResponse:
     """Sparse upsert/delete. Keys with a float value are upserted;
     keys with null are deleted (reverting to the global default).
-    Unknown threshold names are rejected so we don't accumulate
-    junk rows the reasoning layer never reads."""
+    Unknown threshold names are rejected so we don't accumulate junk
+    rows the reasoning layer never reads; out-of-range or mis-ordered
+    values are rejected so a fat-fingered override can't quietly break
+    the severity ladder the engine reasons over."""
     unknown = set(payload.overrides) - set(DEFAULT_THRESHOLDS)
     if unknown:
         raise HTTPException(
@@ -70,6 +72,24 @@ def patch_thresholds(
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as con:
             _ensure_client(con, trainer_id, client_id)
+
+            # Validate the *resulting* effective set, not just the patch:
+            # apply this patch on top of the client's current overrides,
+            # merge over the defaults, and check ranges + ladder ordering.
+            # A sparse patch (e.g. only hrv_moderate_sd) is then judged
+            # against the mild/severe values it leaves untouched.
+            resulting = dict(thresholds_for_client(con, trainer_id, client_id))
+            for name, value in payload.overrides.items():
+                if value is None:
+                    resulting.pop(name, None)
+                else:
+                    resulting[name] = value
+            effective = {**DEFAULT_THRESHOLDS, **resulting}
+            try:
+                validate_thresholds(effective)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+
             for name, value in payload.overrides.items():
                 if value is None:
                     delete_threshold(con, trainer_id, client_id, name)

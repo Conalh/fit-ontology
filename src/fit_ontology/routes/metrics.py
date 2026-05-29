@@ -9,7 +9,7 @@ from pathlib import Path
 
 import duckdb
 import pandas as pd
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
 from ..db import (
     DEFAULT_DB_PATH,
@@ -63,7 +63,7 @@ def _ensure_client(con, trainer_id: str, client_id: str) -> None:
 @router.get("/api/clients/{client_id}/metrics", response_model=list[MetricRow])
 def get_metrics(
     client_id: str,
-    days: int = 35,
+    days: int = Query(35, ge=1, le=90),
     con=Depends(read_only_conn),
     trainer_id: str = Depends(current_trainer_id),
 ) -> list[MetricRow]:
@@ -77,7 +77,7 @@ def get_metrics(
 @router.get("/api/clients/{client_id}/sessions", response_model=list[SessionRow])
 def get_sessions(
     client_id: str,
-    days: int = 35,
+    days: int = Query(35, ge=1, le=90),
     con=Depends(read_only_conn),
     trainer_id: str = Depends(current_trainer_id),
 ) -> list[SessionRow]:

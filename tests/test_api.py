@@ -1053,6 +1053,39 @@ def test_thresholds_patch_rejects_unknown_keys(app_with_db):
     assert "Unknown threshold" in r.json()["detail"]
 
 
+def test_thresholds_patch_rejects_out_of_range_value(app_with_db):
+    r = app_with_db.patch(
+        "/api/clients/c_test/thresholds",
+        json={"overrides": {"hrv_severe_sd": -2.0}},
+    )
+    assert r.status_code == 400
+    assert "out of range" in r.json()["detail"]
+
+
+def test_thresholds_patch_rejects_misordered_ladder(app_with_db):
+    # A sparse patch is validated against the (untouched) moderate/severe
+    # defaults — pushing mild above moderate is rejected.
+    r = app_with_db.patch(
+        "/api/clients/c_test/thresholds",
+        json={"overrides": {"hrv_mild_sd": 2.0}},
+    )
+    assert r.status_code == 400
+    assert "strictly less than" in r.json()["detail"]
+
+
+def test_metrics_days_out_of_bounds_rejected(app_with_db):
+    assert app_with_db.get("/api/clients/c_test/metrics?days=0").status_code == 422
+    assert app_with_db.get("/api/clients/c_test/metrics?days=91").status_code == 422
+    # In-bounds still works.
+    assert app_with_db.get("/api/clients/c_test/metrics?days=35").status_code == 200
+
+
+def test_recommendation_history_limit_out_of_bounds_rejected(app_with_db):
+    assert app_with_db.get("/api/clients/c_test/recommendations?limit=0").status_code == 422
+    assert app_with_db.get("/api/clients/c_test/recommendations?limit=101").status_code == 422
+    assert app_with_db.get("/api/clients/c_test/recommendations?limit=12").status_code == 200
+
+
 def test_upload_apple_health_xml(app_with_db, tmp_path: Path):
     xml = """<?xml version="1.0"?>
 <HealthData>

@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 
 import duckdb
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from ..db import DEFAULT_DB_PATH, connect, insert_override, overrides_for_client, record_audit
 from ..ontology import RecommendationOverride
@@ -19,7 +19,7 @@ router = APIRouter()
 @router.get("/api/clients/{client_id}/overrides", response_model=list[OverrideResponse])
 def get_overrides(
     client_id: str,
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=200),
     con=Depends(read_only_conn),
     trainer_id: str = Depends(current_trainer_id),
 ) -> list[OverrideResponse]:

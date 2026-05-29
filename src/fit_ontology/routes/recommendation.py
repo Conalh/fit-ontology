@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 import duckdb
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..db import (
     DEFAULT_DB_PATH,
@@ -233,7 +233,7 @@ def refresh_recommendation(
 )
 def get_recommendation_history(
     client_id: str,
-    limit: int = 12,
+    limit: int = Query(12, ge=1, le=100),
     con=Depends(read_only_conn),
     trainer_id: str = Depends(current_trainer_id),
 ) -> list[RecommendationResponse]:

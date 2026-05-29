@@ -11,6 +11,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from fit_ontology.db import (
     DEFAULT_TRAINER_ID,
@@ -26,6 +27,7 @@ from fit_ontology.reasoning import (
     DEFAULT_THRESHOLDS,
     detect_hrv_signal,
     detect_training_readiness_signal,
+    validate_thresholds,
 )
 
 
@@ -134,3 +136,61 @@ def test_default_thresholds_dict_complete():
         "tr_mild", "tr_moderate", "tr_severe",
     }
     assert required <= set(DEFAULT_THRESHOLDS)
+
+
+# ─── validate_thresholds ─────────────────────────────────────────────
+
+
+def test_validate_accepts_the_defaults():
+    """The shipped defaults must themselves satisfy every invariant."""
+    validate_thresholds(DEFAULT_THRESHOLDS)
+
+
+def test_validate_rejects_negative_value():
+    bad = {**DEFAULT_THRESHOLDS, "hrv_severe_sd": -2.0}
+    with pytest.raises(ValueError, match="out of range"):
+        validate_thresholds(bad)
+
+
+def test_validate_rejects_value_above_bound():
+    bad = {**DEFAULT_THRESHOLDS, "rhr_mild_bpm": 999.0}
+    with pytest.raises(ValueError, match="out of range"):
+        validate_thresholds(bad)
+
+
+def test_validate_rejects_misordered_ascending_ladder():
+    # mild (2.0) ends up above moderate (1.0) — severity ladder inverted.
+    bad = {**DEFAULT_THRESHOLDS, "hrv_mild_sd": 2.0}
+    with pytest.raises(ValueError, match="strictly less than"):
+        validate_thresholds(bad)
+
+
+def test_validate_rejects_misordered_training_readiness():
+    # TR ladder is descending; setting mild below moderate breaks it.
+    bad = {**DEFAULT_THRESHOLDS, "tr_mild": 40.0}  # default moderate is 45
+    with pytest.raises(ValueError, match="strictly greater than"):
+        validate_thresholds(bad)
+
+
+def test_validate_rejects_inverted_acwr_safe_band():
+    bad = {**DEFAULT_THRESHOLDS, "acwr_safe_low": 1.4}  # above safe_high 1.3
+    with pytest.raises(ValueError, match="acwr_safe_low"):
+        validate_thresholds(bad)
+
+
+def test_validate_rejects_deficit_above_floor():
+    bad = {**DEFAULT_THRESHOLDS, "sleep_deficit_hours": 8.0}  # above floor 7.0
+    with pytest.raises(ValueError, match="sleep_deficit_hours"):
+        validate_thresholds(bad)
+
+
+def test_validate_rejects_baseline_window_out_of_range():
+    bad = {**DEFAULT_THRESHOLDS, "baseline_window_days": 3.0}  # below 7-day floor
+    with pytest.raises(ValueError, match="out of range"):
+        validate_thresholds(bad)
+
+
+def test_validate_accepts_valid_retune():
+    """A coherent re-tune (tighter HRV ladder) passes."""
+    ok = {**DEFAULT_THRESHOLDS, "hrv_mild_sd": 0.4, "hrv_moderate_sd": 0.8, "hrv_severe_sd": 1.2}
+    validate_thresholds(ok)
