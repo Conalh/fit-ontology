@@ -504,15 +504,15 @@ def metrics_for_client(con, trainer_id: str, client_id: str, days: int = 14) -> 
     the trainer_id gate prevents trainer B from reading trainer A's
     metrics even if they happened to know the client_id."""
     return con.execute(
-        f"""
+        """
         SELECT date, source, kind, value, unit, id
         FROM metrics
         WHERE trainer_id = ?
           AND client_id = ?
-          AND date >= CURRENT_DATE - INTERVAL '{days}' DAY
+          AND date >= CURRENT_DATE - INTERVAL (?) DAY
         ORDER BY date
         """,
-        [trainer_id, client_id],
+        [trainer_id, client_id, days],
     ).df()
 
 
@@ -522,15 +522,15 @@ def sessions_for_client(con, trainer_id: str, client_id: str, days: int = 14) ->
     their output — closing the same audit-trail loop the metrics-based
     signals already have."""
     return con.execute(
-        f"""
+        """
         SELECT id, date, type, duration_min, rpe, notes
         FROM sessions
         WHERE trainer_id = ?
           AND client_id = ?
-          AND date >= CURRENT_DATE - INTERVAL '{days}' DAY
+          AND date >= CURRENT_DATE - INTERVAL (?) DAY
         ORDER BY date
         """,
-        [trainer_id, client_id],
+        [trainer_id, client_id, days],
     ).df()
 
 
