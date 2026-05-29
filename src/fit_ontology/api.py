@@ -26,8 +26,19 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import load_env
-from .db import DEFAULT_DB_PATH, connect
-from .routes import (
+
+# Load .env BEFORE importing any module that reads the environment at
+# import time — ``db.DEFAULT_DB_PATH``, ``db.DEFAULT_TRAINER_*``, the
+# auth cookie flags, etc. all resolve env vars when their module is
+# first imported. Importing them first and calling load_env() afterward
+# silently ignored local .env overrides (the cookie-Secure footgun the
+# reviewer flagged, and the same latent bug for FIT_ONTOLOGY_DB). The
+# imports below therefore sit after this call on purpose; E402 is
+# suppressed for them.
+load_env()
+
+from .db import DEFAULT_DB_PATH, connect  # noqa: E402
+from .routes import (  # noqa: E402
     actions,
     ask,
     auth,
@@ -45,14 +56,12 @@ from .routes import (
     share,
     thresholds,
 )
-from .routes.deps import read_only_conn
+from .routes.deps import read_only_conn  # noqa: E402
 
 # Re-export the connection dependency so existing test code that does
 # ``api_mod.app.dependency_overrides[api_mod._read_only_conn] = ...``
 # keeps working without modification.
 _read_only_conn = read_only_conn
-
-load_env()
 
 
 def _truthy_env(name: str) -> bool:

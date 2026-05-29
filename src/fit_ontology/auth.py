@@ -40,10 +40,23 @@ COOKIE_NAME = "fo_session"
 # its own without admin intervention.
 SESSION_MAX_AGE_SECONDS = 14 * 24 * 60 * 60
 
-# Whether the cookie should be sent only over HTTPS. Dev environments
-# (next dev on localhost) need this off; production should always set
-# FIT_ONTOLOGY_SESSION_SECURE=1 explicitly.
-COOKIE_SECURE = os.environ.get("FIT_ONTOLOGY_SESSION_SECURE", "").strip() in {"1", "true", "yes"}
+def _cookie_secure() -> bool:
+    """Whether the session cookie should be sent only over HTTPS.
+
+    Read lazily on every cookie write rather than captured in a
+    module-level constant at import time. The constant version was a
+    footgun: ``api.py`` imports the route modules (which import this
+    module) *before* it calls ``load_env()``, so a ``.env`` value for
+    ``FIT_ONTOLOGY_SESSION_SECURE`` landed too late to be seen — the
+    cookie would silently ship without the Secure flag in a local
+    HTTPS-fronted deploy. Resolving at call time also matches the
+    SecurityHeadersMiddleware, which already reads the same flag lazily
+    for HSTS, and lets a test monkeypatch the env var mid-run.
+
+    Dev environments (next dev on localhost) need this off; production
+    should always set ``FIT_ONTOLOGY_SESSION_SECURE=1`` explicitly.
+    """
+    return os.environ.get("FIT_ONTOLOGY_SESSION_SECURE", "").strip() in {"1", "true", "yes"}
 
 
 def _session_secret() -> str:
@@ -116,7 +129,7 @@ def cookie_kwargs() -> dict:
     return {
         "key": COOKIE_NAME,
         "httponly": True,
-        "secure": COOKIE_SECURE,
+        "secure": _cookie_secure(),
         "samesite": "lax",
         "max_age": SESSION_MAX_AGE_SECONDS,
         "path": "/",
