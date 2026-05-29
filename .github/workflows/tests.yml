@@ -104,6 +104,9 @@ jobs:
       - name: Typecheck (tsc --noEmit)
         run: npx tsc --noEmit
 
+      - name: Unit tests (vitest)
+        run: npm run test:run
+
       - name: Production build (next build, output:export)
         run: npm run build
 

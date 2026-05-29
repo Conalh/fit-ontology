@@ -236,6 +236,8 @@ pytest -q
 330 tests covering the reasoning branches (level + trend detectors, dual-window acute/chronic combiner + level-dominates safety rule, recovery score, baseline-window auto-fit, per-client threshold overrides), the planning templates and plan-vs-execution matcher, contraindications routing, the override log roundtrip, the assistant tool routing, the Apple Health and Garmin activity parsers, the PDF report, the deterministic metric-ID dedup, multi-tenant isolation across reads + writes, the audit log + rate-limit + security-header + CSP middleware, the share-token surface, the intake-token surface (helpers + mint + public submit), the Coach Assistant draft endpoint, demo-mode write-rejection, and every FastAPI route. CI runs the same suite on Python 3.11 and 3.12 for every push and PR
 ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)).
 
+The front-end has a Vitest + React Testing Library suite (`cd web && npm test`) covering the client-side logic — the metric-series transforms (daily series, baselines, training load, ACWR), verdict classification, engine-flag labels, per-client accent helpers, and the `safeNext` open-redirect guard — plus render tests for the error boundary and the no-data / empty states. The same `web-build` CI job that typechecks and builds the export also runs it.
+
 ## Deploy
 
 A live deploy runs on Fly.io ([deploy runbook](docs/deploy.md)). The

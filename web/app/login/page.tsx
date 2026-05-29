@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import type { CSSProperties, FormEvent } from "react";
 import { ApiError, api, type TrainerProfile } from "@/lib/api";
+import { safeNext } from "@/lib/safe-next";
 import { useInvalidateAuth } from "@/lib/use-auth";
 
 /**
@@ -217,14 +218,6 @@ function LoginForm() {
       </div>
     </div>
   );
-}
-
-/** Restrict ?next= to same-origin relative paths so an attacker can't
- *  craft a /login?next=https://evil.example link that bounces a
- *  freshly-authenticated user off-site. */
-function safeNext(raw: string): string {
-  if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
-  return raw;
 }
 
 function humanizeError(e: Error): string {
