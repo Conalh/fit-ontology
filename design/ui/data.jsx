@@ -169,7 +169,7 @@ const CITATIONS = [
     metric: 'HRV (RMSSD)',
     finding: '7d mean 49.2ms vs 28d baseline 53.8ms (−8.5%)',
     weight: 0.34,
-    source: 'Plews & Laursen, 2017',
+    source: 'Plews & Laursen, 2013',
     detail: 'Rolling 7d HRV >1 SD below 28d baseline indicates incomplete parasympathetic recovery.',
   },
   {

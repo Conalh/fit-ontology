@@ -191,7 +191,7 @@ export interface Recommendation {
   generated_at: string;
   contraindications: Contraindication[];
   recovery_score?: RecoveryScore | null;
-  /** Flag kind -> source authority (e.g. "Plews & Laursen 2017"). */
+  /** Flag kind -> source authority (e.g. "Plews & Laursen 2013"). */
   flag_citations?: Record<string, string>;
   /** Per-trend-kind detector diagnostics. Frontend keys by signal
    *  kind ("hrv_trend_down" etc) to render the acute/chronic badge. */

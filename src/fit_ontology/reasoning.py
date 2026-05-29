@@ -259,7 +259,7 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "chronic_slope_severe_sd_per_day":   CHRONIC_SLOPE_SEVERE_SD_PER_DAY,
     "level_dominates_recovery_floor":    float(LEVEL_DOMINATES_RECOVERY_FLOOR),
     # Per-client tunable baseline window. 28 days follows Plews & Laursen
-    # 2017; some highly-variable athletes benefit from a tighter 14-day
+    # 2013; some highly-variable athletes benefit from a tighter 14-day
     # window (more responsive to recent state) while very stable elite
     # athletes settle better at 56 days. ``recommend_baseline_window``
     # picks one of {14, 28, 56} from the data; trainers can override.
@@ -696,7 +696,7 @@ def detect_hrv_signal(
 ) -> Signal | None:
     """Acute HRV mean vs 28-day baseline, expressed in baseline-SD units.
 
-    Plews & Laursen (2017): individual HRV reactivity is best measured
+    Plews & Laursen (2013): individual HRV reactivity is best measured
     against the athlete's own 21–28 day rolling baseline, not against
     population norms or simple week-over-week deltas. We use the more
     stable 28-day window.
@@ -880,8 +880,8 @@ def detect_acwr_signal(
     if loads.empty:
         return None
 
-    acute_window = [d for d in loads.index if (today - d).days <= HRV_ACUTE_DAYS and (today - d).days >= 0]
-    chronic_window = [d for d in loads.index if (today - d).days <= ACWR_CHRONIC_WEEKS * 7 and (today - d).days >= 0]
+    acute_window = [d for d in loads.index if 1 <= (today - d).days <= HRV_ACUTE_DAYS]
+    chronic_window = [d for d in loads.index if 1 <= (today - d).days <= ACWR_CHRONIC_WEEKS * 7]
 
     if not acute_window or not chronic_window:
         return None
@@ -1479,8 +1479,8 @@ def compute_recovery_score(
     acwr_score: float | None = None
     loads, _ = _session_load(sessions)
     if not loads.empty:
-        acute_window = [d for d in loads.index if 0 <= (today - d).days <= HRV_ACUTE_DAYS]
-        chronic_window = [d for d in loads.index if 0 <= (today - d).days <= ACWR_CHRONIC_WEEKS * 7]
+        acute_window = [d for d in loads.index if 1 <= (today - d).days <= HRV_ACUTE_DAYS]
+        chronic_window = [d for d in loads.index if 1 <= (today - d).days <= ACWR_CHRONIC_WEEKS * 7]
         if acute_window and chronic_window:
             acute_total = float(loads.loc[acute_window].sum())
             weekly_chronic = float(loads.loc[chronic_window].sum()) / ACWR_CHRONIC_WEEKS

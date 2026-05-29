@@ -11,7 +11,7 @@ import { useToast } from "@/components/toast";
  *
  * The dashboard shows a lot of jargon-dense chips (engine signal
  * flags like "HRV below baseline", literature citations like "Plews
- * & Laursen 2017") that need an inline explanation a trainer can pull
+ * & Laursen 2013") that need an inline explanation a trainer can pull
  * up without leaving the page. ``title`` attributes worked for the
  * mouse case but were invisible on touch — a phone user couldn't see
  * what any chip meant. This component fixes both: hover-and-leave on
