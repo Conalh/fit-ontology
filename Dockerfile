@@ -99,4 +99,12 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 # uvicorn directly rather than ``fit-ontology-serve`` so we can pass
 # --host 0.0.0.0 (the console script defaults to 127.0.0.1, which
 # Fly's edge proxy can't reach across the container boundary).
-CMD ["sh", "-c", "uvicorn fit_ontology.api:app --host 0.0.0.0 --port ${PORT:-8000}"]
+#
+# --proxy-headers + --forwarded-allow-ips='*' let uvicorn rewrite
+# request.client.host from X-Forwarded-For. Trusting '*' is safe here
+# because the container's service port is only reachable through Fly's
+# edge proxy over the private 6PN network — it's never directly
+# internet-exposed, so a client can't forge the header past the proxy.
+# (real_client_ip still prefers the authoritative Fly-Client-IP header;
+# this covers the audit/peer-address fallback path.)
+CMD ["sh", "-c", "uvicorn fit_ontology.api:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"]

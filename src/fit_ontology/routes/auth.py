@@ -25,7 +25,7 @@ from ..db import (
     verify_trainer_login,
 )
 from ..rate_limit import LOGIN_LIMIT, enforce
-from .deps import read_only_conn
+from .deps import read_only_conn, real_client_ip
 from .schemas import AuthMeResponse, LoginRequest
 
 router = APIRouter()
@@ -40,7 +40,7 @@ def post_login(
     """Verify email + password, set the signed session cookie, return
     the trainer profile so the front-end can populate its sidebar
     without an extra /me round-trip."""
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = real_client_ip(request) or "unknown"
     # Rate limit keyed on (ip, email) — see rate_limit.LOGIN_LIMIT
     # docstring for the both-axes rationale.
     enforce(LOGIN_LIMIT, f"{client_ip}|{payload.email.lower()}")
@@ -89,7 +89,7 @@ def post_logout(request: Request, response: Response) -> dict:
     token = request.cookies.get(COOKIE_NAME, "")
     trainer_id = decode_session(token) if token else None
     if trainer_id:
-        client_ip = request.client.host if request.client else None
+        client_ip = real_client_ip(request)
         try:
             with connect(DEFAULT_DB_PATH, read_only=False) as con:
                 record_audit(con, trainer_id, "auth.logout", ip=client_ip)

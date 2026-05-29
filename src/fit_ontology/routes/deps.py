@@ -89,6 +89,25 @@ def current_trainer_id(request: Request) -> str:
     return DEFAULT_TRAINER_ID
 
 
+def real_client_ip(request: Request) -> str | None:
+    """Best-effort real client IP, accounting for the reverse proxy.
+
+    On Fly the app is only reachable through the edge proxy, so
+    ``request.client.host`` is the proxy's private 6PN address —
+    identical for every external visitor. That breaks the per-IP
+    rate-limit identity (intake submit, the login IP axis) and makes
+    every ``audit_log.ip`` useless. Fly sets ``Fly-Client-IP`` to the
+    real client address authoritatively, so prefer it. Fall back to the
+    peer address — which uvicorn rewrites from ``X-Forwarded-For`` when
+    launched with ``--proxy-headers`` (see Dockerfile) — for non-Fly
+    proxies and local dev.
+    """
+    fly = request.headers.get("fly-client-ip")
+    if fly:
+        return fly.strip()
+    return request.client.host if request.client else None
+
+
 def forbid_demo_trainer(trainer_id: str = Depends(current_trainer_id)) -> str:
     """Mutating-route guard: 403 if the calling trainer is the demo
     trainer. Composed with ``current_trainer_id`` so a route only

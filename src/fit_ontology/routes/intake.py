@@ -40,7 +40,7 @@ from ..db import (
     record_audit,
 )
 from ..rate_limit import INTAKE_MINT_LIMIT, INTAKE_SUBMIT_LIMIT, enforce
-from .deps import forbid_demo_trainer, read_only_conn
+from .deps import forbid_demo_trainer, read_only_conn, real_client_ip
 from .schemas import (
     ClientCreate,
     IntakeMintRequest,
@@ -70,7 +70,7 @@ def post_intake_mint(
     click-loop minting dozens of tokens, not adversarial use.
     """
     enforce(INTAKE_MINT_LIMIT, trainer_id)
-    client_ip = request.client.host if request.client else None
+    client_ip = real_client_ip(request)
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as con:
             token, expires_at = create_intake_token(
@@ -173,12 +173,13 @@ def post_intake(
       the expiry path, the helper still won't claim an expired row.
       Defense in depth.
 
-    Rate-limit identity is the client IP (request.client.host) — the
+    Rate-limit identity is the real client IP (Fly-Client-IP behind the
+    edge proxy, peer address otherwise — see deps.real_client_ip) — the
     trainer isn't known until intake_lookup runs, and even then
     rate-limiting per trainer wouldn't help (the threat is form-spam
     from one source, not one trainer's tokens being abused).
     """
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = real_client_ip(request) or "unknown"
     enforce(INTAKE_SUBMIT_LIMIT, client_ip)
 
     try:

@@ -28,7 +28,7 @@ from ..db import (
 )
 from ..rate_limit import COACH_DRAFT_LIMIT, enforce
 from ..weekly_state import ClientNotFoundError, build_weekly_client_state
-from .deps import forbid_demo_trainer
+from .deps import forbid_demo_trainer, real_client_ip
 from .schemas import CoachDraftResponse
 
 router = APIRouter()
@@ -132,7 +132,7 @@ def post_coach_draft(
     # Best-effort — don't fail the draft because the audit write
     # contended (the trainer's already got the text, the rate limit
     # already capped the action).
-    client_ip = request.client.host if request.client else None
+    client_ip = real_client_ip(request)
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as wcon:
             record_audit(

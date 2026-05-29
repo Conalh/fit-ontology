@@ -25,7 +25,7 @@ from ..demo import is_demo_trainer
 from ..ontology import PlanSource, SessionType
 from ..planning import Verdict, generate_plan
 from ..reasoning import generate_recommendation
-from .deps import current_trainer_id, forbid_demo_trainer
+from .deps import current_trainer_id, forbid_demo_trainer, real_client_ip
 from .schemas import PlannedSessionPatch, PlannedSessionResponse, PlanResponse
 
 router = APIRouter()
@@ -229,7 +229,7 @@ def patch_planned_session(
     existing.source = PlanSource.TRAINER
     existing.generated_at = datetime.now()
 
-    client_ip = request.client.host if request.client else None
+    client_ip = real_client_ip(request)
     # Capture which fields the trainer actually touched so the audit
     # row reflects the edit rather than the whole post-edit blob.
     touched = sorted(payload.model_dump(exclude_none=True).keys())

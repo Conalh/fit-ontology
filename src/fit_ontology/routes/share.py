@@ -43,7 +43,7 @@ from ..db import (
 )
 from ..rate_limit import SHARE_MINT_LIMIT, enforce
 from ..weekly_state import ClientNotFoundError, build_weekly_client_state
-from .deps import forbid_demo_trainer, read_only_conn
+from .deps import forbid_demo_trainer, read_only_conn, real_client_ip
 from .schemas import (
     ShareCreateRequest,
     ShareCreateResponse,
@@ -72,7 +72,7 @@ def post_share(
     when the trainer clicked once.
     """
     enforce(SHARE_MINT_LIMIT, trainer_id)
-    client_ip = request.client.host if request.client else None
+    client_ip = real_client_ip(request)
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as con:
             token, expires_at = create_share_token(
@@ -108,7 +108,7 @@ def delete_share(
     trainer_id: str = Depends(forbid_demo_trainer),
 ) -> dict:
     """Trainer-scoped revocation for a live share link."""
-    client_ip = request.client.host if request.client else None
+    client_ip = real_client_ip(request)
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as con:
             revoked = revoke_share_token(con, trainer_id, token)

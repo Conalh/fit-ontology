@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..db import DEFAULT_DB_PATH, connect, insert_override, overrides_for_client, record_audit
 from ..ontology import RecommendationOverride
-from .deps import current_trainer_id, forbid_demo_trainer, read_only_conn
+from .deps import current_trainer_id, forbid_demo_trainer, read_only_conn, real_client_ip
 from .helpers import override_response, override_response_from_model
 from .schemas import OverrideCreate, OverrideResponse
 
@@ -48,7 +48,7 @@ def post_override(
         trainer_note=payload.trainer_note,
         created_at=datetime.now(),
     )
-    client_ip = request.client.host if request.client else None
+    client_ip = real_client_ip(request)
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as con:
             insert_override(con, trainer_id, ov)

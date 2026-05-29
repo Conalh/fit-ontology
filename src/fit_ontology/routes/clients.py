@@ -13,7 +13,7 @@ from ..db import (
     record_audit,
 )
 from ..ontology import Sex
-from .deps import current_trainer_id, forbid_demo_trainer, read_only_conn
+from .deps import current_trainer_id, forbid_demo_trainer, read_only_conn, real_client_ip
 from .schemas import ClientCreate, ClientSummary, ClientUpdate
 
 router = APIRouter()
@@ -57,7 +57,7 @@ def post_client(
 ) -> dict:
     """Create a new client. Returns the generated id so the front-end
     can navigate straight to the detail page."""
-    client_ip = request.client.host if request.client else None
+    client_ip = real_client_ip(request)
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as con:
             client_id = insert_client_from_payload(con, trainer_id, payload)
@@ -132,7 +132,7 @@ def delete_client(
     nonexistent ids, and a year from now the trainer can't answer
     "what was client_id c_abc?".
     """
-    client_ip = request.client.host if request.client else None
+    client_ip = real_client_ip(request)
     try:
         with connect(DEFAULT_DB_PATH, read_only=False) as con:
             snapshot = delete_client_cascade(con, trainer_id, client_id)
