@@ -30,6 +30,7 @@ from fit_ontology.db import (
     connect,
     create_share_token,
     ensure_client,
+    hash_token,
     insert_metrics,
     insert_recommendation,
     insert_sessions,
@@ -120,7 +121,7 @@ def test_expired_token_is_flagged_not_hidden(tmp_path: Path):
         # Hand-roll a past expiry to simulate token aging.
         con.execute(
             "UPDATE client_share_tokens SET expires_at = ? WHERE token = ?",
-            [datetime.utcnow() - timedelta(days=1), token],
+            [datetime.utcnow() - timedelta(days=1), hash_token(token)],
         )
 
     with connect(db_path, read_only=True) as con:
@@ -361,7 +362,7 @@ def test_get_share_returns_410_for_expired_token(share_app, tmp_path: Path, monk
     with connect(db_path, read_only=False) as con:
         con.execute(
             "UPDATE client_share_tokens SET expires_at = ? WHERE token = ?",
-            [datetime.utcnow() - timedelta(days=1), token],
+            [datetime.utcnow() - timedelta(days=1), hash_token(token)],
         )
 
     r = share_app.get(f"/api/share/{token}")

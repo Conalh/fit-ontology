@@ -32,6 +32,7 @@ from fit_ontology.db import (
     create_intake_token,
     create_share_token,
     ensure_client,
+    hash_token,
     insert_metrics,
     insert_sessions,
     insert_trainer,
@@ -86,7 +87,7 @@ def delete_app(tmp_path: Path, monkeypatch):
         intake_token, _ = create_intake_token(con, "t_alice")
         con.execute(
             "UPDATE client_intake_tokens SET consumed_client_id = ? WHERE token = ?",
-            ["c_target", intake_token],
+            ["c_target", hash_token(intake_token)],
         )
 
     for mod in (auth_routes, clients_routes):

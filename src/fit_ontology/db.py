@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import secrets
@@ -1129,11 +1130,24 @@ def audit_log_for_trainer(con, trainer_id: str, limit: int = 100):
 #                        token before its natural expiry
 #
 # Tokens themselves are 32-byte URL-safe random strings (~256 bits).
-# We store them in cleartext: the security model is "guessing this
-# token is computationally infeasible," not "the DB is the secret."
-# If/when the threat model tightens, store SHA-256(token) instead and
-# compare hashed — a one-file change here, no schema change required
-# (token field stays VARCHAR).
+# We store only SHA-256(token), never the cleartext: the bearer holds the
+# secret (in the URL), the DB holds a one-way digest. The 256 bits of
+# entropy already make guessing infeasible; hashing additionally means a
+# read of the tokens table (a leaked backup, a SQL-injection elsewhere,
+# an over-broad log) can't be turned into live share/intake links. Same
+# posture as trainer passwords, just SHA-256 not bcrypt — these tokens
+# are high-entropy random, so they don't need a slow KDF or a per-row
+# salt. The column stays VARCHAR (now holds 64 hex chars).
+
+
+def hash_token(token: str) -> str:
+    """One-way digest of a share/intake token for storage + lookup.
+
+    Tokens are minted as high-entropy random strings and only the digest
+    is persisted; lookups hash the incoming token and compare. SHA-256
+    (not bcrypt) is the right tool here — there's nothing to brute-force
+    on 256 bits of randomness, so a slow salted KDF would buy nothing."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 SHARE_TTL_DAYS_DEFAULT = 14
@@ -1174,7 +1188,7 @@ def create_share_token(
         """,
         [
             f"st_{uuid.uuid4().hex[:12]}",
-            token,
+            hash_token(token),  # store the digest; the caller holds the secret
             client_id,
             trainer_id,
             (trainer_message or None),
@@ -1202,7 +1216,7 @@ def share_lookup(con, token: str):
             FROM client_share_tokens
             WHERE token = ?
             """,
-            [token],
+            [hash_token(token)],
         ).fetchone()
     except duckdb.CatalogException:
         return None
@@ -1228,15 +1242,16 @@ def revoke_share_token(con, trainer_id: str, token: str) -> bool:
     DuckDB's Python connector doesn't update rowcount after DML in a
     way we can depend on across versions.
     """
+    token_hash = hash_token(token)
     exists = con.execute(
         "SELECT 1 FROM client_share_tokens WHERE token = ? AND trainer_id = ?",
-        [token, trainer_id],
+        [token_hash, trainer_id],
     ).fetchone()
     if not exists:
         return False
     con.execute(
         "DELETE FROM client_share_tokens WHERE token = ? AND trainer_id = ?",
-        [token, trainer_id],
+        [token_hash, trainer_id],
     )
     return True
 
@@ -1260,8 +1275,9 @@ def revoke_share_token(con, trainer_id: str, token: str) -> bool:
 #                         consumed_at NULL → now() exactly once, returns
 #                         True only for the caller that won the claim
 #
-# Same token-shape and storage posture as share tokens (32-byte
-# URL-safe random, stored cleartext, 256 bits of entropy is the secret).
+# Same token-shape and storage posture as share tokens: 32-byte
+# URL-safe random (256 bits of entropy is the secret), stored as
+# SHA-256(token) via hash_token() so the table never holds a usable link.
 
 
 INTAKE_TTL_DAYS_DEFAULT = 14
@@ -1302,7 +1318,7 @@ def create_intake_token(
         """,
         [
             f"it_{uuid.uuid4().hex[:12]}",
-            token,
+            hash_token(token),  # store the digest; the caller holds the secret
             trainer_id,
             (trainer_message or None),
             now,
@@ -1328,7 +1344,7 @@ def intake_lookup(con, token: str):
             FROM client_intake_tokens
             WHERE token = ?
             """,
-            [token],
+            [hash_token(token)],
         ).fetchone()
     except duckdb.CatalogException:
         return None
@@ -1370,7 +1386,7 @@ def consume_intake_token(con, token: str, client_id: str) -> bool:
         WHERE token = ? AND consumed_at IS NULL AND expires_at >= ?
         RETURNING id
         """,
-        [now, client_id, token, now],
+        [now, client_id, hash_token(token), now],
     ).fetchone()
     return result is not None
 
