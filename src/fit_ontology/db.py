@@ -1,10 +1,14 @@
 """DuckDB persistence layer."""
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import os
 import secrets
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -65,6 +69,42 @@ def connect(db_path: Path = DEFAULT_DB_PATH, *, read_only: bool = False) -> duck
         if is_demo_enabled():
             seed_demo_data_if_needed(con)
     return con
+
+
+@contextmanager
+def transaction(con: duckdb.DuckDBPyConnection) -> Iterator[duckdb.DuckDBPyConnection]:
+    """Run a group of writes as one all-or-nothing DuckDB transaction.
+
+    ``BEGIN TRANSACTION`` on enter, ``COMMIT`` on a clean exit,
+    ``ROLLBACK`` if the body raises — so a multi-statement write either
+    lands whole or not at all, instead of leaving partial state when one
+    statement fails partway through. Use it to wrap any composition of
+    writes that must be atomic together: the client delete cascade, the
+    public intake submission, the recommendation refresh + plan
+    replacement, and any future multi-table write.
+
+    Outside an explicit transaction DuckDB auto-commits each statement,
+    which is why a mid-sequence failure used to leave half-applied state.
+    We drive the transaction with explicit SQL rather than the
+    connector's ``autocommit`` attribute, whose behavior is inconsistent
+    across DuckDB Python releases — the intake-submit path already relied
+    on raw BEGIN/COMMIT for the same reason.
+
+    Not reentrant: DuckDB has no nested transactions, so the helpers this
+    wraps (``delete_client_cascade`` etc.) stay transaction-free building
+    blocks and the *caller* owns the transaction boundary. A rollback
+    that itself fails is suppressed so the original exception — the one
+    the caller actually needs to see — propagates unmasked.
+    """
+    con.execute("BEGIN TRANSACTION")
+    try:
+        yield con
+    except Exception:
+        with contextlib.suppress(Exception):
+            con.execute("ROLLBACK")
+        raise
+    else:
+        con.execute("COMMIT")
 
 
 def _run_migrations(con: duckdb.DuckDBPyConnection) -> None:
@@ -334,14 +374,23 @@ def delete_client_cascade(con, trainer_id: str, client_id: str) -> dict | None:
     DuckDB enforces foreign-key constraints strictly: deleting a
     client while sessions/metrics/etc still reference it raises
     ConstraintException. Deletes have to walk the dependent tables
-    first, in roughly reverse-FK-depth order. Caller is expected to
-    wrap this in a single ``with connect(..., read_only=False)``
-    context — every statement here lands on the same connection so
-    DuckDB's per-file writer lock serialises them naturally; an
-    explicit BEGIN TRANSACTION around the lot would be ideal but the
-    DuckDB Python connector's transaction handling is inconsistent
-    across versions, and the per-connection serialisation gets us
-    the same partial-write protection in practice.
+    first, in roughly reverse-FK-depth order.
+
+    This cascade deliberately does NOT run inside ``transaction()``,
+    even though wrapping a multi-step destructive write would normally
+    be the right call. DuckDB's foreign-key checker is over-eager within
+    an explicit transaction: the child DELETEs aren't reflected in the
+    FK index until commit, so the parent ``DELETE FROM clients`` reports
+    its children as "still referenced" and raises ConstraintException —
+    the whole cascade fails (confirmed by test, see
+    test_transaction.test_cascade_inside_transaction_hits_duckdb_fk_limit).
+    Until DuckDB supports deferrable constraints, the workable approach is
+    per-statement autocommit, leaf-first, on a single serialized
+    connection: each child DELETE commits before the next runs, so the
+    parent DELETE sees them gone. The residual risk is a mid-cascade IO
+    failure leaving a partially-deleted client; that's the price of the
+    DuckDB limitation, and far smaller than the cascade failing outright
+    on every call.
 
     The ``client_intake_tokens`` table is special-cased: its
     ``consumed_client_id`` is a stamp that records "this token
@@ -1081,11 +1130,24 @@ def audit_log_for_trainer(con, trainer_id: str, limit: int = 100):
 #                        token before its natural expiry
 #
 # Tokens themselves are 32-byte URL-safe random strings (~256 bits).
-# We store them in cleartext: the security model is "guessing this
-# token is computationally infeasible," not "the DB is the secret."
-# If/when the threat model tightens, store SHA-256(token) instead and
-# compare hashed — a one-file change here, no schema change required
-# (token field stays VARCHAR).
+# We store only SHA-256(token), never the cleartext: the bearer holds the
+# secret (in the URL), the DB holds a one-way digest. The 256 bits of
+# entropy already make guessing infeasible; hashing additionally means a
+# read of the tokens table (a leaked backup, a SQL-injection elsewhere,
+# an over-broad log) can't be turned into live share/intake links. Same
+# posture as trainer passwords, just SHA-256 not bcrypt — these tokens
+# are high-entropy random, so they don't need a slow KDF or a per-row
+# salt. The column stays VARCHAR (now holds 64 hex chars).
+
+
+def hash_token(token: str) -> str:
+    """One-way digest of a share/intake token for storage + lookup.
+
+    Tokens are minted as high-entropy random strings and only the digest
+    is persisted; lookups hash the incoming token and compare. SHA-256
+    (not bcrypt) is the right tool here — there's nothing to brute-force
+    on 256 bits of randomness, so a slow salted KDF would buy nothing."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 SHARE_TTL_DAYS_DEFAULT = 14
@@ -1126,7 +1188,7 @@ def create_share_token(
         """,
         [
             f"st_{uuid.uuid4().hex[:12]}",
-            token,
+            hash_token(token),  # store the digest; the caller holds the secret
             client_id,
             trainer_id,
             (trainer_message or None),
@@ -1154,7 +1216,7 @@ def share_lookup(con, token: str):
             FROM client_share_tokens
             WHERE token = ?
             """,
-            [token],
+            [hash_token(token)],
         ).fetchone()
     except duckdb.CatalogException:
         return None
@@ -1180,15 +1242,16 @@ def revoke_share_token(con, trainer_id: str, token: str) -> bool:
     DuckDB's Python connector doesn't update rowcount after DML in a
     way we can depend on across versions.
     """
+    token_hash = hash_token(token)
     exists = con.execute(
         "SELECT 1 FROM client_share_tokens WHERE token = ? AND trainer_id = ?",
-        [token, trainer_id],
+        [token_hash, trainer_id],
     ).fetchone()
     if not exists:
         return False
     con.execute(
         "DELETE FROM client_share_tokens WHERE token = ? AND trainer_id = ?",
-        [token, trainer_id],
+        [token_hash, trainer_id],
     )
     return True
 
@@ -1212,8 +1275,9 @@ def revoke_share_token(con, trainer_id: str, token: str) -> bool:
 #                         consumed_at NULL → now() exactly once, returns
 #                         True only for the caller that won the claim
 #
-# Same token-shape and storage posture as share tokens (32-byte
-# URL-safe random, stored cleartext, 256 bits of entropy is the secret).
+# Same token-shape and storage posture as share tokens: 32-byte
+# URL-safe random (256 bits of entropy is the secret), stored as
+# SHA-256(token) via hash_token() so the table never holds a usable link.
 
 
 INTAKE_TTL_DAYS_DEFAULT = 14
@@ -1254,7 +1318,7 @@ def create_intake_token(
         """,
         [
             f"it_{uuid.uuid4().hex[:12]}",
-            token,
+            hash_token(token),  # store the digest; the caller holds the secret
             trainer_id,
             (trainer_message or None),
             now,
@@ -1280,7 +1344,7 @@ def intake_lookup(con, token: str):
             FROM client_intake_tokens
             WHERE token = ?
             """,
-            [token],
+            [hash_token(token)],
         ).fetchone()
     except duckdb.CatalogException:
         return None
@@ -1322,6 +1386,65 @@ def consume_intake_token(con, token: str, client_id: str) -> bool:
         WHERE token = ? AND consumed_at IS NULL AND expires_at >= ?
         RETURNING id
         """,
-        [now, client_id, token, now],
+        [now, client_id, hash_token(token), now],
     ).fetchone()
     return result is not None
+
+
+# ─── Ask chat sessions (Phase 7b) ────────────────────────────────────
+#
+# Server-side store for the Ask FitOntology conversation. The browser
+# holds only an opaque session_id and the rendered turns; the canonical
+# Anthropic-format message stream the model reasons over lives here, so a
+# tampered client can't forge prior tool_result / assistant blocks into
+# the history. Every helper is trainer-scoped — a session_id is only
+# resolvable by the trainer that created it, which is also what makes a
+# guessed/stolen id from another trainer a clean "not found."
+
+
+def create_ask_session(con, trainer_id: str, messages: list[dict] | None = None) -> str:
+    """Mint a new chat session for ``trainer_id`` and return its id.
+
+    The id is random (``ask_`` + 16 hex chars), so it's unguessable and
+    can't collide with another trainer's session — the trainer_id filter
+    on read is the real authorization gate, this just avoids minting a
+    predictable handle."""
+    session_id = f"ask_{uuid.uuid4().hex[:16]}"
+    now = datetime.utcnow()
+    con.execute(
+        """
+        INSERT INTO ask_sessions (id, trainer_id, messages, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [session_id, trainer_id, json.dumps(messages or []), now, now],
+    )
+    return session_id
+
+
+def load_ask_session(con, trainer_id: str, session_id: str) -> list[dict] | None:
+    """Return the stored message list for ``(trainer_id, session_id)``,
+    or None if no such session exists for this trainer.
+
+    None covers all the "can't use this" cases identically — unknown id,
+    another trainer's id, a pre-migration DB with no table — so the route
+    maps every one to the same 404 without leaking which it was."""
+    try:
+        row = con.execute(
+            "SELECT messages FROM ask_sessions WHERE id = ? AND trainer_id = ?",
+            [session_id, trainer_id],
+        ).fetchone()
+    except duckdb.CatalogException:
+        return None
+    if not row:
+        return None
+    return json.loads(row[0]) if row[0] else []
+
+
+def update_ask_session(con, trainer_id: str, session_id: str, messages: list[dict]) -> None:
+    """Overwrite the stored messages for a trainer's session. Scoped by
+    trainer_id so a cross-trainer id can't be written even if the load
+    gate were ever bypassed."""
+    con.execute(
+        "UPDATE ask_sessions SET messages = ?, updated_at = ? WHERE id = ? AND trainer_id = ?",
+        [json.dumps(messages), datetime.utcnow(), session_id, trainer_id],
+    )

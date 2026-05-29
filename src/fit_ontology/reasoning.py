@@ -269,6 +269,125 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
 BASELINE_WINDOW_CHOICES: tuple[int, ...] = (14, 28, 56)
 
 
+# ─── Threshold validation ────────────────────────────────────────────
+#
+# Trainer overrides are typed as floats at the API boundary, but "is a
+# float" is a weak contract: a fat-fingered ``hrv_severe_sd = -2`` or an
+# ``acwr_safe_low`` above ``acwr_safe_high`` would silently make the
+# severity ladder nonsensical and the engine's verdicts meaningless.
+# validate_thresholds() enforces the invariants the detectors assume:
+# every value sits in a sane range, and each mild→moderate→severe ladder
+# stays correctly ordered. It runs on the *effective* set (defaults
+# shadowed by the resulting overrides) so a sparse patch can't half-order
+# a ladder against the values it leaves untouched.
+
+# Inclusive [low, high] bounds per threshold. Bounds are deliberately
+# generous — they catch sign errors and unit mistakes, not legitimate
+# tuning. Anything not listed (shouldn't happen: every DEFAULT_THRESHOLDS
+# key is covered) is left unchecked for range.
+THRESHOLD_BOUNDS: dict[str, tuple[float, float]] = {
+    "hrv_mild_sd": (0.0, 5.0),
+    "hrv_moderate_sd": (0.0, 5.0),
+    "hrv_severe_sd": (0.0, 5.0),
+    "acwr_safe_low": (0.0, 3.0),
+    "acwr_safe_high": (0.0, 5.0),
+    "acwr_moderate_high": (0.0, 5.0),
+    "acwr_severe_high": (0.0, 10.0),
+    "rhr_mild_bpm": (0.0, 50.0),
+    "rhr_moderate_bpm": (0.0, 50.0),
+    "rhr_severe_bpm": (0.0, 50.0),
+    "sleep_floor_hours": (0.0, 24.0),
+    "sleep_deficit_hours": (0.0, 24.0),
+    "sleep_score_poor": (0.0, 100.0),
+    "rpe_rise_mild": (0.0, 10.0),
+    "rpe_rise_moderate": (0.0, 10.0),
+    "tr_mild": (0.0, 100.0),
+    "tr_moderate": (0.0, 100.0),
+    "tr_severe": (0.0, 100.0),
+    "slope_mild_sd_per_day": (0.0, 5.0),
+    "slope_moderate_sd_per_day": (0.0, 5.0),
+    "slope_severe_sd_per_day": (0.0, 5.0),
+    "chronic_slope_mild_sd_per_day": (0.0, 5.0),
+    "chronic_slope_moderate_sd_per_day": (0.0, 5.0),
+    "chronic_slope_severe_sd_per_day": (0.0, 5.0),
+    "level_dominates_recovery_floor": (0.0, 100.0),
+    "baseline_window_days": (7.0, 90.0),
+}
+
+# Strictly-increasing severity ladders: mild < moderate < severe. ACWR's
+# high side is a ladder too (safe < moderate-danger < severe-danger).
+_ASCENDING_LADDERS: tuple[tuple[str, ...], ...] = (
+    ("hrv_mild_sd", "hrv_moderate_sd", "hrv_severe_sd"),
+    ("rhr_mild_bpm", "rhr_moderate_bpm", "rhr_severe_bpm"),
+    ("rpe_rise_mild", "rpe_rise_moderate"),
+    ("slope_mild_sd_per_day", "slope_moderate_sd_per_day", "slope_severe_sd_per_day"),
+    ("chronic_slope_mild_sd_per_day", "chronic_slope_moderate_sd_per_day",
+     "chronic_slope_severe_sd_per_day"),
+    ("acwr_safe_high", "acwr_moderate_high", "acwr_severe_high"),
+)
+
+# Strictly-decreasing ladders: a lower value is more severe. Garmin
+# Training Readiness drops as recovery worsens, so mild > moderate > severe.
+_DESCENDING_LADDERS: tuple[tuple[str, ...], ...] = (
+    ("tr_mild", "tr_moderate", "tr_severe"),
+)
+
+
+def validate_thresholds(values: Mapping[str, float]) -> None:
+    """Raise ``ValueError`` if a threshold set is internally invalid.
+
+    Checks, in order: per-threshold range bounds, ascending severity
+    ladders, descending ladders (Training Readiness), the ACWR safe band
+    (``acwr_safe_low < acwr_safe_high``), and that the severe sleep
+    deficit sits below the nightly floor. Intended to run on the
+    effective merged set so a sparse override is judged against the
+    values it doesn't touch, not just itself.
+    """
+    for name, value in values.items():
+        bounds = THRESHOLD_BOUNDS.get(name)
+        if bounds is None:
+            continue
+        lo, hi = bounds
+        if not (lo <= value <= hi):
+            raise ValueError(f"{name}={value} is out of range [{lo}, {hi}].")
+
+    for ladder in _ASCENDING_LADDERS:
+        present = [(n, values[n]) for n in ladder if n in values]
+        for (lo_name, lo_val), (hi_name, hi_val) in zip(present, present[1:], strict=False):
+            if not (lo_val < hi_val):
+                raise ValueError(
+                    f"{lo_name} ({lo_val}) must be strictly less than {hi_name} ({hi_val})."
+                )
+
+    for ladder in _DESCENDING_LADDERS:
+        present = [(n, values[n]) for n in ladder if n in values]
+        for (hi_name, hi_val), (lo_name, lo_val) in zip(present, present[1:], strict=False):
+            if not (hi_val > lo_val):
+                raise ValueError(
+                    f"{hi_name} ({hi_val}) must be strictly greater than {lo_name} ({lo_val})."
+                )
+
+    if (
+        "acwr_safe_low" in values
+        and "acwr_safe_high" in values
+        and not (values["acwr_safe_low"] < values["acwr_safe_high"])
+    ):
+        raise ValueError(
+            f"acwr_safe_low ({values['acwr_safe_low']}) must be strictly less than "
+            f"acwr_safe_high ({values['acwr_safe_high']})."
+        )
+
+    if (
+        "sleep_deficit_hours" in values
+        and "sleep_floor_hours" in values
+        and not (values["sleep_deficit_hours"] < values["sleep_floor_hours"])
+    ):
+        raise ValueError(
+            f"sleep_deficit_hours ({values['sleep_deficit_hours']}) must be below "
+            f"sleep_floor_hours ({values['sleep_floor_hours']})."
+        )
+
+
 def _merge_thresholds(overrides: Mapping[str, float] | None) -> dict[str, float]:
     """Compose the per-call threshold dict: defaults shadowed by any
     per-client overrides the caller passes in."""

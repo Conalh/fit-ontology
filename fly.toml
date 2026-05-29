@@ -12,8 +12,9 @@
 #   - auto-stop/auto-start: scales to zero when idle, cold-starts
 #     in ~2s on the first request after a quiet period
 #
-# First deploy:
-#   fly volumes create fit_data --region iad --size 1
+# First deploy (create the volume in the SAME region as primary_region
+# below — sjc — or the machine and its volume can't co-locate):
+#   fly volumes create fit_data --region sjc --size 1
 #   fly secrets set FIT_ONTOLOGY_SESSION_SECRET=$(openssl rand -base64 48)
 #   fly secrets set FIT_ONTOLOGY_DEFAULT_TRAINER_PASSWORD=...
 #   fly secrets set ANTHROPIC_API_KEY=sk-ant-...

@@ -20,9 +20,9 @@ interface Turn {
  * compute_recommendation, get_recent_overrides); we surface every tool
  * call inline so the trainer can see what data drove the answer.
  *
- * Multi-turn context flows by handing the prior turn's full Anthropic
- * message stream back as `history` on the next call — the same pattern
- * the Streamlit page used.
+ * Multi-turn context lives server-side: we hold only an opaque
+ * `session_id` and the rendered turns. The full message stream stays on
+ * the server, so the browser can't inject fake prior context.
  */
 export default function AskPage() {
   const rosterQ = useQuery({ queryKey: ["roster"], queryFn: api.roster });
@@ -34,15 +34,15 @@ export default function AskPage() {
   } as CSSProperties;
 
   const [turns, setTurns] = useState<Turn[]>([]);
-  const [history, setHistory] = useState<Record<string, unknown>[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const ask = useMutation({
-    mutationFn: (question: string) => api.ask({ question, history }),
+    mutationFn: (question: string) => api.ask({ question, session_id: sessionId }),
     onSuccess: (res, question) => {
       setTurns((prev) => [...prev, { question, answer: res.answer, traces: res.traces }]);
-      setHistory(res.messages);
+      setSessionId(res.session_id);
     },
   });
 
@@ -60,7 +60,7 @@ export default function AskPage() {
 
   const clearConversation = () => {
     setTurns([]);
-    setHistory([]);
+    setSessionId(null);
     ask.reset();
   };
 

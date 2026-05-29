@@ -18,6 +18,12 @@ from .schemas import ClientCreate, ClientSummary, ClientUpdate
 
 router = APIRouter()
 
+# Client columns that are nullable in the schema, so a PATCH may
+# explicitly clear them to NULL. Everything else is NOT NULL and an
+# explicit null is rejected rather than handed to the DB as a constraint
+# violation. Mirror this with the ontology.clients DDL.
+_NULLABLE_CLIENT_FIELDS = {"injury_history"}
+
 
 @router.get("/api/clients", response_model=list[ClientSummary])
 def get_clients(
@@ -81,10 +87,26 @@ def patch_client(
     trainer_id: str = Depends(forbid_demo_trainer),
 ) -> dict:
     """Partial update. Builds the SET clause from only the fields the
-    trainer touched so we don't overwrite values they left alone."""
-    updates = payload.model_dump(exclude_none=True)
+    trainer actually sent.
+
+    ``exclude_unset`` (not ``exclude_none``) is the important bit: it
+    distinguishes "field omitted — leave it alone" from "field sent as
+    null — clear it." The old exclude_none collapsed those, so a trainer
+    could never null out a nullable field like injury_history; the patch
+    just dropped it. Clearing is only legal for genuinely nullable
+    columns — sending null for a NOT NULL column (name, goal, …) is a
+    400, not a 500 from the DB."""
+    updates = payload.model_dump(exclude_unset=True)
     if "sex" in updates and isinstance(updates["sex"], Sex):
         updates["sex"] = updates["sex"].value
+    illegal_nulls = sorted(
+        k for k, v in updates.items() if v is None and k not in _NULLABLE_CLIENT_FIELDS
+    )
+    if illegal_nulls:
+        raise HTTPException(
+            status_code=400,
+            detail=f"These fields cannot be set to null: {illegal_nulls}",
+        )
     if not updates:
         return {"ok": True, "updated": []}
 
@@ -134,6 +156,14 @@ def delete_client(
     """
     client_ip = real_client_ip(request)
     try:
+        # NOT wrapped in transaction(): DuckDB's foreign-key checker is
+        # over-eager inside an explicit transaction — the parent DELETE
+        # FROM clients still "sees" the child rows we deleted earlier in
+        # the same uncommitted transaction and raises ConstraintException.
+        # See delete_client_cascade's docstring. The deletes therefore run
+        # leaf-first under per-statement autocommit on one serialized
+        # connection, which is the partial-write protection DuckDB allows
+        # here.
         with connect(DEFAULT_DB_PATH, read_only=False) as con:
             snapshot = delete_client_cascade(con, trainer_id, client_id)
             if snapshot is None:

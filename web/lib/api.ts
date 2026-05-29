@@ -375,8 +375,9 @@ export interface AskResponse {
   answer: string;
   traces: AskTrace[];
   turns_used: number;
-  /** Full Anthropic message stream — pass back as `history` next turn. */
-  messages: Record<string, unknown>[];
+  /** Opaque handle to continue this conversation — pass back as
+   * `session_id` on the next turn. The message stream stays server-side. */
+  session_id: string;
 }
 
 export const api = {
@@ -507,7 +508,7 @@ export const api = {
     }
     return res.json();
   },
-  ask: (payload: { question: string; history: Record<string, unknown>[]; model?: string }) =>
+  ask: (payload: { question: string; session_id?: string | null; model?: string }) =>
     request<AskResponse>("/api/ask", { method: "POST", body: JSON.stringify(payload) }),
   downloadPdf: async (clientId: string, coachMessage: string | null): Promise<Blob> => {
     const res = await fetch(`${API_BASE}/api/clients/${clientId}/pdf`, {

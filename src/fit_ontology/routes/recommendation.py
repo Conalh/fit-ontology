@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 import duckdb
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..db import (
     DEFAULT_DB_PATH,
@@ -14,6 +14,7 @@ from ..db import (
     recommendations_for_client,
     replace_plan_for_week,
     replace_recommendation_for_week,
+    transaction,
 )
 from ..demo import is_demo_trainer
 from ..ontology import Recommendation
@@ -203,7 +204,11 @@ def refresh_recommendation(
         thresholds=state.thresholds,
     )
     try:
-        with connect(DEFAULT_DB_PATH, read_only=False) as wcon:
+        with connect(DEFAULT_DB_PATH, read_only=False) as wcon, transaction(wcon):
+            # Replacing the locked rec, regenerating the plan, and
+            # re-matching sessions is one logical refresh — wrap it so a
+            # failure midway can't retire the old recommendation while
+            # leaving the stale plan in place (or vice versa).
             replace_recommendation_for_week(wcon, trainer_id, rec)
             if _all_engine_generated(state.plan):
                 new_plan = generate_plan(
@@ -228,7 +233,7 @@ def refresh_recommendation(
 )
 def get_recommendation_history(
     client_id: str,
-    limit: int = 12,
+    limit: int = Query(12, ge=1, le=100),
     con=Depends(read_only_conn),
     trainer_id: str = Depends(current_trainer_id),
 ) -> list[RecommendationResponse]:

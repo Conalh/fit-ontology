@@ -41,6 +41,7 @@ from fit_ontology.db import (
     connect,
     consume_intake_token,
     create_intake_token,
+    hash_token,
     insert_trainer,
     intake_lookup,
 )
@@ -94,7 +95,7 @@ def test_expired_token_is_flagged_not_hidden(tmp_path: Path):
         token, _ = create_intake_token(con, trainer_id)
         con.execute(
             "UPDATE client_intake_tokens SET expires_at = ? WHERE token = ?",
-            [datetime.utcnow() - timedelta(days=1), token],
+            [datetime.utcnow() - timedelta(days=1), hash_token(token)],
         )
 
     with connect(db_path, read_only=True) as con:
@@ -152,7 +153,7 @@ def test_consume_refuses_expired_token(tmp_path: Path):
         token, _ = create_intake_token(con, trainer_id)
         con.execute(
             "UPDATE client_intake_tokens SET expires_at = ? WHERE token = ?",
-            [datetime.utcnow() - timedelta(days=1), token],
+            [datetime.utcnow() - timedelta(days=1), hash_token(token)],
         )
         claimed = consume_intake_token(con, token, client_id="c_late")
 
@@ -170,11 +171,32 @@ def test_consume_records_client_id_for_audit(tmp_path: Path):
         consume_intake_token(con, token, client_id="c_audit_target")
         row = con.execute(
             "SELECT consumed_client_id FROM client_intake_tokens WHERE token = ?",
-            [token],
+            [hash_token(token)],
         ).fetchone()
 
     assert row is not None
     assert row[0] == "c_audit_target"
+
+
+def test_token_is_stored_hashed_not_cleartext(tmp_path: Path):
+    """The DB must never hold the live token — only its SHA-256 digest.
+    A read of the table (leaked backup, errant log) can't be turned into
+    a usable intake link."""
+    db_path = tmp_path / "intake.duckdb"
+    trainer_id = _seed_trainer(db_path)
+
+    with connect(db_path, read_only=False) as con:
+        token, _ = create_intake_token(con, trainer_id)
+
+    with connect(db_path, read_only=True) as con:
+        stored = con.execute(
+            "SELECT token FROM client_intake_tokens WHERE trainer_id = ?",
+            [trainer_id],
+        ).fetchone()[0]
+
+    assert stored != token                 # not cleartext
+    assert stored == hash_token(token)     # the digest
+    assert len(stored) == 64               # sha256 hex
 
 
 def test_create_refuses_unknown_trainer(tmp_path: Path):

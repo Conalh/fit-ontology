@@ -27,6 +27,9 @@ from fit_ontology.db import (
 from fit_ontology.ontology import MetricKind
 from fit_ontology.rate_limit import reset as rate_limit_reset
 from fit_ontology.routes import (
+    ask as ask_routes,
+)
+from fit_ontology.routes import (
     auth as auth_routes,
 )
 from fit_ontology.routes import (
@@ -113,7 +116,7 @@ def app(tmp_path: Path, monkeypatch):
     for mod in (
         clients_routes, metrics_routes, overrides_routes,
         recommendation_routes, thresholds_routes,
-        auth_routes, share_routes, planning_routes,
+        auth_routes, share_routes, planning_routes, ask_routes,
     ):
         monkeypatch.setattr(mod, "DEFAULT_DB_PATH", db_path)
 
@@ -338,27 +341,7 @@ def test_share_mint_rate_limited(app, monkeypatch):
 def test_ask_rejects_oversized_question_before_llm(app, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     client, _ = app
-    r = client.post("/api/ask", json={"question": "x" * 2001, "history": []})
-    assert r.status_code == 422
-
-
-def test_ask_rejects_oversized_history_before_llm(app, monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    client, _ = app
-    r = client.post(
-        "/api/ask",
-        json={"question": "summarize this", "history": [{"role": "user", "content": "x"}] * 41},
-    )
-    assert r.status_code == 422
-
-
-def test_ask_rejects_oversized_history_content_before_llm(app, monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    client, _ = app
-    r = client.post(
-        "/api/ask",
-        json={"question": "summarize this", "history": [{"role": "user", "content": "x" * 20000}]},
-    )
+    r = client.post("/api/ask", json={"question": "x" * 2001})
     assert r.status_code == 422
 
 
@@ -367,9 +350,22 @@ def test_ask_rejects_unapproved_model_before_llm(app, monkeypatch):
     client, _ = app
     r = client.post(
         "/api/ask",
-        json={"question": "summarize this", "history": [], "model": "claude-opus-expensive"},
+        json={"question": "summarize this", "model": "claude-opus-expensive"},
     )
     assert r.status_code == 422
+
+
+def test_ask_unknown_session_returns_404(app, monkeypatch):
+    """History is server-side now: a session_id that isn't this trainer's
+    (unknown or another trainer's) is a 404, resolved before the LLM is
+    ever called."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    client, _ = app
+    r = client.post(
+        "/api/ask",
+        json={"question": "continue please", "session_id": "ask_does_not_exist"},
+    )
+    assert r.status_code == 404
 
 
 def test_login_rate_limit_blocks_after_threshold(tmp_path: Path, monkeypatch):

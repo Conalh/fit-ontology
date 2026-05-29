@@ -312,6 +312,17 @@ by `tests/test_share.py:test_get_share_omits_pii`.
 **Defense, transport.** All tokens travel over HTTPS; HSTS forces
 the upgrade.
 
+**Defense, at rest.** Only `SHA-256(token)` is persisted, never the
+cleartext (see `db.hash_token`; mint returns the secret once, lookup
+hashes the incoming token and compares). The 256 bits of entropy
+already make guessing infeasible; hashing additionally means a read of
+the `client_share_tokens` / `client_intake_tokens` table — a leaked
+backup, an over-broad log, a SQL-injection elsewhere — yields digests,
+not live links. SHA-256 rather than bcrypt because the tokens are
+high-entropy random: there's nothing to brute-force, so a slow salted
+KDF would buy nothing. Pinned by
+`tests/test_intake_tokens.py:test_token_is_stored_hashed_not_cleartext`.
+
 ### Intake-token misuse
 
 **Class:** Attacker obtains a leaked intake token and submits a
@@ -351,6 +362,9 @@ trainer row exists before writing. A typo in trainer_id (or a
 race with a trainer-deletion) produces a clear ValueError at the
 mint site rather than a dangling token whose submission would FK-
 fail far from the cause.
+
+**Defense, at rest.** Same as share tokens — only `SHA-256(token)`
+is stored, so the table never holds a usable intake link.
 
 **Defense, transport.** Same posture as share tokens — HTTPS +
 HSTS in production.

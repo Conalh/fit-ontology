@@ -44,6 +44,7 @@ import fit_ontology.api as api_mod
 import fit_ontology.rate_limit as rate_limit_mod
 from fit_ontology.db import (
     connect,
+    hash_token,
     insert_trainer,
     set_trainer_password,
 )
@@ -147,7 +148,7 @@ def test_get_410_for_expired_token(intake_app):
     with connect(db_path, read_only=False) as con:
         con.execute(
             "UPDATE client_intake_tokens SET expires_at = ? WHERE token = ?",
-            [datetime.utcnow() - timedelta(days=1), token],
+            [datetime.utcnow() - timedelta(days=1), hash_token(token)],
         )
     r = intake_app.get(f"/api/intake/{token}")
     assert r.status_code == 410
@@ -277,7 +278,7 @@ def test_submit_410_for_expired_token(intake_app):
     with connect(db_path, read_only=False) as con:
         con.execute(
             "UPDATE client_intake_tokens SET expires_at = ? WHERE token = ?",
-            [datetime.utcnow() - timedelta(days=1), token],
+            [datetime.utcnow() - timedelta(days=1), hash_token(token)],
         )
     r = intake_app.post(f"/api/intake/{token}", json=GOOD_PAYLOAD)
     assert r.status_code == 410

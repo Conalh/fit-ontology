@@ -331,7 +331,7 @@ def test_ask_blocked_for_demo(demo_app, monkeypatch):
     the same demo-mode posture as coach draft."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     client, _db = demo_app
-    r = client.post("/api/ask", json={"question": "who needs attention?", "history": []})
+    r = client.post("/api/ask", json={"question": "who needs attention?"})
     assert r.status_code == 403
 
 

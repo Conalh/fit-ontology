@@ -424,6 +424,28 @@ CREATE TABLE IF NOT EXISTS client_intake_tokens (
 CREATE INDEX IF NOT EXISTS idx_intake_tokens_token   ON client_intake_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_intake_tokens_trainer ON client_intake_tokens(trainer_id);
 
+CREATE TABLE IF NOT EXISTS ask_sessions (
+    -- Phase 7b: server-side store for the "Ask FitOntology" multi-turn
+    -- chat. The browser holds only an opaque session_id (and the turns
+    -- it renders); the canonical Anthropic-format message stream — user
+    -- turns, assistant tool_use blocks, and the tool_result blocks our
+    -- server produced — lives here. Round-tripping that stream through
+    -- the client (the old design) let a tampered browser inject fake
+    -- prior tool results or assistant context into the model's history;
+    -- keeping it server-side closes that.
+    --
+    -- Trainer-scoped, NOT client-scoped: a conversation can range across
+    -- many clients, so there's no single client_id to hang it off, and
+    -- the per-client delete cascade leaves it alone. A session_id is
+    -- only resolvable by the trainer that created it.
+    id          VARCHAR PRIMARY KEY,
+    trainer_id  VARCHAR NOT NULL,
+    messages    VARCHAR NOT NULL,   -- JSON array of message dicts
+    created_at  TIMESTAMP NOT NULL,
+    updated_at  TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ask_sessions_trainer ON ask_sessions(trainer_id);
+
 -- ─── Phase 2a multi-tenant scoping ──────────────────────────────────
 -- Add trainer_id to every client-data table. ADD COLUMN IF NOT EXISTS
 -- so a fresh DB and an existing DB both end up with the column. The

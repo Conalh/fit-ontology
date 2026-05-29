@@ -4,11 +4,12 @@ from __future__ import annotations
 import contextlib
 import os
 import tempfile
+import zipfile
 from pathlib import Path
 
 import duckdb
 import pandas as pd
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
 from ..db import (
     DEFAULT_DB_PATH,
@@ -62,7 +63,7 @@ def _ensure_client(con, trainer_id: str, client_id: str) -> None:
 @router.get("/api/clients/{client_id}/metrics", response_model=list[MetricRow])
 def get_metrics(
     client_id: str,
-    days: int = 35,
+    days: int = Query(35, ge=1, le=90),
     con=Depends(read_only_conn),
     trainer_id: str = Depends(current_trainer_id),
 ) -> list[MetricRow]:
@@ -76,7 +77,7 @@ def get_metrics(
 @router.get("/api/clients/{client_id}/sessions", response_model=list[SessionRow])
 def get_sessions(
     client_id: str,
-    days: int = 35,
+    days: int = Query(35, ge=1, le=90),
     con=Depends(read_only_conn),
     trainer_id: str = Depends(current_trainer_id),
 ) -> list[SessionRow]:
@@ -128,6 +129,14 @@ async def post_upload(
             df = from_whoop_json(tmp_path, client_id)
         else:
             raise HTTPException(status_code=415, detail=f"Unsupported file type: {file.filename}")
+    except HTTPException:
+        raise
+    except (zipfile.BadZipFile, ValueError) as e:
+        # Malformed archive, decompression-bomb guard, hostile XML
+        # (defusedxml raises a ValueError subclass), or unparseable
+        # CSV/JSON. Client error, not a server fault — 400 with the
+        # reason so the upload UI can show something actionable.
+        raise HTTPException(status_code=400, detail=f"Could not parse upload: {e}") from e
     finally:
         with contextlib.suppress(FileNotFoundError):
             tmp_path.unlink()

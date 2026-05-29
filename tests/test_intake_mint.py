@@ -42,6 +42,7 @@ import fit_ontology.api as api_mod
 import fit_ontology.rate_limit as rate_limit_mod
 from fit_ontology.db import (
     connect,
+    hash_token,
     insert_trainer,
     set_trainer_password,
 )
@@ -111,7 +112,7 @@ def test_trainer_message_roundtrips(intake_app):
     with connect(db_path, read_only=True) as con:
         row = con.execute(
             "SELECT trainer_message FROM client_intake_tokens WHERE token = ?",
-            [token],
+            [hash_token(token)],
         ).fetchone()
     assert row is not None
     assert row[0] == msg
@@ -127,7 +128,7 @@ def test_trainer_message_optional_stores_null(intake_app):
     with connect(db_path, read_only=True) as con:
         row = con.execute(
             "SELECT trainer_message FROM client_intake_tokens WHERE token = ?",
-            [token],
+            [hash_token(token)],
         ).fetchone()
     assert row is not None
     assert row[0] is None

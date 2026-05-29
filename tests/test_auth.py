@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 import fit_ontology.api as api_mod
 from fit_ontology.auth import (
     COOKIE_NAME,
+    cookie_kwargs,
     decode_session,
     encode_session,
 )
@@ -244,6 +245,28 @@ def test_session_rejects_cookie_signed_with_different_secret(monkeypatch):
     assert decode_session(token) is None
 
 
+# ─── Cookie Secure flag (dynamic env read) ───────────────────────────
+#
+# The Secure flag is resolved inside cookie_kwargs() on every cookie
+# write rather than captured at import time. The constant version was
+# read before api.py's load_env() ran, so a .env value for
+# FIT_ONTOLOGY_SESSION_SECURE landed too late to take effect. These
+# pin the dynamic behavior so a regression to a module-level constant
+# fails loudly.
+
+
+def test_cookie_secure_off_without_flag(monkeypatch):
+    monkeypatch.delenv("FIT_ONTOLOGY_SESSION_SECURE", raising=False)
+    assert cookie_kwargs()["secure"] is False
+
+
+def test_cookie_secure_on_when_flag_set_after_import(monkeypatch):
+    """Setting the env var at runtime (as load_env would, after the auth
+    module is already imported) must still flip the Secure flag."""
+    monkeypatch.setenv("FIT_ONTOLOGY_SESSION_SECURE", "1")
+    assert cookie_kwargs()["secure"] is True
+
+
 # ─── Startup posture ────────────────────────────────────────────────────────
 
 def _clear_startup_env(monkeypatch):
@@ -300,3 +323,34 @@ def test_startup_config_allows_public_perimeter_auth_with_session_secret(monkeyp
     monkeypatch.setenv("FIT_ONTOLOGY_SESSION_SECRET", "test-secret")
 
     api_mod._validate_startup_config()
+
+
+# ─── DB bootstrap failure posture ────────────────────────────────────
+
+
+def test_bootstrap_fails_closed_in_production(monkeypatch):
+    """A production-like runtime must refuse to start if the schema /
+    migration / seed bootstrap fails, rather than serve traffic against a
+    half-initialised DB."""
+    _clear_startup_env(monkeypatch)
+    monkeypatch.setenv("FIT_ONTOLOGY_PRODUCTION", "1")
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("schema DDL exploded")
+
+    monkeypatch.setattr(api_mod, "connect", _boom)
+    with pytest.raises(RuntimeError, match="Refusing to start"):
+        api_mod._bootstrap_db()
+
+
+def test_bootstrap_logs_and_continues_in_dev(monkeypatch):
+    """Local dev keeps the log-and-continue behaviour so a transient lock
+    doesn't block the inner loop."""
+    _clear_startup_env(monkeypatch)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("transient lock")
+
+    monkeypatch.setattr(api_mod, "connect", _boom)
+    # No raise — returns normally after logging.
+    api_mod._bootstrap_db()

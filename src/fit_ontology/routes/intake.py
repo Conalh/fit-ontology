@@ -38,6 +38,7 @@ from ..db import (
     insert_client_from_payload,
     intake_lookup,
     record_audit,
+    transaction,
 )
 from ..rate_limit import INTAKE_MINT_LIMIT, INTAKE_SUBMIT_LIMIT, enforce
 from .deps import forbid_demo_trainer, read_only_conn, real_client_ip
@@ -197,31 +198,30 @@ def post_intake(
 
             trainer_id = record["trainer_id"]
 
-            con.execute("BEGIN TRANSACTION")
-            client_id = insert_client_from_payload(con, trainer_id, payload)
-            claimed = consume_intake_token(con, token, client_id)
-            if not claimed:
-                # Lost the race to a concurrent submission between
-                # intake_lookup above and consume here. Roll back the
-                # insert so we don't leave a stranded client row.
-                con.execute("ROLLBACK")
-                raise HTTPException(
-                    status_code=410,
-                    detail="This intake form has already been submitted",
+            with transaction(con):
+                client_id = insert_client_from_payload(con, trainer_id, payload)
+                claimed = consume_intake_token(con, token, client_id)
+                if not claimed:
+                    # Lost the race to a concurrent submission between
+                    # intake_lookup above and consume here. Raising inside
+                    # the transaction rolls back the insert so we don't
+                    # leave a stranded client row.
+                    raise HTTPException(
+                        status_code=410,
+                        detail="This intake form has already been submitted",
+                    )
+                record_audit(
+                    con,
+                    trainer_id,
+                    "intake.submitted",
+                    target_type="client",
+                    target_id=client_id,
+                    details={
+                        "intake_token_prefix": token[:12],
+                        "name": payload.name,
+                    },
+                    ip=client_ip,
                 )
-            record_audit(
-                con,
-                trainer_id,
-                "intake.submitted",
-                target_type="client",
-                target_id=client_id,
-                details={
-                    "intake_token_prefix": token[:12],
-                    "name": payload.name,
-                },
-                ip=client_ip,
-            )
-            con.execute("COMMIT")
     except HTTPException:
         raise
     except duckdb.IOException as e:
