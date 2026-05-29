@@ -38,7 +38,6 @@ Thumbs.db
 .claude/
 
 # Internal planning docs — not for public sharing via the repo
-ROADMAP.md
 PRIVATE_BETA.md
 
 # Next.js build artifacts (rebuild via `npm run build --prefix web`)

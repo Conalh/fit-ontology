@@ -362,7 +362,7 @@ before the persist branch and skip it for demo traffic. Demo
 visitors still get a real verdict + plan rendered in memory —
 the DB just doesn't grow.
 
-**Tested by:** `tests/test_demo.py` (all 18 tests).
+**Tested by:** `tests/test_demo.py` (all 20 tests).
 
 ### Clickjacking
 

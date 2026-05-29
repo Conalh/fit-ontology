@@ -152,7 +152,7 @@ Rules-based, not ML. For a one-person practice, **explainable beats clever**. Ni
 ```
 HRV level         ── ≥0.5/1/1.5 SD below 28d baseline ───► autonomic stress
 HRV trend         ── 7-day downward slope in SD/day  ───►  early warning
-                       (Plews & Laursen 2017)
+                       (Plews & Laursen 2013)
 
 Resting HR level  ── 3/5/8 bpm above 28d baseline    ───► autonomic stress
 Resting HR trend  ── 7-day upward slope in SD/day    ───► accumulating stress
@@ -166,7 +166,7 @@ ACWR              ── >1.3 / >1.5 / >1.8 from sRPE    ───► high train
                        (Gabbett 2016, "training-injury paradox")
 
 Session RPE drift ── rising mean RPE at constant load → undertrained
-                       (Foster sRPE 1995)
+                       (Foster sRPE 1998)
 
 Training Readiness── Garmin composite <60/45/30 over 7d
                        (corroborator — overlaps HRV/sleep/stress)
@@ -186,10 +186,10 @@ The baseline window length itself is data-driven: `recommend_baseline_window` pi
 
 Thresholds, citations, and references live in [`src/fit_ontology/reasoning.py`](src/fit_ontology/reasoning.py):
 - ACSM Guidelines for Exercise Testing and Prescription, 11th ed. (progression magnitudes; sleep floor)
-- Plews & Laursen (2017), *International Journal of Sports Physiology and Performance* — HRV vs rolling baseline in SD units
+- Plews & Laursen (2013), *Sports Medicine* — HRV vs rolling baseline in SD units
 - Gabbett (2016), *British Journal of Sports Medicine* — ACWR sweet spot and danger zones from session-RPE × duration
 - Buchheit (2014), *Frontiers in Physiology* — HR-based training-status monitoring
-- Foster et al. (2001) — session-RPE method for internal training load quantification
+- Foster (1998), *Medicine & Science in Sports & Exercise* — session-RPE method for internal training load quantification
 
 The planning layer ([`src/fit_ontology/planning.py`](src/fit_ontology/planning.py)) turns each verdict into a structured weekly plan: 3 sessions for deload, 4 for conservative, match the client's recent cadence for standard. Loads scale off the client's recent 4-week mean (60% deload, 85–95% conservative). Contraindications from intake attach to relevant slots as warnings rather than filtering exercise lists. A separate matcher links executed sessions back to planned slots via deterministic ID, closing the prescription-vs-reality loop that powers the calibration page's adherence telemetry.
 
@@ -233,7 +233,7 @@ pip install -e .[dev]
 pytest -q
 ```
 
-280 tests covering the reasoning branches (level + trend detectors, dual-window acute/chronic combiner + level-dominates safety rule, recovery score, baseline-window auto-fit, per-client threshold overrides), the planning templates and plan-vs-execution matcher, contraindications routing, the override log roundtrip, the assistant tool routing, the Apple Health and Garmin activity parsers, the PDF report, the deterministic metric-ID dedup, multi-tenant isolation across reads + writes, the audit log + rate-limit + security-header + CSP middleware, the share-token surface, the intake-token surface (helpers + mint + public submit), the Coach Assistant draft endpoint, demo-mode write-rejection, and every FastAPI route. CI runs the same suite on Python 3.11 and 3.12 for every push and PR
+330 tests covering the reasoning branches (level + trend detectors, dual-window acute/chronic combiner + level-dominates safety rule, recovery score, baseline-window auto-fit, per-client threshold overrides), the planning templates and plan-vs-execution matcher, contraindications routing, the override log roundtrip, the assistant tool routing, the Apple Health and Garmin activity parsers, the PDF report, the deterministic metric-ID dedup, multi-tenant isolation across reads + writes, the audit log + rate-limit + security-header + CSP middleware, the share-token surface, the intake-token surface (helpers + mint + public submit), the Coach Assistant draft endpoint, demo-mode write-rejection, and every FastAPI route. CI runs the same suite on Python 3.11 and 3.12 for every push and PR
 ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)).
 
 ## Deploy
@@ -251,7 +251,7 @@ demo-trainer requests; the actual single-trainer auth surface
 (`/login` + `FIT_ONTOLOGY_REQUIRE_AUTH=1`) coexists alongside.
 
 ```bash
-fly volumes create fit_data --region iad --size 1
+fly volumes create fit_data --region sjc --size 1
 fly secrets set FIT_ONTOLOGY_SESSION_SECRET="$(openssl rand -base64 48)"
 fly secrets set FIT_ONTOLOGY_DEFAULT_TRAINER_PASSWORD=...
 fly secrets set ANTHROPIC_API_KEY=...

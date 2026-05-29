@@ -113,7 +113,7 @@ Three middleware in `api.py`:
 | `auth.py` | `/api/auth/login` `/logout` `/me` | cookie-session via itsdangerous + bcrypt; rate-limited |
 | `clients.py` | `/api/clients` CRUD | ownership-checked on every write |
 | `metrics.py` | `/api/clients/{id}/metrics` `/sessions` `/upload` | upload supports Apple Health zip, Strava CSV, Whoop JSON |
-| `recommendation.py` | `/api/clients/{id}/recommendation` | lazy-persisted; the trainer's Monday call stays stable |
+| `recommendation.py` | `/api/clients/{id}/recommendation` `/recommendation/refresh` `/recommendations` | lazy-persisted GET (the trainer's Monday call stays stable), POST to force-recompute, and the persisted history list |
 | `overrides.py` | `/api/clients/{id}/overrides` | trainer's accept/edit/reject log |
 | `planning.py` | `/api/clients/{id}/plan` `/plan/{slot}` | weekly plan generation + in-place slot editing |
 | `thresholds.py` | `/api/clients/{id}/thresholds` | sparse per-client overrides on reasoning thresholds |
@@ -122,6 +122,8 @@ Three middleware in `api.py`:
 | `coach.py` | `/api/clients/{id}/coach-message/draft` | LLM-drafted check-in message |
 | `ask.py` | `/api/ask` | conversational tool-use over the ontology |
 | `roster.py` | `/api/roster` | computed roster with recommendations per client |
+| `delta.py` | `/api/clients/{id}/weekly-delta` | week-over-week plan-vs-reality summary for one client |
+| `actions.py` | `/api/action-queue` | cross-client next-actions queue, ordered by urgency (review verdicts, reconnect stale data, build missing plans) |
 | `calibration.py` | `/api/calibration` | system-vs-trainer agreement matrix + plan-adherence telemetry |
 | `pdf.py` | `/api/clients/{id}/pdf` | client-facing weekly report |
 
@@ -172,10 +174,12 @@ up a server.
 - **`coach_draft.py`** — single-shot Claude draft of a check-in
   message based on structured payload (verdict + recovery +
   adherence + recent overrides).
-- **`rate_limit.py`** — in-process sliding-window deque. Three
+- **`rate_limit.py`** — in-process sliding-window deque. Six
   named limits: login (10/min per IP+email), ask (30/min per
   trainer), share-mint (20/hour per trainer), coach-draft
-  (20/hour per trainer).
+  (20/hour per trainer), intake-mint (20/hour per trainer), and
+  intake-submit (10/hour per IP — the only public-write surface,
+  so keyed by IP rather than trainer).
 - **`demo.py`** — opt-in read-only mode for hosted deploys. Seeds
   synthetic data under a demo trainer, gates writes with 403.
 
@@ -314,7 +318,7 @@ data-destruction class this defends against.
 ### Citations live in the reasoning module
 
 `reasoning.FLAG_CITATIONS` maps every signal to its source
-authority (Plews & Laursen 2017, Gabbett 2016, Buchheit 2014,
+authority (Plews & Laursen 2013, Gabbett 2016, Buchheit 2014,
 ACSM 11e). The dashboard shows these alongside the verdict. The
 trainer can audit *why* a recommendation was made — and disagree
 with the literature when their athlete is the exception. This is
@@ -402,6 +406,6 @@ web/
 data/synthetic/         Seed data for build_db.py + demo mode
 
 scripts/                build_db, sync_garmin, trainer admin CLI
-tests/                  pytest, 280 tests
+tests/                  pytest, 330 tests
 docs/                   deploy runbook
 ```

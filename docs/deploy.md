@@ -270,9 +270,14 @@ $ python -c "
 from fit_ontology.db import connect
 from fit_ontology.demo import DEMO_TRAINER_ID
 with connect(read_only=False) as con:
-    for t in ('client_thresholds', 'planned_sessions',
+    # client_share_tokens.client_id FKs clients(id), so the token tables
+    # must be deleted before clients or the clients DELETE raises an FK
+    # violation. audit_log has no FK but carries trainer_id, so wipe it
+    # too for a clean "entirely."
+    for t in ('client_share_tokens', 'client_intake_tokens',
+              'client_thresholds', 'planned_sessions',
               'recommendation_overrides', 'recommendations',
-              'metrics', 'sessions', 'clients'):
+              'metrics', 'sessions', 'audit_log', 'clients'):
         con.execute(f'DELETE FROM {t} WHERE trainer_id = ?', [DEMO_TRAINER_ID])
     con.execute('DELETE FROM trainers WHERE id = ?', [DEMO_TRAINER_ID])
 "
