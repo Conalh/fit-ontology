@@ -26,6 +26,11 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "anthropic>=0.39.0",
     "reportlab>=4.0.0",
+    # defusedxml hardens the Apple Health export parser against XML
+    # entity-expansion / external-entity attacks (billion laughs, XXE).
+    # Pure-Python and tiny, so it's a hard runtime dep rather than an
+    # optional extra — the security control should never be silently off.
+    "defusedxml>=0.7.1",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "python-multipart>=0.0.9",
