@@ -46,6 +46,36 @@ class RateLimit:
 _buckets: dict[tuple[str, str], deque] = defaultdict(deque)
 _lock = Lock()
 
+# limit.name → window_seconds, recorded on first enforce() so the GC
+# sweep can use each bucket's own window. A single global cutoff would
+# be wrong: login's window is 60s but the mint limiters are 3600s, so a
+# global 60s cutoff would evict live mint buckets.
+_windows: dict[str, int] = {}
+
+# Opportunistic GC threshold. The login limiter's identity embeds an
+# attacker-controllable email, so a credential-stuffing run mints a
+# fresh key per address and _buckets would grow without bound (each
+# deque is tiny, but the dict isn't). When the key count crosses this,
+# enforce() sweeps out every bucket whose newest entry has already aged
+# past its own window — those evict to empty on next touch anyway, so
+# dropping them changes no limit decision. Set high enough that normal
+# traffic (one key per active trainer + a handful of login pairs) never
+# triggers a sweep.
+_GC_THRESHOLD = 10_000
+
+
+def _gc_locked(now: float) -> None:
+    """Drop buckets that have aged out of their window. Caller holds
+    ``_lock``; invoked opportunistically from ``enforce`` when
+    ``_buckets`` crosses ``_GC_THRESHOLD`` keys."""
+    stale = [
+        key
+        for key, bucket in _buckets.items()
+        if not bucket or bucket[-1] < now - _windows.get(key[0], 0)
+    ]
+    for key in stale:
+        del _buckets[key]
+
 
 def enforce(limit: RateLimit, identity: str) -> None:
     """Check + record one attempt against ``limit`` for ``identity``.
@@ -63,6 +93,9 @@ def enforce(limit: RateLimit, identity: str) -> None:
     cutoff = now - limit.window_seconds
     key = (limit.name, identity)
     with _lock:
+        _windows[limit.name] = limit.window_seconds
+        if len(_buckets) > _GC_THRESHOLD:
+            _gc_locked(now)
         bucket = _buckets[key]
         while bucket and bucket[0] < cutoff:
             bucket.popleft()
