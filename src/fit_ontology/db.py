@@ -1,10 +1,13 @@
 """DuckDB persistence layer."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import secrets
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -65,6 +68,42 @@ def connect(db_path: Path = DEFAULT_DB_PATH, *, read_only: bool = False) -> duck
         if is_demo_enabled():
             seed_demo_data_if_needed(con)
     return con
+
+
+@contextmanager
+def transaction(con: duckdb.DuckDBPyConnection) -> Iterator[duckdb.DuckDBPyConnection]:
+    """Run a group of writes as one all-or-nothing DuckDB transaction.
+
+    ``BEGIN TRANSACTION`` on enter, ``COMMIT`` on a clean exit,
+    ``ROLLBACK`` if the body raises — so a multi-statement write either
+    lands whole or not at all, instead of leaving partial state when one
+    statement fails partway through. Use it to wrap any composition of
+    writes that must be atomic together: the client delete cascade, the
+    public intake submission, the recommendation refresh + plan
+    replacement, and any future multi-table write.
+
+    Outside an explicit transaction DuckDB auto-commits each statement,
+    which is why a mid-sequence failure used to leave half-applied state.
+    We drive the transaction with explicit SQL rather than the
+    connector's ``autocommit`` attribute, whose behavior is inconsistent
+    across DuckDB Python releases — the intake-submit path already relied
+    on raw BEGIN/COMMIT for the same reason.
+
+    Not reentrant: DuckDB has no nested transactions, so the helpers this
+    wraps (``delete_client_cascade`` etc.) stay transaction-free building
+    blocks and the *caller* owns the transaction boundary. A rollback
+    that itself fails is suppressed so the original exception — the one
+    the caller actually needs to see — propagates unmasked.
+    """
+    con.execute("BEGIN TRANSACTION")
+    try:
+        yield con
+    except Exception:
+        with contextlib.suppress(Exception):
+            con.execute("ROLLBACK")
+        raise
+    else:
+        con.execute("COMMIT")
 
 
 def _run_migrations(con: duckdb.DuckDBPyConnection) -> None:
@@ -334,14 +373,23 @@ def delete_client_cascade(con, trainer_id: str, client_id: str) -> dict | None:
     DuckDB enforces foreign-key constraints strictly: deleting a
     client while sessions/metrics/etc still reference it raises
     ConstraintException. Deletes have to walk the dependent tables
-    first, in roughly reverse-FK-depth order. Caller is expected to
-    wrap this in a single ``with connect(..., read_only=False)``
-    context — every statement here lands on the same connection so
-    DuckDB's per-file writer lock serialises them naturally; an
-    explicit BEGIN TRANSACTION around the lot would be ideal but the
-    DuckDB Python connector's transaction handling is inconsistent
-    across versions, and the per-connection serialisation gets us
-    the same partial-write protection in practice.
+    first, in roughly reverse-FK-depth order.
+
+    This cascade deliberately does NOT run inside ``transaction()``,
+    even though wrapping a multi-step destructive write would normally
+    be the right call. DuckDB's foreign-key checker is over-eager within
+    an explicit transaction: the child DELETEs aren't reflected in the
+    FK index until commit, so the parent ``DELETE FROM clients`` reports
+    its children as "still referenced" and raises ConstraintException —
+    the whole cascade fails (confirmed by test, see
+    test_transaction.test_cascade_inside_transaction_hits_duckdb_fk_limit).
+    Until DuckDB supports deferrable constraints, the workable approach is
+    per-statement autocommit, leaf-first, on a single serialized
+    connection: each child DELETE commits before the next runs, so the
+    parent DELETE sees them gone. The residual risk is a mid-cascade IO
+    failure leaving a partially-deleted client; that's the price of the
+    DuckDB limitation, and far smaller than the cascade failing outright
+    on every call.
 
     The ``client_intake_tokens`` table is special-cased: its
     ``consumed_client_id`` is a stamp that records "this token

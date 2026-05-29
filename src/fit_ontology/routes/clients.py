@@ -134,6 +134,14 @@ def delete_client(
     """
     client_ip = real_client_ip(request)
     try:
+        # NOT wrapped in transaction(): DuckDB's foreign-key checker is
+        # over-eager inside an explicit transaction — the parent DELETE
+        # FROM clients still "sees" the child rows we deleted earlier in
+        # the same uncommitted transaction and raises ConstraintException.
+        # See delete_client_cascade's docstring. The deletes therefore run
+        # leaf-first under per-statement autocommit on one serialized
+        # connection, which is the partial-write protection DuckDB allows
+        # here.
         with connect(DEFAULT_DB_PATH, read_only=False) as con:
             snapshot = delete_client_cascade(con, trainer_id, client_id)
             if snapshot is None:
