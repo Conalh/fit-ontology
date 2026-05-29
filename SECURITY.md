@@ -13,9 +13,10 @@ is the *adversarial what-if*.
 
 - **Cookie-session auth** (bcrypt + itsdangerous), HttpOnly +
   SameSite=Lax + Secure-gated, 14-day TTL.
-- **Multi-tenant isolation** at *two layers*: route-level
-  `_ensure_client` + db-layer `_assert_clients_owned` chokepoint.
-  Every client-data write goes through both.
+- **Multi-tenant isolation** anchored on a db-layer chokepoint:
+  every read helper filters on `trainer_id`, every write helper
+  calls `_assert_clients_owned`. The upload and threshold routes add
+  an early `_ensure_client` guard on top.
 - **Append-only audit log** for every sensitive mutation, scoped
   per trainer, with action / target / IP / details JSON.
 - **In-process rate limiting** on login (10/min per IP+email),
@@ -117,14 +118,23 @@ belong to `trainer_id`. The route maps `ValueError → HTTP 404` (same
 shape as "client doesn't exist," so the caller can't distinguish
 "doesn't exist" from "exists but isn't yours").
 
-**Defense, layer 2 — routes.** Every endpoint that takes
-`{client_id}` from the path runs `_ensure_client(con, trainer_id,
-client_id)` before any work. Returns 404 with no DB write attempted.
+**Defense, layer 2 — route-level early exit.** Read routes resolve
+the client through a `trainer_id`-scoped query (`WHERE id = ? AND
+trainer_id = ?`) and map an empty result to 404, so "another
+trainer's client" reads identically to "no such client." The upload
+(`metrics.py`) and threshold (`thresholds.py`) routes additionally
+call `_ensure_client(con, trainer_id, client_id)` up front — they're
+the paths where doing the work first would be wasteful (parsing a
+multi-MB export) or would otherwise reach a write, so they bail to
+404 before any of it.
 
-**Why two layers:** the chokepoint catches a future route that
-forgets the upfront check; the upfront check stops the request
-early without burning a write connection. Either alone is
-defensible; both together is harder to regress.
+**Why two layers:** the db-layer chokepoint is the guarantee — no
+client-data write lands without an ownership assertion, even from a
+future route that forgets to check. The `trainer_id`-scoped reads
+and the `_ensure_client` early exits are the optimization: they turn
+a cross-tenant attempt into a cheap 404 rather than letting it
+travel all the way down to the chokepoint. The chokepoint alone is
+sufficient for safety; the upfront checks make regressions cheaper.
 
 **Tested by:** `tests/test_trainer_isolation.py` (chokepoint level),
 `tests/test_api.py` (route level), `tests/test_security.py`
