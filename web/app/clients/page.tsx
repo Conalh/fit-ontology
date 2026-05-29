@@ -117,17 +117,36 @@ function ClientDetailInner({ clientId }: { clientId: string }) {
     );
   }
 
+  // The client identity query is the page's foundation — every card
+  // below keys off it. If it fails (API down, bad id), bail to the same
+  // "API unreachable" message the roster shows rather than rendering a
+  // shell of perpetually-loading cards.
+  if (clientQ.error) {
+    return (
+      <main style={{ padding: "40px", color: "var(--text-muted)" }}>
+        <p style={{ fontSize: 12.5, color: "var(--danger)" }}>
+          Could not reach the API. Is{" "}
+          <code style={{ fontFamily: "var(--font-mono)" }}>fit-ontology-serve</code>{" "}
+          running?
+        </p>
+        <p style={{ marginTop: 12 }}>
+          <Link href="/" style={{ color: "var(--accent)" }}>
+            Back to roster
+          </Link>
+        </p>
+      </main>
+    );
+  }
+
   const accentVars = {
     "--accent": accentHex,
     "--accent-bg": withAlpha(accentHex, 0.10),
   } as CSSProperties;
 
-  const client = clientQ.data as
-    | { id?: string; name?: string; goal?: string; age?: number }
-    | undefined;
-  const clientName = (client?.name as string | undefined) ?? "Loading…";
-  const clientGoal = (client?.goal as string | undefined) ?? undefined;
-  const clientAge = (client?.age as number | undefined) ?? undefined;
+  const client = clientQ.data;
+  const clientName = client?.name ?? "Loading…";
+  const clientGoal = client?.goal;
+  const clientAge = client?.age;
 
   return (
     <div

@@ -48,8 +48,6 @@ interface TrendChartProps {
   unit?: string;
   height?: number;
   width?: number;
-  /** Invert sense — for RHR / ACWR where lower is better. */
-  invert?: boolean;
   accent?: string;
   showAxis?: boolean;
   showRibbon?: boolean;
@@ -73,7 +71,6 @@ export function TrendChart({
   unit = "",
   height = 180,
   width = 600,
-  invert = false,
   accent = "var(--accent)",
   showAxis = true,
   showRibbon = true,
@@ -428,9 +425,6 @@ export function TrendChart({
           if (pinned === null) onHover?.(null);
         }}
       />
-
-      {/* Reference so the invert prop is touched (intentional) */}
-      {invert ? null : null}
     </svg>
   );
 }
