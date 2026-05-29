@@ -323,3 +323,34 @@ def test_startup_config_allows_public_perimeter_auth_with_session_secret(monkeyp
     monkeypatch.setenv("FIT_ONTOLOGY_SESSION_SECRET", "test-secret")
 
     api_mod._validate_startup_config()
+
+
+# ─── DB bootstrap failure posture ────────────────────────────────────
+
+
+def test_bootstrap_fails_closed_in_production(monkeypatch):
+    """A production-like runtime must refuse to start if the schema /
+    migration / seed bootstrap fails, rather than serve traffic against a
+    half-initialised DB."""
+    _clear_startup_env(monkeypatch)
+    monkeypatch.setenv("FIT_ONTOLOGY_PRODUCTION", "1")
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("schema DDL exploded")
+
+    monkeypatch.setattr(api_mod, "connect", _boom)
+    with pytest.raises(RuntimeError, match="Refusing to start"):
+        api_mod._bootstrap_db()
+
+
+def test_bootstrap_logs_and_continues_in_dev(monkeypatch):
+    """Local dev keeps the log-and-continue behaviour so a transient lock
+    doesn't block the inner loop."""
+    _clear_startup_env(monkeypatch)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("transient lock")
+
+    monkeypatch.setattr(api_mod, "connect", _boom)
+    # No raise — returns normally after logging.
+    api_mod._bootstrap_db()

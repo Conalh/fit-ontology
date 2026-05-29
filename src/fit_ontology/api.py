@@ -182,10 +182,9 @@ def _init_sentry() -> None:
 _init_sentry()
 
 
-@asynccontextmanager
-async def _lifespan(app: FastAPI):
-    """Open one write-mode connection at startup so the schema DDL +
-    migrations + demo-data seed all land before any request arrives.
+def _bootstrap_db() -> None:
+    """Open one write-mode connection so the schema DDL + migrations +
+    demo-data seed all land before any request arrives.
 
     Why this matters: the first request after a cold boot is often
     ``GET /api/auth/me`` from the SPA's AuthGuard, which goes through
@@ -194,27 +193,41 @@ async def _lifespan(app: FastAPI):
     deploy with ``FIT_ONTOLOGY_DEMO_MODE=1`` would have no demo
     trainer in the DB when /me runs, /me would 401, and the guard
     would bounce the visitor to /login — defeating the whole point
-    of the public demo.
+    of the public demo. The same gap applies to a non-demo deploy: a
+    fresh DB needs its trainers table created + default trainer seeded
+    before the first read-only query needs it.
 
-    The hook also covers the same gap for a non-demo deploy: a fresh
-    DB will have its trainers table created + the default trainer
-    seeded before the first read-only query needs it.
-
-    Yields immediately after the bootstrap; no teardown work.
+    Failure posture: fail CLOSED in a production-like runtime. Serving
+    traffic against a DB whose schema/migration/seed didn't complete
+    means cross-tenant scoping columns, the audit table, or the default
+    trainer might be missing — better to refuse the boot than to answer
+    requests from a half-initialised database. Local dev keeps the
+    log-and-continue behaviour so a transient lock during the inner loop
+    doesn't block startup; the first real write surfaces the error with
+    full context anyway.
     """
-    _validate_startup_config()
     try:
         with connect(DEFAULT_DB_PATH, read_only=False):
             pass
     except Exception as exc:
-        # Don't refuse to start over a bootstrap failure — log and
-        # let the app come up. The first real write request will
-        # surface the actual error with full context.
+        if _is_production_like_runtime():
+            raise RuntimeError(
+                "Refusing to start: DB bootstrap (schema/migration/seed) "
+                f"failed in a production-like runtime: {exc!r}"
+            ) from exc
         import sys
         print(
             f"[fit_ontology.api] WARNING: startup DB bootstrap failed: {exc!r}",
             file=sys.stderr,
         )
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Validate startup config, bootstrap the DB, then serve. Yields
+    immediately after the bootstrap; no teardown work."""
+    _validate_startup_config()
+    _bootstrap_db()
     yield
 
 
