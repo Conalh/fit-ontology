@@ -89,6 +89,28 @@ def current_trainer_id(request: Request) -> str:
     return DEFAULT_TRAINER_ID
 
 
+def _trust_client_ip_header() -> bool:
+    """Whether to believe the client-supplied ``Fly-Client-IP`` header.
+
+    ``Fly-Client-IP`` is only authoritative when the request actually
+    transited Fly's edge proxy — the proxy sets it and a direct client
+    cannot. On a self-hosted deploy (behind nginx/caddy, or nothing) the
+    header is just an attacker-controlled request field: trusting it
+    unconditionally lets a caller forge any source IP and so rotate the
+    rate-limit identity at will, bypassing INTAKE_SUBMIT_LIMIT (the only
+    public write surface) and the per-IP login axis. So we trust it only
+    when we can tell we're behind Fly (the FLY_* env vars Fly injects), or
+    when an operator behind a different trusted proxy opts in explicitly.
+
+    Read at call time, not import, so a test can monkeypatch the env and
+    so a hot-reloaded config takes effect without a restart — same
+    posture as the auth cookie flags.
+    """
+    if os.environ.get("FIT_ONTOLOGY_TRUST_CLIENT_IP_HEADER", "").strip() in {"1", "true", "yes"}:
+        return True
+    return bool(os.environ.get("FLY_APP_NAME") or os.environ.get("FLY_MACHINE_ID"))
+
+
 def real_client_ip(request: Request) -> str | None:
     """Best-effort real client IP, accounting for the reverse proxy.
 
@@ -97,14 +119,17 @@ def real_client_ip(request: Request) -> str | None:
     identical for every external visitor. That breaks the per-IP
     rate-limit identity (intake submit, the login IP axis) and makes
     every ``audit_log.ip`` useless. Fly sets ``Fly-Client-IP`` to the
-    real client address authoritatively, so prefer it. Fall back to the
-    peer address — which uvicorn rewrites from ``X-Forwarded-For`` when
-    launched with ``--proxy-headers`` (see Dockerfile) — for non-Fly
-    proxies and local dev.
+    real client address authoritatively, so prefer it WHEN we trust the
+    header (see ``_trust_client_ip_header`` — gated so an untrusted
+    deploy can't be fed a forged header). Fall back to the peer address —
+    which uvicorn rewrites from ``X-Forwarded-For`` when launched with
+    ``--proxy-headers`` (see Dockerfile) — for non-Fly proxies and local
+    dev.
     """
-    fly = request.headers.get("fly-client-ip")
-    if fly:
-        return fly.strip()
+    if _trust_client_ip_header():
+        fly = request.headers.get("fly-client-ip")
+        if fly:
+            return fly.strip()
     return request.client.host if request.client else None
 
 

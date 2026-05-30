@@ -19,7 +19,8 @@ is the *adversarial what-if*.
   an early `_ensure_client` guard on top.
 - **Append-only audit log** for every sensitive mutation, scoped
   per trainer, with action / target / IP / details JSON.
-- **In-process rate limiting** on login (10/min per IP+email),
+- **In-process rate limiting** on login (two independent buckets:
+  10/min per email and 30/min per source IP),
   Anthropic-quota-burning endpoints (30/min per trainer for /ask,
   20/hour each for share mint + intake mint + coach draft, and
   10/hour per IP on the public intake submit).
@@ -228,12 +229,20 @@ dir. The original `file.filename` is never used as a path —
 only the suffix is read to dispatch the right parser. The
 file is unlinked in a `finally:` block.
 
-**Defense, parser.** Apple Health XML parses via `xml.etree.-
-ElementTree.iterparse` (no XXE — Python's stdlib parser doesn't
-resolve external entities by default in 3.7+). The zip extractor
-in `ingest.from_apple_health_export` uses `zipfile.ZipFile.open()`
-with explicit member names from `namelist()` rather than calling
-`extractall()` — no zip-slip surface.
+**Defense, parser.** Apple Health XML parses via `defusedxml.-
+ElementTree.iterparse` (see `ingest.py`), which installs a parser
+that refuses entity definitions and external references — closing
+both XXE *and* internal-entity expansion ("billion laughs"), the
+latter of which the stdlib `xml.etree` parser does **not** defend
+against. It still allows a DTD with only `ELEMENT` declarations,
+which is exactly the shape of Apple Health's export header, so
+legitimate files parse while hostile ones raise a `ValueError` the
+route maps to a 400. The zip extractor in
+`ingest.from_apple_health_export` uses `zipfile.ZipFile.open()` with
+explicit member names from `infolist()` rather than calling
+`extractall()` — no zip-slip surface — and bounds the decompressed
+side against zip bombs (member count, declared size, compression
+ratio, and a `_BoundedReader` cap on actual bytes read).
 
 **Defense, ownership.** The upload route runs `_ensure_client`
 before parsing. An attacker who tricks the parser into producing
@@ -246,11 +255,28 @@ this case.
 
 **Class:** Attacker enumerates passwords against `/api/auth/login`.
 
-**Defense, rate limit.** 10 login attempts per minute per
-(IP, email) pair. Both axes — IP-only locks out NAT'd users,
-email-only lets stuffers rotate IPs against the same account.
-Sliding-window deque in `rate_limit.py`. 429 attempts still count
-toward the bucket so an attacker can't probe at the boundary.
+**Defense, rate limit.** Two *independent* sliding-window buckets,
+both enforced on every attempt: **10/min per email** (across all
+source IPs) and **30/min per source IP** (across all emails). They
+are separate buckets, not one keyed on the `(IP, email)` pair — a
+combined key hands an attacker a fresh bucket the moment they change
+either component, so an IP-rotating brute-forcer would never trip a
+nominally per-email cap. The per-email bucket is the security-
+critical axis: it bounds online guessing against one account no
+matter how many IPs the attacker rotates through. The per-IP bucket
+is the coarse anti-stuffing floor, set higher than the email cap so a
+shared office NAT isn't locked out by it. Sliding-window deque in
+`rate_limit.py`. 429 attempts still count toward the bucket so an
+attacker can't probe at the boundary.
+
+**Caveat — IP identity is only as trustworthy as the proxy.** The
+per-IP axis (and the intake-submit limit, and `audit_log.ip`) keys on
+`deps.real_client_ip`, which honours the `Fly-Client-IP` header only
+when the runtime can tell it's behind Fly (the `FLY_*` env vars) or an
+operator sets `FIT_ONTOLOGY_TRUST_CLIENT_IP_HEADER=1` for another
+trusted proxy. On any other deployment the header is treated as
+untrusted attacker input and the peer address is used, so a direct
+client can't forge a source IP to rotate the rate-limit identity.
 
 **Defense, password storage.** bcrypt with cost factor 12 (~200ms
 per verify on a shared-cpu-1x). Passwords trimmed and capped at

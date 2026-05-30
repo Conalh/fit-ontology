@@ -1,6 +1,8 @@
 """Client-facing weekly PDF export."""
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
@@ -31,7 +33,13 @@ def post_pdf(
         metrics=state.metrics,
         coach_message=payload.coach_message,
     )
-    filename = f"{state.client_name.replace(' ', '_')}_week_{state.recommendation.week_of:%Y%m%d}.pdf"
+    # client_name comes from the public intake form, so it can carry
+    # quotes, CR/LF, or other bytes that would break out of the quoted
+    # filename (or, with CR/LF, inject response headers). Reduce it to a
+    # safe slug for the Content-Disposition; fall back to "client" if the
+    # name slugged away to nothing.
+    safe_slug = re.sub(r"[^A-Za-z0-9_-]", "_", state.client_name.replace(" ", "_")).strip("_")
+    filename = f"{safe_slug or 'client'}_week_{state.recommendation.week_of:%Y%m%d}.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from io import BytesIO
+from xml.sax.saxutils import escape as _xml_escape
 
 import pandas as pd
 from reportlab.lib import colors
@@ -173,9 +174,18 @@ def build_weekly_pdf(
 
     headline, conclusion = _headline_and_conclusion(rec.recommendation)
 
+    # ReportLab's Paragraph parses a mini-XML markup (<b>, <font>, <br/>,
+    # …), so any user-controlled text must be XML-escaped before it's
+    # interpolated in — otherwise a stray "<" or an unbalanced tag throws
+    # during doc.build() (a 500 on the trainer's export) or injects
+    # formatting. client_name / client_goal arrive from the PUBLIC intake
+    # form, so this is an unauthenticated input; escape at the boundary.
+    safe_name = _xml_escape(client_name)
+    safe_goal = _xml_escape(client_goal)
+
     story: list = []
-    story.append(Paragraph(client_name, h_title))
-    story.append(Paragraph(f"Weekly summary · {client_goal} · week of {rec.week_of:%B %d, %Y}", h_sub))
+    story.append(Paragraph(safe_name, h_title))
+    story.append(Paragraph(f"Weekly summary · {safe_goal} · week of {rec.week_of:%B %d, %Y}", h_sub))
 
     story.append(Paragraph(headline, h_headline))
     story.append(Paragraph(conclusion, h_body))
@@ -188,7 +198,11 @@ def build_weekly_pdf(
         # Paragraph treats <br/> as a line break, but blank lines need
         # to become separate Paragraph instances or they collapse.
         for chunk in coach_message.strip().split("\n\n"):
-            chunk = chunk.strip().replace("\n", "<br/>")
+            # Escape the trainer's text FIRST (so a typed "<" can't open a
+            # tag), THEN turn real newlines into the <br/> markup we want
+            # ReportLab to honour. escape() leaves "\n" untouched, so the
+            # order is what keeps the line breaks while neutralising input.
+            chunk = _xml_escape(chunk.strip()).replace("\n", "<br/>")
             if chunk:
                 story.append(Paragraph(chunk, h_body))
 
@@ -197,7 +211,9 @@ def build_weekly_pdf(
     if flags:
         story.append(Paragraph("What we saw this week", h_section))
         for flag in flags:
-            text = FRIENDLY_FLAG_TEXT.get(flag, f"Flag noted: {flag}.")
+            # Known flags map to static copy; the fallback echoes the raw
+            # flag name (parsed out of the rationale), so escape it too.
+            text = FRIENDLY_FLAG_TEXT.get(flag, f"Flag noted: {_xml_escape(flag)}.")
             story.append(Paragraph(f"• {text}", h_body))
     else:
         story.append(Paragraph("What we saw this week", h_section))
