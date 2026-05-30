@@ -13,6 +13,20 @@ describe("safeNext", () => {
     expect(safeNext("//evil.example/path")).toBe("/");
   });
 
+  it("rejects backslash protocol-relative bypasses", () => {
+    // Browsers/routers normalize "\" to "/", so these resolve as
+    // scheme-relative absolute URLs just like "//host".
+    expect(safeNext("/\\evil.example")).toBe("/");
+    expect(safeNext("/\\/evil.example")).toBe("/");
+    expect(safeNext("/\\\\evil.example")).toBe("/");
+  });
+
+  it("rejects values containing control characters", () => {
+    expect(safeNext("/foo\nhttp://evil")).toBe("/");
+    expect(safeNext("/foo\r\nSet-Cookie: x")).toBe("/");
+    expect(safeNext("/foo\tbar")).toBe("/");
+  });
+
   it("rejects absolute and scheme URLs", () => {
     expect(safeNext("https://evil.example")).toBe("/");
     expect(safeNext("http://evil.example")).toBe("/");

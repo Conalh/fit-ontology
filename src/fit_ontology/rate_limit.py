@@ -119,14 +119,36 @@ def reset() -> None:
 # enforce it. Centralized so the admin can see every limit + its
 # rationale in one place rather than chasing decorators across files.
 
-LOGIN_LIMIT = RateLimit(
-    name="auth.login",
+LOGIN_EMAIL_LIMIT = RateLimit(
+    name="auth.login.email",
     window_seconds=60,
     max_attempts=10,
 )
-"""10 login attempts per minute per (IP, email) pair. Both axes
-because IP-only locks out shared NAT and email-only lets a
-credential stuffer rotate IPs through the same account."""
+"""10 login attempts per minute per email, across ALL source IPs.
+
+This is the security-critical axis: it caps online password guessing
+against a single account no matter how many IPs the attacker rotates
+through. Enforced as its own bucket keyed on the email alone — NOT
+combined with the IP — because a combined ``ip|email`` key gives an
+attacker a fresh bucket every time they change either component, which
+silently defeats both axes (an IP-rotating brute-forcer never trips a
+per-email cap that's actually keyed per-pair)."""
+
+LOGIN_IP_LIMIT = RateLimit(
+    name="auth.login.ip",
+    window_seconds=60,
+    max_attempts=30,
+)
+"""30 login attempts per minute per source IP, across ALL emails.
+
+Caps credential-stuffing volume from a single source trying many
+accounts. Set higher than the per-email cap so a shared office NAT
+(several legitimate users, each logging in or fumbling a password a
+few times) doesn't lock out the whole egress — the per-email cap is
+what stops a targeted attack, this is the coarse anti-stuffing floor.
+Only meaningful when the source IP is trustworthy; see
+``deps.real_client_ip`` for how the client-supplied proxy header is
+gated so this identity can't be freely rotated."""
 
 ASK_LIMIT = RateLimit(
     name="ask",

@@ -24,7 +24,7 @@ from ..db import (
     record_audit,
     verify_trainer_login,
 )
-from ..rate_limit import LOGIN_LIMIT, enforce
+from ..rate_limit import LOGIN_EMAIL_LIMIT, LOGIN_IP_LIMIT, enforce
 from .deps import read_only_conn, real_client_ip
 from .schemas import AuthMeResponse, LoginRequest
 
@@ -41,9 +41,13 @@ def post_login(
     the trainer profile so the front-end can populate its sidebar
     without an extra /me round-trip."""
     client_ip = real_client_ip(request) or "unknown"
-    # Rate limit keyed on (ip, email) — see rate_limit.LOGIN_LIMIT
-    # docstring for the both-axes rationale.
-    enforce(LOGIN_LIMIT, f"{client_ip}|{payload.email.lower()}")
+    # Two INDEPENDENT buckets, not one combined ``ip|email`` key. The
+    # per-email cap bounds guessing against a single account regardless
+    # of source IP (the axis a combined key silently lost); the per-IP
+    # cap bounds stuffing volume from one source. Both record-then-maybe-
+    # raise, so a request that trips either still counts toward both.
+    enforce(LOGIN_IP_LIMIT, client_ip)
+    enforce(LOGIN_EMAIL_LIMIT, payload.email.strip().lower())
 
     # Verify under a read-only connection — keeps login uncoupled
     # from whichever process happens to hold the writer lock (sync

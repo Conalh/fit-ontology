@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 from fastapi.responses import HTMLResponse
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 import fit_ontology.api as api_mod
 from fit_ontology.db import (
@@ -368,21 +369,25 @@ def test_ask_unknown_session_returns_404(app, monkeypatch):
     assert r.status_code == 404
 
 
-def test_login_rate_limit_blocks_after_threshold(tmp_path: Path, monkeypatch):
-    """LOGIN_LIMIT is 10/minute. Patch to 2 to keep the test fast."""
-    from fit_ontology import rate_limit as rl_mod
-    monkeypatch.setattr(rl_mod.LOGIN_LIMIT, "max_attempts", 2)
-    rl_mod.reset()
-
-    # Point auth_routes at a fresh DB so login's verify path doesn't
-    # hit whatever stale file lives at the default path. The rate
-    # limiter runs before the DB lookup, so we don't even need to
-    # seed a trainer — wrong-credential 401 still counts toward the
-    # bucket and the test only cares about the 429 cutover.
-    db_path = tmp_path / "ratelimit.duckdb"
+def _fresh_login_db(tmp_path: Path, monkeypatch, name: str) -> None:
+    """Point auth_routes at a fresh DB so login's verify path doesn't hit
+    whatever stale file lives at the default path. The rate limiter runs
+    before the DB lookup, so we don't even need to seed a trainer —
+    wrong-credential 401 still counts toward the bucket and these tests
+    only care about the 429 cutover."""
+    db_path = tmp_path / name
     with connect(db_path, read_only=False):
         pass
     monkeypatch.setattr(auth_routes, "DEFAULT_DB_PATH", db_path)
+
+
+def test_login_rate_limit_blocks_after_threshold(tmp_path: Path, monkeypatch):
+    """The per-email axis is 10/minute. Patch to 2 to keep the test fast.
+    Same IP + same email is the baseline case the limiter must catch."""
+    from fit_ontology import rate_limit as rl_mod
+    monkeypatch.setattr(rl_mod.LOGIN_EMAIL_LIMIT, "max_attempts", 2)
+    rl_mod.reset()
+    _fresh_login_db(tmp_path, monkeypatch, "ratelimit.duckdb")
 
     c = TestClient(api_mod.app)
     for _ in range(2):
@@ -390,6 +395,107 @@ def test_login_rate_limit_blocks_after_threshold(tmp_path: Path, monkeypatch):
     r = c.post("/api/auth/login", json={"email": "x@example.com", "password": "wrong"})
     assert r.status_code == 429
     rl_mod.reset()
+
+
+def test_login_email_limit_survives_ip_rotation(tmp_path: Path, monkeypatch):
+    """REGRESSION: the per-email cap must hold even when the attacker
+    rotates source IPs. The old combined ``ip|email`` key gave a fresh
+    bucket per IP, so an IP-rotating brute-forcer never tripped a
+    per-account cap. With the trust flag on, distinct Fly-Client-IP
+    values register as distinct source IPs."""
+    from fit_ontology import rate_limit as rl_mod
+    monkeypatch.setattr(rl_mod.LOGIN_EMAIL_LIMIT, "max_attempts", 2)
+    monkeypatch.setattr(rl_mod.LOGIN_IP_LIMIT, "max_attempts", 10_000)  # not the axis under test
+    rl_mod.reset()
+    monkeypatch.setenv("FIT_ONTOLOGY_TRUST_CLIENT_IP_HEADER", "1")
+    _fresh_login_db(tmp_path, monkeypatch, "ratelimit_email.duckdb")
+
+    c = TestClient(api_mod.app)
+    for i in range(2):
+        c.post(
+            "/api/auth/login",
+            json={"email": "victim@example.com", "password": "wrong"},
+            headers={"Fly-Client-IP": f"203.0.113.{i}"},
+        )
+    r = c.post(
+        "/api/auth/login",
+        json={"email": "victim@example.com", "password": "wrong"},
+        headers={"Fly-Client-IP": "203.0.113.99"},  # brand-new IP
+    )
+    assert r.status_code == 429
+    rl_mod.reset()
+
+
+def test_login_ip_limit_survives_email_rotation(tmp_path: Path, monkeypatch):
+    """The per-IP cap must hold even when the attacker rotates the email
+    (credential-stuffing many accounts from one source)."""
+    from fit_ontology import rate_limit as rl_mod
+    monkeypatch.setattr(rl_mod.LOGIN_IP_LIMIT, "max_attempts", 2)
+    monkeypatch.setattr(rl_mod.LOGIN_EMAIL_LIMIT, "max_attempts", 10_000)  # not the axis under test
+    rl_mod.reset()
+    monkeypatch.setenv("FIT_ONTOLOGY_TRUST_CLIENT_IP_HEADER", "1")
+    _fresh_login_db(tmp_path, monkeypatch, "ratelimit_ip.duckdb")
+
+    c = TestClient(api_mod.app)
+    for i in range(2):
+        c.post(
+            "/api/auth/login",
+            json={"email": f"user{i}@example.com", "password": "wrong"},
+            headers={"Fly-Client-IP": "198.51.100.7"},
+        )
+    r = c.post(
+        "/api/auth/login",
+        json={"email": "user99@example.com", "password": "wrong"},  # brand-new email
+        headers={"Fly-Client-IP": "198.51.100.7"},
+    )
+    assert r.status_code == 429
+    rl_mod.reset()
+
+
+# ─── real_client_ip header trust gating (audit fix #2) ────────────────
+
+
+def _fake_request(headers: dict[str, str], client_host: str | None) -> Request:
+    """Build a minimal ASGI Request with the given headers + peer host."""
+    scope = {
+        "type": "http",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        "client": (client_host, 54321) if client_host else None,
+    }
+    return Request(scope)
+
+
+def test_real_client_ip_ignores_forged_header_when_untrusted(monkeypatch):
+    """On a self-hosted (non-Fly, no opt-in) deploy, Fly-Client-IP is just
+    an attacker-controlled request field — we must NOT believe it, or the
+    rate-limit identity can be freely rotated. Falls back to the peer."""
+    from fit_ontology.routes.deps import real_client_ip
+
+    for key in ("FIT_ONTOLOGY_TRUST_CLIENT_IP_HEADER", "FLY_APP_NAME", "FLY_MACHINE_ID"):
+        monkeypatch.delenv(key, raising=False)
+    req = _fake_request({"Fly-Client-IP": "1.2.3.4"}, client_host="10.0.0.9")
+    assert real_client_ip(req) == "10.0.0.9"
+
+
+def test_real_client_ip_trusts_header_on_fly(monkeypatch):
+    """Behind Fly's edge (FLY_* injected) the header is authoritative."""
+    from fit_ontology.routes.deps import real_client_ip
+
+    monkeypatch.delenv("FIT_ONTOLOGY_TRUST_CLIENT_IP_HEADER", raising=False)
+    monkeypatch.setenv("FLY_APP_NAME", "fit-ontology")
+    req = _fake_request({"Fly-Client-IP": "1.2.3.4"}, client_host="fdaa::3")
+    assert real_client_ip(req) == "1.2.3.4"
+
+
+def test_real_client_ip_trusts_header_with_explicit_optin(monkeypatch):
+    """An operator behind a different trusted proxy can opt in explicitly."""
+    from fit_ontology.routes.deps import real_client_ip
+
+    monkeypatch.delenv("FLY_APP_NAME", raising=False)
+    monkeypatch.delenv("FLY_MACHINE_ID", raising=False)
+    monkeypatch.setenv("FIT_ONTOLOGY_TRUST_CLIENT_IP_HEADER", "1")
+    req = _fake_request({"Fly-Client-IP": "1.2.3.4"}, client_host="10.0.0.9")
+    assert real_client_ip(req) == "1.2.3.4"
 
 
 # ─── Security headers ─────────────────────────────────────────────────

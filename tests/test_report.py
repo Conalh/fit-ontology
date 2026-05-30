@@ -111,3 +111,24 @@ def test_pdf_unchanged_for_whitespace_or_none_coach_message():
     # within a small constant.
     assert abs(len(with_empty) - len(baseline)) < 30
     assert abs(len(with_whitespace) - len(baseline)) < 30
+
+
+def test_pdf_survives_reportlab_markup_in_user_text():
+    """SECURITY (audit fix #3): client_name/goal arrive from the public
+    intake form. ReportLab's Paragraph parses a mini-XML markup, so an
+    unescaped "<" or unbalanced tag in those fields would raise during
+    doc.build() — a planted 500 on the trainer's export. We escape at the
+    boundary, so a hostile name must now render a valid PDF, not throw."""
+    pdf = build_weekly_pdf(
+        client_name='<font color="red">Ahab</font></para><inject',
+        client_goal="strength & <b>power",
+        rec=_rec(
+            "Standard progression.",
+            "Recovery clean.",
+        ),
+        metrics=_metrics_df(date(2026, 5, 23)),
+        today=date(2026, 5, 23),
+        coach_message="Nice work <not-a-tag> & keep it up\n\nSee you Monday",
+    )
+    assert pdf.startswith(b"%PDF")
+    assert len(pdf) > 1000
