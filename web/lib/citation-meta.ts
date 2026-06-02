@@ -40,7 +40,7 @@ export const CITATION_META: Record<string, CitationMeta> = {
     short: "ACSM 11e §7",
     title: "ACSM's Guidelines for Exercise Testing and Prescription, 11th ed. (2021)",
     description:
-      "The ACSM's reference text — the standard progression model (5–10% weekly load increase for healthy adults) and recovery/sleep thresholds come from here. Section 7 covers general principles of exercise prescription.",
+      "The ACSM Guidelines umbrella — source of the standard 5–10% general progression band the engine uses. (Retained for older saved recommendations: athlete sleep guidance now follows Walsh et al. 2021, and the resistance-specific 2–10% progression follows the ACSM position stand, Ratamess et al. 2009.)",
     href: "https://shop.lww.com/ACSM-s-Guidelines-for-Exercise-Testing-and-Prescription/p/9781975150181",
   },
   "Gabbett 2016": {
@@ -56,6 +56,13 @@ export const CITATION_META: Record<string, CitationMeta> = {
     description:
       "The canonical session-RPE paper. Defined RPE × duration as a single-number internal-load proxy and showed its relationship to training monotony and overreaching. Source for the rising-RPE signal — RPE climbing for the same prescribed work is the textbook marker of accumulating fatigue.",
     href: "https://pubmed.ncbi.nlm.nih.gov/9662690/",
+  },
+  "Walsh et al. 2021": {
+    short: "Walsh et al. 2021",
+    title: "Walsh, Halson, Sargent, Roach et al. — Sleep and the athlete: narrative review and 2021 expert consensus recommendations (BJSM, 2021)",
+    description:
+      "Athlete-specific sleep consensus — the source for the sleep signal. Cautions that a one-size 7–9 h target is \"unlikely ideal\" and that elite athletes habitually under-sleep (<7 h); recommends individualised sleep needs, which the engine honours via the per-client sleep_floor_hours override. The 7 h floor is a sensible default, not a hard rule.",
+    href: "https://doi.org/10.1136/bjsports-2020-102025",
   },
 };
 
