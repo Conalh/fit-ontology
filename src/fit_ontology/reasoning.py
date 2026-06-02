@@ -27,8 +27,9 @@ actually quantify load and recovery, not just what's easy to compute:
     et al. (2020, IJSPP 15(6):907-913) argue its statistical properties make
     it an unreliable causal prognostic factor, and uncoupling addresses the
     spurious correlation Lolli et al. (2017) flag in the coupled form. So
-    ACWR is one corroborating signal, never a solo deload trigger; an EWMA
-    reformulation (Williams et al. 2017) is the planned next step.
+    ACWR is one corroborating signal, never a solo deload trigger. EWMA is
+    available as an opt-in per-client mode (Williams et al. 2017, the
+    ``acwr_use_ewma`` threshold); the default stays uncoupled-rolling.
 
   - Resting HR drift uses Buchheit (2014): a sustained 5+ bpm rise above
     the 28-day baseline marks autonomic stress, especially when paired
@@ -123,6 +124,21 @@ ACWR_CHRONIC_UNCOUPLED_WEEKS = 3   # chronic excludes the acute week (Lolli 2017
 ACWR_SAFE_LOW, ACWR_SAFE_HIGH = 0.8, 1.3
 ACWR_MODERATE_HIGH = 1.5            # Gabbett "danger zone" boundary
 ACWR_SEVERE_HIGH = 1.8
+
+# Opt-in EWMA ACWR (Williams et al. 2017), default OFF (acwr_use_ewma).
+# Exponentially-weighted moving average of daily load via alpha = 2/(N+1):
+# acute N=7, chronic N=28. EWMA weights recent load more and decays
+# smoothly, but it COMPRESSES the ratio range — a 2× training week reads
+# ~1.3, not ~2.0 — so it needs its own (tighter) bands. These defaults were
+# calibrated on the synthetic roster to fire comparably to the rolling form
+# (steady ≈ 1.0; ~1.5× week → moderate; ≥2× week → severe). They are NOT
+# literature-derived: no authoritative EWMA injury-band mapping exists, so
+# treat them as a starting point and tune per athlete.
+ACWR_EWMA_ACUTE_N = 7
+ACWR_EWMA_CHRONIC_N = 28
+ACWR_EWMA_SAFE_LOW, ACWR_EWMA_SAFE_HIGH = 0.88, 1.10
+ACWR_EWMA_MODERATE_HIGH = 1.20
+ACWR_EWMA_SEVERE_HIGH = 1.32
 
 RHR_BASELINE_DAYS = 28
 RHR_MILD_BPM = 3
@@ -274,6 +290,12 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "acwr_safe_high":       ACWR_SAFE_HIGH,
     "acwr_moderate_high":   ACWR_MODERATE_HIGH,
     "acwr_severe_high":     ACWR_SEVERE_HIGH,
+    # ACWR method selector + EWMA bands (opt-in; 0 = rolling-uncoupled).
+    "acwr_use_ewma":           0.0,
+    "acwr_ewma_safe_low":      ACWR_EWMA_SAFE_LOW,
+    "acwr_ewma_safe_high":     ACWR_EWMA_SAFE_HIGH,
+    "acwr_ewma_moderate_high": ACWR_EWMA_MODERATE_HIGH,
+    "acwr_ewma_severe_high":   ACWR_EWMA_SEVERE_HIGH,
     "rhr_mild_bpm":         RHR_MILD_BPM,
     "rhr_moderate_bpm":     RHR_MODERATE_BPM,
     "rhr_severe_bpm":       RHR_SEVERE_BPM,
@@ -327,6 +349,11 @@ THRESHOLD_BOUNDS: dict[str, tuple[float, float]] = {
     "acwr_safe_high": (0.0, 5.0),
     "acwr_moderate_high": (0.0, 5.0),
     "acwr_severe_high": (0.0, 10.0),
+    "acwr_use_ewma": (0.0, 1.0),
+    "acwr_ewma_safe_low": (0.0, 3.0),
+    "acwr_ewma_safe_high": (0.0, 5.0),
+    "acwr_ewma_moderate_high": (0.0, 5.0),
+    "acwr_ewma_severe_high": (0.0, 10.0),
     "rhr_mild_bpm": (0.0, 50.0),
     "rhr_moderate_bpm": (0.0, 50.0),
     "rhr_severe_bpm": (0.0, 50.0),
@@ -358,6 +385,7 @@ _ASCENDING_LADDERS: tuple[tuple[str, ...], ...] = (
     ("chronic_slope_mild_sd_per_day", "chronic_slope_moderate_sd_per_day",
      "chronic_slope_severe_sd_per_day"),
     ("acwr_safe_high", "acwr_moderate_high", "acwr_severe_high"),
+    ("acwr_ewma_safe_high", "acwr_ewma_moderate_high", "acwr_ewma_severe_high"),
 )
 
 # Strictly-decreasing ladders: a lower value is more severe. Garmin
@@ -409,6 +437,16 @@ def validate_thresholds(values: Mapping[str, float]) -> None:
         raise ValueError(
             f"acwr_safe_low ({values['acwr_safe_low']}) must be strictly less than "
             f"acwr_safe_high ({values['acwr_safe_high']})."
+        )
+
+    if (
+        "acwr_ewma_safe_low" in values
+        and "acwr_ewma_safe_high" in values
+        and not (values["acwr_ewma_safe_low"] < values["acwr_ewma_safe_high"])
+    ):
+        raise ValueError(
+            f"acwr_ewma_safe_low ({values['acwr_ewma_safe_low']}) must be strictly "
+            f"less than acwr_ewma_safe_high ({values['acwr_ewma_safe_high']})."
         )
 
     if (
@@ -1013,6 +1051,69 @@ def _session_load(sessions: pd.DataFrame) -> tuple[pd.Series, dict[date, list[st
     return loads, ids_by_date
 
 
+def _detect_acwr_ewma(
+    loads: pd.Series,
+    ids_by_date: dict[date, list[str]],
+    today: date,
+    th: Mapping[str, float],
+) -> Signal | None:
+    """Opt-in EWMA ACWR (Williams et al. 2017), enabled per-client via the
+    ``acwr_use_ewma`` threshold. Exponentially-weighted moving averages of
+    daily load (alpha = 2/(N+1); acute N=7, chronic N=28) replace the
+    rolling windows — recent load is weighted more and decays smoothly.
+
+    EWMA compresses the ratio range, so it grades against its own bands
+    (``acwr_ewma_*``); see the constants block for why those defaults are
+    synthetic-calibrated rather than literature-derived.
+    """
+    # Complete daily-load series over the 28-day lookback, rest days = 0
+    # (EWMA decays per calendar day, so gaps must be explicit), oldest first.
+    idx = [today - timedelta(days=k) for k in range(ACWR_CHRONIC_WEEKS * 7, 0, -1)]
+    daily = loads.reindex(idx, fill_value=0.0)
+    if float(daily.sum()) <= 0:
+        return None
+    acute = float(daily.ewm(alpha=2.0 / (ACWR_EWMA_ACUTE_N + 1), adjust=False).mean().iloc[-1])
+    chronic = float(daily.ewm(alpha=2.0 / (ACWR_EWMA_CHRONIC_N + 1), adjust=False).mean().iloc[-1])
+    if chronic <= 0:
+        return None
+    ratio = acute / chronic
+
+    window_dates = [d for d in loads.index if 1 <= (today - d).days <= ACWR_CHRONIC_WEEKS * 7]
+    contributing_ids = [sid for d in window_dates for sid in ids_by_date.get(d, [])]
+
+    severity: Severity | None = None
+    if ratio >= th["acwr_ewma_severe_high"]:
+        severity = "severe"
+    elif ratio >= th["acwr_ewma_moderate_high"]:
+        severity = "moderate"
+    elif ratio > th["acwr_ewma_safe_high"]:
+        severity = "mild"
+    elif ratio < th["acwr_ewma_safe_low"]:
+        return Signal(
+            kind="acwr_low",
+            severity="mild",
+            summary=(
+                f"ACWR {ratio:.2f} (EWMA acute {acute:,.0f} vs. chronic "
+                f"{chronic:,.0f} AU/day) — below the EWMA safe zone, possible "
+                f"detraining."
+            ),
+            source_metric_ids=contributing_ids,
+        )
+
+    if severity is None:
+        return None
+
+    return Signal(
+        kind="acwr_high",
+        severity=severity,
+        summary=(
+            f"ACWR {ratio:.2f} (EWMA acute {acute:,.0f} vs. chronic "
+            f"{chronic:,.0f} AU/day) — above the EWMA safe zone."
+        ),
+        source_metric_ids=contributing_ids,
+    )
+
+
 def detect_acwr_signal(
     sessions: pd.DataFrame,
     today: date,
@@ -1030,11 +1131,18 @@ def detect_acwr_signal(
     Ratios < 0.8 flag detraining (mild signal — under-load is not a
     deload trigger but is worth surfacing to a trainer). ACWR stays a
     corroborating signal, never a solo deload trigger (Impellizzeri 2020).
+
+    Set the ``acwr_use_ewma`` threshold (default 0) to switch this client to
+    the opt-in EWMA formulation (Williams et al. 2017); see
+    ``_detect_acwr_ewma``.
     """
     th = _merge_thresholds(thresholds)
     loads, ids_by_date = _session_load(sessions)
     if loads.empty:
         return None
+
+    if th.get("acwr_use_ewma", 0.0) >= 0.5:
+        return _detect_acwr_ewma(loads, ids_by_date, today, th)
 
     # Uncoupled windows (Lolli et al. 2017): the acute 7 days are EXCLUDED
     # from the chronic period, so the acute load no longer sits inside its

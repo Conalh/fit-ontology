@@ -217,6 +217,36 @@ def test_acwr_is_uncoupled_acute_excluded_from_chronic():
     assert "s-28" in sig.source_metric_ids        # chronic window
 
 
+def test_acwr_ewma_mode_is_opt_in_with_its_own_bands():
+    """With the acwr_use_ewma threshold on, ACWR uses Williams (2017) EWMA
+    of daily load instead of rolling windows, graded against the EWMA bands.
+    Same 2× acute week as the uncoupled test: EWMA compresses it to ~1.3
+    (vs rolling's 2.0), and the EWMA bands are set so it still surfaces.
+    The default (flag off) stays on the rolling-uncoupled form.
+    """
+    today = date.today()
+    rows = []
+    for offset in range(1, 29):
+        d = today - timedelta(days=offset)
+        rpe = 10 if offset <= 7 else 5
+        rows.append(dict(
+            id=f"s-{offset}", client_id="c1", date=d,
+            type="strength", duration_min=60, rpe=rpe, notes="",
+        ))
+    s = pd.DataFrame(rows)
+
+    ewma_sig = detect_acwr_signal(s, today, {"acwr_use_ewma": 1.0})
+    assert ewma_sig is not None
+    assert ewma_sig.kind == "acwr_high"
+    assert ewma_sig.severity in ("moderate", "severe")
+    assert "EWMA" in ewma_sig.summary
+
+    # Default is the rolling-uncoupled form — no EWMA wording, higher ratio.
+    default_sig = detect_acwr_signal(s, today)
+    assert default_sig is not None
+    assert "EWMA" not in default_sig.summary
+
+
 def test_no_data_returns_standard_progression():
     """With no metrics and no sessions the recommender should default to
     standard progression rather than crash or invent a deload."""
