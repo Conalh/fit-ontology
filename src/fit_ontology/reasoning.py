@@ -20,15 +20,15 @@ actually quantify load and recovery, not just what's easy to compute:
 
   - Acute:Chronic Workload Ratio (ACWR) from session-RPE × duration follows
     Gabbett (2016), "The training-injury prevention paradox." Acute = 7-day
-    load sum; chronic = 28-day rolling average of weekly loads. Ratios
-    >1.5 carry elevated injury risk; <0.8 indicates detraining. ACWR is
-    methodologically contested: Impellizzeri et al. (2020, IJSPP 15(6):
-    907-913) argue its statistical properties make it an unreliable causal
-    prognostic factor, and the chronic window here is *coupled* (the acute
-    7 days sit inside the 28-day chronic) — the spurious-correlation issue
-    Lolli et al. (2017) raise. So ACWR is one corroborating signal, never a
-    solo deload trigger; an uncoupled / EWMA reformulation (Williams et al.
-    2017) is a candidate future change.
+    load sum; chronic = mean weekly load over the 3 weeks BEFORE the acute
+    window (days 8–28), computed *uncoupled* so the acute load isn't also in
+    its own denominator. Ratios >1.5 carry elevated injury risk; <0.8
+    indicates detraining. ACWR is methodologically contested: Impellizzeri
+    et al. (2020, IJSPP 15(6):907-913) argue its statistical properties make
+    it an unreliable causal prognostic factor, and uncoupling addresses the
+    spurious correlation Lolli et al. (2017) flag in the coupled form. So
+    ACWR is one corroborating signal, never a solo deload trigger; an EWMA
+    reformulation (Williams et al. 2017) is the planned next step.
 
   - Resting HR drift uses Buchheit (2014): a sustained 5+ bpm rise above
     the 28-day baseline marks autonomic stress, especially when paired
@@ -117,7 +117,9 @@ HRV_MILD_SD = 0.5                   # > 0.5 SD below baseline = early stress
 HRV_MODERATE_SD = 1.0               # > 1 SD below baseline = clear stress
 HRV_SEVERE_SD = 1.5
 
-ACWR_CHRONIC_WEEKS = 4              # 28-day chronic window
+ACWR_CHRONIC_WEEKS = 4              # 28-day chronic lookback bound
+ACWR_CHRONIC_UNCOUPLED_WEEKS = 3   # chronic excludes the acute week (Lolli 2017):
+                                   # days 8–28 = 3 weeks; divisor for weekly chronic
 ACWR_SAFE_LOW, ACWR_SAFE_HIGH = 0.8, 1.3
 ACWR_MODERATE_HIGH = 1.5            # Gabbett "danger zone" boundary
 ACWR_SEVERE_HIGH = 1.8
@@ -1016,36 +1018,50 @@ def detect_acwr_signal(
     today: date,
     thresholds: Mapping[str, float] | None = None,
 ) -> Signal | None:
-    """Acute:Chronic Workload Ratio per Gabbett (2016).
+    """Acute:Chronic Workload Ratio per Gabbett (2016), computed uncoupled
+    (Lolli et al. 2017) so the acute load isn't also part of its own
+    chronic denominator.
 
-    Acute = sum of session loads over the last 7 days.
-    Chronic = mean weekly load across the last 28 days (i.e., a 4-week
-              moving average of weekly load).
+    Acute   = sum of session loads over the last 7 days.
+    Chronic = mean weekly load across the 3 weeks BEFORE the acute window
+              (days 8–28); the acute week is excluded from chronic.
 
     Sweet spot is 0.8–1.3. Ratios > 1.5 elevated injury risk; > 1.8 high.
     Ratios < 0.8 flag detraining (mild signal — under-load is not a
-    deload trigger but is worth surfacing to a trainer).
+    deload trigger but is worth surfacing to a trainer). ACWR stays a
+    corroborating signal, never a solo deload trigger (Impellizzeri 2020).
     """
     th = _merge_thresholds(thresholds)
     loads, ids_by_date = _session_load(sessions)
     if loads.empty:
         return None
 
+    # Uncoupled windows (Lolli et al. 2017): the acute 7 days are EXCLUDED
+    # from the chronic period, so the acute load no longer sits inside its
+    # own denominator. Coupling artificially damps a genuine spike (it
+    # inflates both numerator and denominator at once); excluding it lets
+    # the spike read as the higher ratio it actually is.
     acute_window = [d for d in loads.index if 1 <= (today - d).days <= HRV_ACUTE_DAYS]
-    chronic_window = [d for d in loads.index if 1 <= (today - d).days <= ACWR_CHRONIC_WEEKS * 7]
+    chronic_window = [
+        d for d in loads.index
+        if HRV_ACUTE_DAYS < (today - d).days <= ACWR_CHRONIC_WEEKS * 7
+    ]
 
     if not acute_window or not chronic_window:
         return None
 
     acute_total = float(loads.loc[acute_window].sum())
-    weekly_chronic = float(loads.loc[chronic_window].sum()) / ACWR_CHRONIC_WEEKS
+    weekly_chronic = float(loads.loc[chronic_window].sum()) / ACWR_CHRONIC_UNCOUPLED_WEEKS
     if weekly_chronic <= 0:
         return None
 
-    # All session IDs in the chronic window — that's the data the
-    # detector reasoned over. Sufficient for audit; the trainer can
-    # filter by date in the dashboard if they want to drill in further.
-    contributing_ids = [sid for d in chronic_window for sid in ids_by_date.get(d, [])]
+    # Audit trail: every session that fed either side of the ratio — the
+    # acute numerator plus the (now uncoupled) chronic denominator.
+    contributing_ids = [
+        sid
+        for d in (*acute_window, *chronic_window)
+        for sid in ids_by_date.get(d, [])
+    ]
 
     ratio = acute_total / weekly_chronic
     severity: Severity | None = None
