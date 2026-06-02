@@ -38,7 +38,11 @@ actually quantify load and recovery, not just what's easy to compute:
     worthwhile change for resting HR at ~0.5 SD of the athlete's own
     baseline and note any fixed-bpm cut is somewhat arbitrary, so an
     SD-based threshold (as the HRV detector already uses) is better
-    grounded. Flagged for a future threshold revision.
+    grounded — available as an opt-in per-client mode (the ``rhr_use_sd``
+    threshold). The default stays absolute bpm, which keeps RHR's
+    clinically meaningful scale and avoids over-penalising very stable
+    athletes (whose tiny baseline SD would otherwise turn a trivial drift
+    into "severe").
 
   - Sleep uses a 7h floor with a 6h "recovery deficit" floor. The general
     7-9h adult range is ACSM/population guidance; for athletes, Walsh
@@ -144,6 +148,15 @@ RHR_BASELINE_DAYS = 28
 RHR_MILD_BPM = 3
 RHR_MODERATE_BPM = 5
 RHR_SEVERE_BPM = 8
+# Opt-in SD-based RHR grading (rhr_use_sd, default OFF). Mirrors the HRV
+# detector: rise expressed in baseline-SD units, graded at 0.5/1.0/1.5 SD
+# (Schneider et al. 2018 SWC ~0.5 SD). The bpm default above stays the
+# default because resting HR has a clinically meaningful absolute scale,
+# and SD grading over-penalises very stable athletes (a tiny baseline SD
+# turns a trivial bpm drift into a large SD multiple).
+RHR_SD_MILD = 0.5
+RHR_SD_MODERATE = 1.0
+RHR_SD_SEVERE = 1.5
 
 SLEEP_FLOOR_HOURS = 7.0             # ACSM general adult guideline
 SLEEP_DEFICIT_HOURS = 6.0           # severe deficit threshold
@@ -299,6 +312,11 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "rhr_mild_bpm":         RHR_MILD_BPM,
     "rhr_moderate_bpm":     RHR_MODERATE_BPM,
     "rhr_severe_bpm":       RHR_SEVERE_BPM,
+    # RHR method selector + SD bands (opt-in; 0 = absolute bpm).
+    "rhr_use_sd":           0.0,
+    "rhr_sd_mild":          RHR_SD_MILD,
+    "rhr_sd_moderate":      RHR_SD_MODERATE,
+    "rhr_sd_severe":        RHR_SD_SEVERE,
     "sleep_floor_hours":    SLEEP_FLOOR_HOURS,
     "sleep_deficit_hours":  SLEEP_DEFICIT_HOURS,
     "sleep_score_poor":     SLEEP_SCORE_POOR,
@@ -357,6 +375,10 @@ THRESHOLD_BOUNDS: dict[str, tuple[float, float]] = {
     "rhr_mild_bpm": (0.0, 50.0),
     "rhr_moderate_bpm": (0.0, 50.0),
     "rhr_severe_bpm": (0.0, 50.0),
+    "rhr_use_sd": (0.0, 1.0),
+    "rhr_sd_mild": (0.0, 5.0),
+    "rhr_sd_moderate": (0.0, 5.0),
+    "rhr_sd_severe": (0.0, 5.0),
     "sleep_floor_hours": (0.0, 24.0),
     "sleep_deficit_hours": (0.0, 24.0),
     "sleep_score_poor": (0.0, 100.0),
@@ -380,6 +402,7 @@ THRESHOLD_BOUNDS: dict[str, tuple[float, float]] = {
 _ASCENDING_LADDERS: tuple[tuple[str, ...], ...] = (
     ("hrv_mild_sd", "hrv_moderate_sd", "hrv_severe_sd"),
     ("rhr_mild_bpm", "rhr_moderate_bpm", "rhr_severe_bpm"),
+    ("rhr_sd_mild", "rhr_sd_moderate", "rhr_sd_severe"),
     ("rpe_rise_mild", "rpe_rise_moderate"),
     ("slope_mild_sd_per_day", "slope_moderate_sd_per_day", "slope_severe_sd_per_day"),
     ("chronic_slope_mild_sd_per_day", "chronic_slope_moderate_sd_per_day",
@@ -944,17 +967,49 @@ def detect_rhr_signal(
 ) -> Signal | None:
     """Resting HR rise above the 28-day baseline. Buchheit (2014): a
     sustained 5+ bpm elevation indicates autonomic stress, particularly
-    when paired with depressed HRV."""
+    when paired with depressed HRV.
+
+    Default grading is absolute bpm (3/5/8). Set the ``rhr_use_sd``
+    threshold to grade the rise in baseline-SD units instead (0.5/1.0/1.5
+    SD), mirroring the HRV detector and Schneider et al. (2018) — kept in
+    lockstep with the recovery-score gauge's RHR component.
+    """
     th = _merge_thresholds(thresholds)
     baseline_days = int(th["baseline_window_days"])
     acute, acute_ids = _recent_mean(metrics, MetricKind.RESTING_HR.value, today, HRV_ACUTE_DAYS)
-    baseline_mean, _baseline_sd, baseline_ids = _baseline(
+    baseline_mean, baseline_sd, baseline_ids = _baseline(
         metrics, MetricKind.RESTING_HR.value, today, baseline_days
     )
     if acute is None or baseline_mean is None:
         return None
 
     rise = acute - baseline_mean
+    source_ids = list({*acute_ids, *baseline_ids})
+
+    # Opt-in SD-based grading (rhr_use_sd): express the rise in baseline-SD
+    # units like the HRV detector (Schneider et al. 2018 SWC ~0.5 SD). Falls
+    # back to absolute bpm when the baseline SD is missing/zero so a
+    # perfectly flat baseline can't divide by zero.
+    if th.get("rhr_use_sd", 0.0) >= 0.5 and baseline_sd:
+        rise_sd = rise / baseline_sd
+        if rise_sd < th["rhr_sd_mild"]:
+            return None
+        sd_severity: Severity = (
+            "severe" if rise_sd >= th["rhr_sd_severe"]
+            else "moderate" if rise_sd >= th["rhr_sd_moderate"]
+            else "mild"
+        )
+        return Signal(
+            kind="rhr_above_baseline",
+            severity=sd_severity,
+            summary=(
+                f"Resting HR averaged {acute:.0f} bpm over the last {HRV_ACUTE_DAYS} days "
+                f"vs. a {baseline_days}-day baseline of {baseline_mean:.0f} bpm "
+                f"(+{rise:.0f} bpm, +{rise_sd:.1f} SD)."
+            ),
+            source_metric_ids=source_ids,
+        )
+
     if rise < th["rhr_mild_bpm"]:
         return None
 
@@ -971,7 +1026,7 @@ def detect_rhr_signal(
             f"vs. a {baseline_days}-day baseline of {baseline_mean:.0f} bpm "
             f"(+{rise:.0f} bpm)."
         ),
-        source_metric_ids=list({*acute_ids, *baseline_ids}),
+        source_metric_ids=source_ids,
     )
 
 
@@ -1051,67 +1106,57 @@ def _session_load(sessions: pd.DataFrame) -> tuple[pd.Series, dict[date, list[st
     return loads, ids_by_date
 
 
-def _detect_acwr_ewma(
+def _acwr_ratio(
     loads: pd.Series,
-    ids_by_date: dict[date, list[str]],
     today: date,
     th: Mapping[str, float],
-) -> Signal | None:
-    """Opt-in EWMA ACWR (Williams et al. 2017), enabled per-client via the
-    ``acwr_use_ewma`` threshold. Exponentially-weighted moving averages of
-    daily load (alpha = 2/(N+1); acute N=7, chronic N=28) replace the
-    rolling windows — recent load is weighted more and decays smoothly.
+) -> tuple[float, float, float, bool] | None:
+    """The acute:chronic workload ratio for the active method, plus its
+    acute and chronic component values and whether EWMA was used.
 
-    EWMA compresses the ratio range, so it grades against its own bands
-    (``acwr_ewma_*``); see the constants block for why those defaults are
-    synthetic-calibrated rather than literature-derived.
+    Single source of truth shared by the ACWR signal detector and the
+    recovery-score gauge, so the verdict and the gauge can never read a
+    different ratio (the drift that crept in when the detector moved to
+    uncoupled windows but the gauge stayed coupled).
+
+    Default = rolling-uncoupled (Lolli et al. 2017): acute = last-7-day
+    load sum; chronic = mean weekly load over the 3 weeks BEFORE it
+    (days 8–28), excluding the acute week from its own denominator.
+    Opt-in (``acwr_use_ewma``) = EWMA (Williams et al. 2017): alpha =
+    2/(N+1), acute N=7 / chronic N=28, over a zero-filled daily series so
+    decay respects calendar gaps. EWMA compresses the ratio range and is
+    graded against its own bands — see the constants block.
+
+    Returns ``None`` when the active method lacks enough data.
     """
-    # Complete daily-load series over the 28-day lookback, rest days = 0
-    # (EWMA decays per calendar day, so gaps must be explicit), oldest first.
-    idx = [today - timedelta(days=k) for k in range(ACWR_CHRONIC_WEEKS * 7, 0, -1)]
-    daily = loads.reindex(idx, fill_value=0.0)
-    if float(daily.sum()) <= 0:
-        return None
-    acute = float(daily.ewm(alpha=2.0 / (ACWR_EWMA_ACUTE_N + 1), adjust=False).mean().iloc[-1])
-    chronic = float(daily.ewm(alpha=2.0 / (ACWR_EWMA_CHRONIC_N + 1), adjust=False).mean().iloc[-1])
-    if chronic <= 0:
-        return None
-    ratio = acute / chronic
-
-    window_dates = [d for d in loads.index if 1 <= (today - d).days <= ACWR_CHRONIC_WEEKS * 7]
-    contributing_ids = [sid for d in window_dates for sid in ids_by_date.get(d, [])]
-
-    severity: Severity | None = None
-    if ratio >= th["acwr_ewma_severe_high"]:
-        severity = "severe"
-    elif ratio >= th["acwr_ewma_moderate_high"]:
-        severity = "moderate"
-    elif ratio > th["acwr_ewma_safe_high"]:
-        severity = "mild"
-    elif ratio < th["acwr_ewma_safe_low"]:
-        return Signal(
-            kind="acwr_low",
-            severity="mild",
-            summary=(
-                f"ACWR {ratio:.2f} (EWMA acute {acute:,.0f} vs. chronic "
-                f"{chronic:,.0f} AU/day) — below the EWMA safe zone, possible "
-                f"detraining."
-            ),
-            source_metric_ids=contributing_ids,
-        )
-
-    if severity is None:
+    if loads.empty:
         return None
 
-    return Signal(
-        kind="acwr_high",
-        severity=severity,
-        summary=(
-            f"ACWR {ratio:.2f} (EWMA acute {acute:,.0f} vs. chronic "
-            f"{chronic:,.0f} AU/day) — above the EWMA safe zone."
-        ),
-        source_metric_ids=contributing_ids,
-    )
+    if th.get("acwr_use_ewma", 0.0) >= 0.5:
+        # Complete daily series, rest days = 0 (EWMA decays per calendar
+        # day, so gaps must be explicit), oldest first.
+        idx = [today - timedelta(days=k) for k in range(ACWR_CHRONIC_WEEKS * 7, 0, -1)]
+        daily = loads.reindex(idx, fill_value=0.0)
+        if float(daily.sum()) <= 0:
+            return None
+        acute = float(daily.ewm(alpha=2.0 / (ACWR_EWMA_ACUTE_N + 1), adjust=False).mean().iloc[-1])
+        chronic = float(daily.ewm(alpha=2.0 / (ACWR_EWMA_CHRONIC_N + 1), adjust=False).mean().iloc[-1])
+        if chronic <= 0:
+            return None
+        return acute / chronic, acute, chronic, True
+
+    acute_window = [d for d in loads.index if 1 <= (today - d).days <= HRV_ACUTE_DAYS]
+    chronic_window = [
+        d for d in loads.index
+        if HRV_ACUTE_DAYS < (today - d).days <= ACWR_CHRONIC_WEEKS * 7
+    ]
+    if not acute_window or not chronic_window:
+        return None
+    acute_total = float(loads.loc[acute_window].sum())
+    weekly_chronic = float(loads.loc[chronic_window].sum()) / ACWR_CHRONIC_UNCOUPLED_WEEKS
+    if weekly_chronic <= 0:
+        return None
+    return acute_total / weekly_chronic, acute_total, weekly_chronic, False
 
 
 def detect_acwr_signal(
@@ -1133,64 +1178,49 @@ def detect_acwr_signal(
     corroborating signal, never a solo deload trigger (Impellizzeri 2020).
 
     Set the ``acwr_use_ewma`` threshold (default 0) to switch this client to
-    the opt-in EWMA formulation (Williams et al. 2017); see
-    ``_detect_acwr_ewma``.
+    the opt-in EWMA formulation (Williams et al. 2017); the ratio itself is
+    computed in ``_acwr_ratio``, shared with the recovery-score gauge.
     """
     th = _merge_thresholds(thresholds)
     loads, ids_by_date = _session_load(sessions)
-    if loads.empty:
+    res = _acwr_ratio(loads, today, th)
+    if res is None:
         return None
+    ratio, acute_val, chronic_val, is_ewma = res
 
-    if th.get("acwr_use_ewma", 0.0) >= 0.5:
-        return _detect_acwr_ewma(loads, ids_by_date, today, th)
-
-    # Uncoupled windows (Lolli et al. 2017): the acute 7 days are EXCLUDED
-    # from the chronic period, so the acute load no longer sits inside its
-    # own denominator. Coupling artificially damps a genuine spike (it
-    # inflates both numerator and denominator at once); excluding it lets
-    # the spike read as the higher ratio it actually is.
-    acute_window = [d for d in loads.index if 1 <= (today - d).days <= HRV_ACUTE_DAYS]
-    chronic_window = [
-        d for d in loads.index
-        if HRV_ACUTE_DAYS < (today - d).days <= ACWR_CHRONIC_WEEKS * 7
-    ]
-
-    if not acute_window or not chronic_window:
-        return None
-
-    acute_total = float(loads.loc[acute_window].sum())
-    weekly_chronic = float(loads.loc[chronic_window].sum()) / ACWR_CHRONIC_UNCOUPLED_WEEKS
-    if weekly_chronic <= 0:
-        return None
-
-    # Audit trail: every session that fed either side of the ratio — the
-    # acute numerator plus the (now uncoupled) chronic denominator.
+    # Audit trail: every session in the 28-day lookback that fed the ratio
+    # (both methods reason over this window).
     contributing_ids = [
         sid
-        for d in (*acute_window, *chronic_window)
+        for d in loads.index if 1 <= (today - d).days <= ACWR_CHRONIC_WEEKS * 7
         for sid in ids_by_date.get(d, [])
     ]
 
-    ratio = acute_total / weekly_chronic
-    severity: Severity | None = None
+    if is_ewma:
+        safe_low, safe_high = th["acwr_ewma_safe_low"], th["acwr_ewma_safe_high"]
+        moderate_high, severe_high = th["acwr_ewma_moderate_high"], th["acwr_ewma_severe_high"]
+        detail = f"EWMA acute {acute_val:,.0f} vs. chronic {chronic_val:,.0f} AU/day"
+        zone = "EWMA safe zone"
+    else:
+        safe_low, safe_high = th["acwr_safe_low"], th["acwr_safe_high"]
+        moderate_high, severe_high = th["acwr_moderate_high"], th["acwr_severe_high"]
+        detail = f"acute {acute_val:,.0f} AU vs. weekly chronic {chronic_val:,.0f} AU"
+        zone = "0.8–1.3 safe zone"
 
-    if ratio >= th["acwr_severe_high"]:
+    severity: Severity | None = None
+    if ratio >= severe_high:
         severity = "severe"
-    elif ratio >= th["acwr_moderate_high"]:
+    elif ratio >= moderate_high:
         severity = "moderate"
-    elif ratio > th["acwr_safe_high"]:
+    elif ratio > safe_high:
         severity = "mild"
-    elif ratio < th["acwr_safe_low"]:
+    elif ratio < safe_low:
         # Under-load. Mild signal so it shows up in the rationale without
         # triggering a deload; trainers may want to increase volume.
         return Signal(
             kind="acwr_low",
             severity="mild",
-            summary=(
-                f"ACWR {ratio:.2f} (acute {acute_total:,.0f} AU vs. weekly chronic "
-                f"{weekly_chronic:,.0f} AU) — below the 0.8–1.3 safe zone, possible "
-                f"detraining."
-            ),
+            summary=f"ACWR {ratio:.2f} ({detail}) — below the {zone}, possible detraining.",
             source_metric_ids=contributing_ids,
         )
 
@@ -1200,10 +1230,7 @@ def detect_acwr_signal(
     return Signal(
         kind="acwr_high",
         severity=severity,
-        summary=(
-            f"ACWR {ratio:.2f} (acute {acute_total:,.0f} AU vs. weekly chronic "
-            f"{weekly_chronic:,.0f} AU) — above the 0.8–1.3 safe zone."
-        ),
+        summary=f"ACWR {ratio:.2f} ({detail}) — above the {zone}.",
         source_metric_ids=contributing_ids,
     )
 
@@ -1742,29 +1769,37 @@ def compute_recovery_score(
     if sleep_acute is not None:
         sleep_score = _sleep_component_score(sleep_acute, th["sleep_floor_hours"], th["sleep_deficit_hours"])
 
-    # RHR component — bpm rise above baseline.
+    # RHR component — bpm rise, or SD-based rise when rhr_use_sd is set.
+    # Kept in lockstep with detect_rhr_signal so the gauge matches the verdict.
     rhr_acute, _ = _recent_mean(metrics, MetricKind.RESTING_HR.value, today, HRV_ACUTE_DAYS)
-    rhr_base, _, _ = _baseline(metrics, MetricKind.RESTING_HR.value, today, baseline_days)
+    rhr_base, rhr_sd, _ = _baseline(metrics, MetricKind.RESTING_HR.value, today, baseline_days)
     rhr_score: float | None = None
     if rhr_acute is not None and rhr_base is not None:
-        rise = max(0.0, rhr_acute - rhr_base)
-        rhr_score = _band_score(rise, th["rhr_mild_bpm"], th["rhr_moderate_bpm"], th["rhr_severe_bpm"])
+        if th.get("rhr_use_sd", 0.0) >= 0.5 and rhr_sd:
+            rise_sd = max(0.0, (rhr_acute - rhr_base) / rhr_sd)
+            rhr_score = _band_score(rise_sd, th["rhr_sd_mild"], th["rhr_sd_moderate"], th["rhr_sd_severe"])
+        else:
+            rise = max(0.0, rhr_acute - rhr_base)
+            rhr_score = _band_score(rise, th["rhr_mild_bpm"], th["rhr_moderate_bpm"], th["rhr_severe_bpm"])
 
-    # ACWR component — acute/chronic load ratio.
+    # ACWR component — same ratio + bands as the verdict detector, via the
+    # shared _acwr_ratio (rolling-uncoupled default, or EWMA when opted in),
+    # so the gauge and the verdict can't read a different ratio.
     acwr_score: float | None = None
     loads, _ = _session_load(sessions)
-    if not loads.empty:
-        acute_window = [d for d in loads.index if 1 <= (today - d).days <= HRV_ACUTE_DAYS]
-        chronic_window = [d for d in loads.index if 1 <= (today - d).days <= ACWR_CHRONIC_WEEKS * 7]
-        if acute_window and chronic_window:
-            acute_total = float(loads.loc[acute_window].sum())
-            weekly_chronic = float(loads.loc[chronic_window].sum()) / ACWR_CHRONIC_WEEKS
-            if weekly_chronic > 0:
-                ratio = acute_total / weekly_chronic
-                acwr_score = _acwr_component_score(
-                    ratio, th["acwr_safe_low"], th["acwr_safe_high"],
-                    th["acwr_moderate_high"], th["acwr_severe_high"],
-                )
+    acwr_res = _acwr_ratio(loads, today, th)
+    if acwr_res is not None:
+        ratio, _acute_val, _chronic_val, is_ewma = acwr_res
+        if is_ewma:
+            acwr_score = _acwr_component_score(
+                ratio, th["acwr_ewma_safe_low"], th["acwr_ewma_safe_high"],
+                th["acwr_ewma_moderate_high"], th["acwr_ewma_severe_high"],
+            )
+        else:
+            acwr_score = _acwr_component_score(
+                ratio, th["acwr_safe_low"], th["acwr_safe_high"],
+                th["acwr_moderate_high"], th["acwr_severe_high"],
+            )
 
     # Composite — weights re-normalize over whichever components are
     # measurable. Missing components don't drag the score down to zero;
