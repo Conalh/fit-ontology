@@ -185,6 +185,38 @@ def test_acwr_spike_drives_high_load_signal():
     assert "acwr" in r.rationale.lower()
 
 
+def test_acwr_is_uncoupled_acute_excluded_from_chronic():
+    """ACWR uses the uncoupled formula (Lolli et al. 2017): the acute 7
+    days are excluded from the chronic denominator.
+
+    One session/day for 28 days, chronic load 5×60=300/day and an acute
+    week spiked 2× (10×60=600/day):
+      acute   = 7 × 600 = 4,200
+      chronic = 21 × 300 = 6,300 over the 3 weeks before acute → 2,100/wk
+      ratio   = 4,200 / 2,100 = 2.0 → severe.
+    The old coupled formula would have diluted this to 1.6 (only moderate),
+    because the spike would also sit inside its own 4-week denominator.
+    """
+    today = date.today()
+    rows = []
+    for offset in range(1, 29):  # days 1..28 back, one session each
+        d = today - timedelta(days=offset)
+        rpe = 10 if offset <= 7 else 5  # acute week spiked 2×
+        rows.append(dict(
+            id=f"s-{offset}", client_id="c1", date=d,
+            type="strength", duration_min=60, rpe=rpe, notes="",
+        ))
+    sig = detect_acwr_signal(pd.DataFrame(rows), today)
+    assert sig is not None
+    assert sig.kind == "acwr_high"
+    assert sig.severity == "severe"               # coupled would be moderate (1.6)
+    assert "2,100 AU" in sig.summary              # uncoupled weekly chronic, not 2,625
+    # Audit trail spans both sides of the ratio: an acute-week session and
+    # a chronic-window session both appear.
+    assert "s-1" in sig.source_metric_ids         # acute week
+    assert "s-28" in sig.source_metric_ids        # chronic window
+
+
 def test_no_data_returns_standard_progression():
     """With no metrics and no sessions the recommender should default to
     standard progression rather than crash or invent a deload."""
