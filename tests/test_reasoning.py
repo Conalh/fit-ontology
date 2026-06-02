@@ -24,6 +24,7 @@ from fit_ontology.reasoning import (
     compute_recovery_score,
     detect_acwr_signal,
     detect_hrv_trend_signal,
+    detect_rhr_signal,
     detect_rhr_trend_signal,
     detect_rpe_signal,
     detect_sleep_signal,
@@ -163,6 +164,33 @@ def test_rhr_elevated_contributes_to_signal_count():
     assert "deload" in r.recommendation.lower()
     assert any("resting hr" in s.lower() or "rhr" in s.lower()
                for s in [r.rationale])
+
+
+def test_rhr_sd_mode_is_opt_in():
+    """With rhr_use_sd on, RHR drift is graded in baseline-SD units
+    (Schneider 2018) instead of absolute bpm. Tight baseline (SD ~3.5 bpm),
+    a +6 bpm acute rise → ~1.7 SD = severe under SD grading and the summary
+    carries the SD figure; the default (flag off) stays absolute bpm.
+    """
+    today = date.today()
+    rows = []
+    for offset in range(28, 0, -1):
+        d = today - timedelta(days=offset)
+        val = 66 if offset <= 7 else 58
+        rows.append(dict(
+            id=f"rhr-{offset}", client_id="c1", date=d,
+            source="garmin", kind=MetricKind.RESTING_HR.value, value=val, unit="bpm",
+        ))
+    m = pd.DataFrame(rows)
+
+    sd_sig = detect_rhr_signal(m, today, {"rhr_use_sd": 1.0})
+    assert sd_sig is not None
+    assert sd_sig.kind == "rhr_above_baseline"
+    assert "SD)" in sd_sig.summary          # SD-graded summary
+
+    bpm_sig = detect_rhr_signal(m, today)   # default = absolute bpm
+    assert bpm_sig is not None
+    assert "SD)" not in bpm_sig.summary
 
 
 def test_acwr_spike_drives_high_load_signal():
