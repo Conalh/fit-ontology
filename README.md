@@ -180,16 +180,29 @@ Every signal includes its summary, severity, and the source IDs that fed it (met
 
 Alongside the verdict, the engine also computes a **0–100 composite recovery score** (HRV / sleep / RHR / ACWR, weighted) that the dashboard surfaces as a gauge. It uses the same windows and thresholds as the verdict engine, so the gauge and the verdict can never disagree.
 
-**Engine v2 — dual-window trend detection.** The three trend detectors (HRV / RHR / sleep) each run two slope estimators on every signal: a 7-day OLS for acute changes and a 28-day EWMA (halflife=10 days) for sustained drift. The combiner demotes acute-only firings by one severity band (the noise-suppression rule — most published trend methods acknowledge the 7-day window is too noisy on its own to drive a verdict) and promotes acute-plus-chronic agreement. A second safety rule fires when composite recovery ≥ 90: trend signals get demoted again, on the basis that excellent levels shouldn't be overridden by borderline trend math. On the recommendation card, each trend chip carries a `7d` / `28d` / `7d + 28d` badge so the trainer can see which window(s) actually fired before clicking through to the popover that shows the raw slope numbers. Plews, Laursen et al. (2013) recommend rolling-mean windows of ~4 weeks for individual-level monitoring exactly because the 7-day variance is too high to act on alone.
+**Engine v2 — dual-window trend detection.** The three trend detectors (HRV / RHR / sleep) each run two slope estimators on every signal: a 7-day OLS for acute changes and a 28-day EWMA (halflife=10 days) for sustained drift. The combiner demotes acute-only firings by one severity band (the noise-suppression rule — most published trend methods acknowledge the 7-day window is too noisy on its own to drive a verdict) and promotes acute-plus-chronic agreement. A second safety rule fires when composite recovery ≥ 90: trend signals get demoted again, on the basis that excellent levels shouldn't be overridden by borderline trend math. On the recommendation card, each trend chip carries a `7d` / `28d` / `7d + 28d` badge so the trainer can see which window(s) actually fired before clicking through to the popover that shows the raw slope numbers. Plews, Laursen et al. (2013) read a 7-day rolling average against the individual's ~4-week normal range (smallest worthwhile change ≈ 0.5 SD) — the 28-day EWMA here is this engine's own noise-suppression layer, not a window length they prescribe.
 
 The baseline window length itself is data-driven: `recommend_baseline_window` picks 14, 28, or 56 days per client by finding the shortest window whose newer/older halves don't drift apart by more than 0.5 SD. Falls back to the 28-day literature default when no candidate settles.
 
 Thresholds, citations, and references live in [`src/fit_ontology/reasoning.py`](src/fit_ontology/reasoning.py):
-- ACSM Guidelines for Exercise Testing and Prescription, 11th ed. (progression magnitudes; sleep floor)
-- Plews & Laursen (2013), *Sports Medicine* — HRV vs rolling baseline in SD units
-- Gabbett (2016), *British Journal of Sports Medicine* — ACWR sweet spot and danger zones from session-RPE × duration
-- Buchheit (2014), *Frontiers in Physiology* — HR-based training-status monitoring
-- Foster (1998), *Medicine & Science in Sports & Exercise* — session-RPE method for internal training load quantification
+*Core methodology*
+- Plews & Laursen (2013), *Sports Medicine* — HRV read against an individual rolling baseline in SD units; the dual-window core. [doi](https://doi.org/10.1007/s40279-013-0071-8)
+- Buchheit (2014), *Frontiers in Physiology* — HR-based training-status monitoring. [doi](https://doi.org/10.3389/fphys.2014.00073)
+- Schneider et al. (2018), *Frontiers in Physiology* — smallest worthwhile change for resting HR/HRV ≈ 0.5 SD; the basis for reading RHR drift in SD units rather than a fixed bpm cut. [doi](https://doi.org/10.3389/fphys.2018.00639)
+- Foster (1998), *Medicine & Science in Sports & Exercise* — session-RPE method for internal training-load quantification. [pubmed](https://pubmed.ncbi.nlm.nih.gov/9662690/)
+- Gabbett (2016), *British Journal of Sports Medicine* — ACWR sweet spot and danger zones from session-RPE × duration. [doi](https://doi.org/10.1136/bjsports-2015-095788)
+- Walsh et al. (2021), *British Journal of Sports Medicine* — athlete sleep consensus; one-size 7–9 h is "unlikely ideal," individualise (the engine's per-client sleep floor). [doi](https://doi.org/10.1136/bjsports-2020-102025)
+- Ratamess et al. (2009), *Medicine & Science in Sports & Exercise* — ACSM position stand on resistance-training progression (2–10%). [doi](https://doi.org/10.1249/MSS.0b013e3181915670)
+- ACSM *Guidelines for Exercise Testing and Prescription*, 11th ed. (2021) — general umbrella for the 5–10% standard progression band; not the source of the specific HRV/RHR/sleep cut-offs.
+
+*Evidence the HRV-guided premise still holds (the founding papers are now a decade old)*
+- Vesterinen et al. (2016), *Medicine & Science in Sports & Exercise* — RCT: HRV-guided training beat predefined training. [pubmed](https://pubmed.ncbi.nlm.nih.gov/26909534/)
+- Granero-Gallegos et al. (2020), *IJERPH* 17(21):7999 — systematic review + meta-analysis, same direction. [doi](https://doi.org/10.3390/ijerph17217999)
+
+*ACWR is methodologically contested — treated as one corroborating signal, never a solo trigger*
+- Impellizzeri et al. (2020), *Int. J. Sports Physiology & Performance* — conceptual issues and fundamental pitfalls of the ACWR. [pubmed](https://pubmed.ncbi.nlm.nih.gov/32502973/)
+- Lolli et al. (2017), *British Journal of Sports Medicine* — mathematical coupling / spurious correlation in the conventional (coupled) ACWR. [pubmed](https://pubmed.ncbi.nlm.nih.gov/29101104/)
+- Williams et al. (2017), *British Journal of Sports Medicine* — EWMA as a more sensitive ACWR formulation. [doi](https://doi.org/10.1136/bjsports-2016-096589)
 
 The planning layer ([`src/fit_ontology/planning.py`](src/fit_ontology/planning.py)) turns each verdict into a structured weekly plan: 3 sessions for deload, 4 for conservative, match the client's recent cadence for standard. Loads scale off the client's recent 4-week mean (60% deload, 85–95% conservative). Contraindications from intake attach to relevant slots as warnings rather than filtering exercise lists. A separate matcher links executed sessions back to planned slots via deterministic ID, closing the prescription-vs-reality loop that powers the calibration page's adherence telemetry.
 

@@ -11,23 +11,45 @@ actually quantify load and recovery, not just what's easy to compute:
   - HRV trend is measured against a 28-day rolling baseline in SD units
     (Plews, Laursen, et al. 2013, "Training Adaptation and Heart Rate
     Variability in Elite Endurance Athletes," Sports Med 43:773-781).
-    Week-vs-week alone is too noisy at the individual level.
+    Week-vs-week alone is too noisy at the individual level. The
+    HRV-guided premise still holds in post-2016 evidence: Vesterinen
+    et al. (2016, Med Sci Sports Exerc 48(7):1347-1354) found HRV-guided
+    training beat predefined training in an RCT, and Granero-Gallegos
+    et al. (2020, IJERPH 17(21):7999) confirmed the direction in a
+    systematic review + meta-analysis.
 
   - Acute:Chronic Workload Ratio (ACWR) from session-RPE × duration follows
     Gabbett (2016), "The training-injury prevention paradox." Acute = 7-day
     load sum; chronic = 28-day rolling average of weekly loads. Ratios
-    >1.5 carry elevated injury risk; <0.8 indicates detraining.
+    >1.5 carry elevated injury risk; <0.8 indicates detraining. ACWR is
+    methodologically contested: Impellizzeri et al. (2020, IJSPP 15(6):
+    907-913) argue its statistical properties make it an unreliable causal
+    prognostic factor, and the chronic window here is *coupled* (the acute
+    7 days sit inside the 28-day chronic) — the spurious-correlation issue
+    Lolli et al. (2017) raise. So ACWR is one corroborating signal, never a
+    solo deload trigger; an uncoupled / EWMA reformulation (Williams et al.
+    2017) is a candidate future change.
 
-  - Resting HR drift uses Buchheit (2014) recommendations: a sustained
-    5+ bpm rise above 28-day baseline marks autonomic stress, especially
-    when paired with reduced HRV.
+  - Resting HR drift uses Buchheit (2014): a sustained 5+ bpm rise above
+    the 28-day baseline marks autonomic stress, especially when paired
+    with reduced HRV. The 5-bpm cut is a practitioner heuristic —
+    Schneider et al. (2018, Front Physiol 9:639) put the smallest
+    worthwhile change for resting HR at ~0.5 SD of the athlete's own
+    baseline and note any fixed-bpm cut is somewhat arbitrary, so an
+    SD-based threshold (as the HRV detector already uses) is better
+    grounded. Flagged for a future threshold revision.
 
-  - Sleep follows ACSM 11th ed. general adult guidance (7-9h) with a 6h
-    floor for "recovery deficit."
+  - Sleep uses a 7h floor with a 6h "recovery deficit" floor. The general
+    7-9h adult range is ACSM/population guidance; for athletes, Walsh
+    et al. (2021, BJSM 55(7):356-368) caution that a one-size 7-9h target
+    is "unlikely ideal" and recommend individualised needs — supported
+    here via the per-client ``sleep_floor_hours`` override.
 
-  - Progression magnitudes follow ACSM 11e Resistance Training
-    Prescription: 2-10% weekly increase when recovery markers are clean,
-    deload every 4-6 weeks regardless.
+  - Progression magnitudes follow ACSM Guidelines 11e general progression
+    (the engine's standard band is 5-10%, ``ACSM_STANDARD_RANGE``); the
+    resistance-specific 2-10% load-progression rule is the ACSM position
+    stand (Ratamess et al. 2009, Med Sci Sports Exerc 41(3):687-708).
+    Deload every 4-6 weeks regardless.
 
 Each signal is graded mild / moderate / severe. The aggregator weighs them
 together rather than counting binary flags — one severe signal alone
@@ -47,10 +69,13 @@ dual-window combiner rather than a single 7-day OLS slope:
 
   - Chronic window: 28-day exponentially-weighted moving average (halflife
     10 days), with OLS slope taken on the smoothed series. Damps short-
-    window noise so the slope reflects sustained direction. Plews,
-    Laursen et al. (2013) explicitly favour rolling-mean windows on the
-    order of 4 weeks for monitoring purposes, exactly because the
-    7-day variance is too high at the individual level.
+    window noise so the slope reflects sustained direction. NB: the 28-day
+    EWMA is this engine's own noise-suppression design, not a Plews &
+    Laursen recommendation. Their method reads a 7-day rolling average
+    against the individual's ~4-week normal range (smallest worthwhile
+    change ≈ 0.5 SD), rather than reacting to a single short-window move
+    the longer window hasn't confirmed; the 28-day *baseline* window
+    (HRV_BASELINE_DAYS) is what follows that ~4-week normal-range logic.
 
   - Combiner (combine_acute_chronic): chronic absence demotes acute by
     one severity band (the noise-suppression rule — Holmes' acute-only
@@ -84,8 +109,9 @@ from .ontology import MetricKind, Recommendation
 
 # --- Thresholds (literature-anchored; centralized for trainer override) ---
 
-HRV_BASELINE_DAYS = 28              # Plews & Laursen recommend 21–28d windows; per-client
-                                    # tunable via ``baseline_window_days`` threshold
+HRV_BASELINE_DAYS = 28              # ~4-week normal-range window for the individual baseline
+                                    # (Plews & Laursen 2013, 21–28d); per-client tunable
+                                    # via ``baseline_window_days`` threshold
 HRV_ACUTE_DAYS = 7
 HRV_MILD_SD = 0.5                   # > 0.5 SD below baseline = early stress
 HRV_MODERATE_SD = 1.0               # > 1 SD below baseline = clear stress
@@ -175,8 +201,10 @@ TREND_SIGNAL_KINDS: frozenset[str] = frozenset({
     "sleep_trend_down",
 })
 
-# Progression magnitudes from ACSM 11e Ch. 6 (cardiorespiratory) and
-# Ch. 7 (resistance). Conservative end picked when any signal is present.
+# Progression magnitudes follow ACSM Guidelines 11e general progression
+# (5-10% standard band). The resistance-specific 2-10% rule is the ACSM
+# position stand (Ratamess et al. 2009). Conservative end picked when any
+# signal is present.
 ACSM_STANDARD_RANGE = (0.05, 0.10)
 ACSM_CONSERVATIVE = 0.05
 DELOAD_LOAD_CUT = 0.20              # 20% cut; more aggressive than 15% reflects
@@ -197,7 +225,11 @@ CITATIONS = {
     # the 2013 paper is the methodology source.
     "hrv":   "Plews & Laursen 2013",
     "rhr":   "Buchheit 2014",
-    "sleep": "ACSM 11e §7",
+    # Sleep: Walsh et al. (2021), BJSM 55(7):356-368 — athlete sleep
+    # consensus. Replaces the earlier generic "ACSM 11e §7" pointer: the
+    # 7-9h band is general guidance, but Walsh is the athlete-specific
+    # authority and explicitly warns against a one-size target.
+    "sleep": "Walsh et al. 2021",
     "acwr":  "Gabbett 2016",
     # RPE: Foster (1998), Med Sci Sports Exerc 30(7):1164-1168 —
     # "Monitoring Training in Athletes With Reference to Overtraining
