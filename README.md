@@ -12,6 +12,8 @@
 
 > **Live demo →** [fit-ontology.fly.dev](https://fit-ontology.fly.dev) — no signup. Pre-seeded with three synthetic clients. All write actions return a friendly read-only notice; clone the repo to save changes.
 
+> **Decision-support boundary.** FitOntology surfaces the inputs, the exact rules that fired, and the evidence behind every weekly recommendation. It does not diagnose, prescribe, or auto-clear anyone — a human trainer makes the call.
+
 ```mermaid
 flowchart LR
     Wearables["Wearables<br/>Garmin · Apple Health<br/>Strava · Whoop"] --> Ontology
