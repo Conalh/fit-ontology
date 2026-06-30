@@ -74,7 +74,7 @@ def _seed_world(db_path: Path) -> tuple[str, str, str, str, date]:
 
     Returns (trainer_a_id, trainer_b_id, client_a_id, client_b_id, week_of).
     """
-    today = date(2026, 5, 25)
+    today = date.today()
     week_of = today - timedelta(days=today.weekday())  # Monday of that week
     trainer_a = "t_a"
     trainer_b = "t_b"

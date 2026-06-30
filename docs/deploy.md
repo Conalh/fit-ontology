@@ -1,8 +1,12 @@
 # Deploying FitOntology
 
-Single-machine Fly.io deploy. The DuckDB file lives on a Fly
+Optional paid single-machine Fly.io deploy. The DuckDB file lives on a Fly
 persistent volume; the Next.js static export and FastAPI process
 run together in one container.
+
+The public portfolio surface does not require this host to stay online.
+Use Fly when a live backend is deliberately budgeted; otherwise rely on
+local runs and committed screenshots.
 
 ## First-time setup
 
@@ -98,7 +102,7 @@ The first deploy:
 ```bash
 fly open                                     # opens the app URL
 # OR
-curl https://fit-ontology.fly.dev/api/health # → {"ok": true}
+curl https://<your-app>.fly.dev/api/health # → {"ok": true}
 ```
 
 The home page should show the demo trainer's roster (3 synthetic

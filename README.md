@@ -10,7 +10,7 @@
 
 **A client intelligence layer for personal trainers.** Three messy data sources — wearables, trainer intake, and exercise-science guidelines — unified into one queryable ontology, with an explainable rules-based reasoning layer that produces a weekly training recommendation and the full data trail behind it.
 
-> **Live demo →** [fit-ontology.fly.dev](https://fit-ontology.fly.dev) — no signup. Pre-seeded with three synthetic clients. All write actions return a friendly read-only notice; clone the repo to save changes.
+> **Demo path:** run locally with synthetic clients, no account or real health data required. The optional Fly.io deployment is not kept online continuously; the screenshots below show the main workflow without depending on paid hosting.
 
 > **Decision-support boundary.** FitOntology surfaces the inputs, the exact rules that fired, and the evidence behind every weekly recommendation. It does not diagnose, prescribe, or auto-clear anyone — a human trainer makes the call.
 
@@ -255,10 +255,14 @@ The front-end has a Vitest + React Testing Library suite (`cd web && npm test`) 
 
 ## Deploy
 
-A live deploy runs on Fly.io ([deploy runbook](docs/deploy.md)). The
-`Dockerfile` is multi-stage (Node builds the Next export, Python
+An optional paid deploy can run on Fly.io ([deploy runbook](docs/deploy.md)).
+The `Dockerfile` is multi-stage (Node builds the Next export, Python
 runs uvicorn) and the `fly.toml` provisions a single-machine
 shared-cpu-1x with a 1 GB persistent volume for the DuckDB file.
+
+The portfolio proof path does not depend on this host being live. Use
+the local run commands and screenshots above as the stable demo surface
+unless a public backend is deliberately budgeted.
 
 The hosted instance has `FIT_ONTOLOGY_DEMO_MODE=1` set, so
 unauthenticated visitors land on the demo trainer's pre-seeded
