@@ -34,9 +34,10 @@ jobs:
 
       - name: Type-check with mypy
         # Config lives in pyproject.toml [tool.mypy]. The CI step is
-        # the source of truth for "did types regress" — green here
-        # means `mypy src/fit_ontology` is also green locally.
-        run: mypy
+        # the source of truth for "did types regress". The matrix
+        # override keeps third-party stubs aligned with the Python
+        # version installed in this job.
+        run: mypy --python-version "${{ matrix.python-version }}"
 
       - name: Run tests with coverage
         run: |
