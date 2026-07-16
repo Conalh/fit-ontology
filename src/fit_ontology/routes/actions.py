@@ -17,6 +17,18 @@ router = APIRouter()
 
 _PRIORITY_RANK = {"high": 0, "medium": 1, "low": 2}
 _KIND_RANK = {"review_recommendation": 0, "sync_data": 1, "review_weekly_delta": 2, "build_plan": 3}
+_FLAG_LABELS = {
+    "hrv_below_baseline": "HRV below baseline",
+    "hrv_trend_down": "HRV trending down",
+    "rhr_above_baseline": "RHR elevated",
+    "rhr_trend_up": "RHR trending up",
+    "sleep_deficit": "sleep deficit",
+    "sleep_trend_down": "sleep eroding",
+    "rpe_rising": "RPE rising",
+    "acwr_high": "training load spike",
+    "acwr_low": "under-load",
+    "training_readiness_low": "readiness low",
+}
 
 
 def _last_metric_days(metrics: pd.DataFrame, today: date) -> int | None:
@@ -33,6 +45,10 @@ def _flags_from_rationale(rationale: str) -> list[str]:
         for f in rationale.split("Flags:", 1)[1].strip().rstrip(".").split(",")
         if f.strip()
     ]
+
+
+def _display_flag(kind: str) -> str:
+    return _FLAG_LABELS.get(kind, kind.replace("_", " "))
 
 
 def _item(
@@ -109,7 +125,7 @@ def get_action_queue(
             flags = _flags_from_rationale(state.recommendation.rationale)
             detail = (
                 f"{label} call at {round(state.recommendation.confidence * 100)}% confidence"
-                + (f" with {', '.join(flags[:2])}." if flags else ".")
+                + (f" with {', '.join(_display_flag(flag) for flag in flags[:2])}." if flags else ".")
             )
             items.append(_item(
                 kind="review_recommendation",

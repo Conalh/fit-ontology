@@ -1,8 +1,8 @@
 # FitOntology — Roadmap
 
-**Goal:** A multi-trainer SaaS — secure for client PII and health data, operationally durable without a maintainer laptop, and differentiated on explainable weekly triage (recommendation → plan → execution → calibration → client share).
+**Current goal:** Prove that one working trainer can use the weekly brief → client evidence → plan → override → calibration loop for a real roster without losing trust in the recommendation.
 
-**Live today:** [fit-ontology.fly.dev](https://fit-ontology.fly.dev) (public demo, read-only) · local dev via `fit-ontology-serve` · **330 tests** in CI (Python 3.11 + 3.12, ruff, mypy, coverage).
+**Current truth:** v0.6.0 runs locally or on an operator-managed host. The evergreen synthetic demo is local-first; no public service is currently maintained. CI covers **377 Python + 40 frontend tests** on Python 3.12/3.13 and Node 24.
 
 Phases below are **sequenced, not scheduled**. Each ships something usable before the next starts.
 
@@ -19,7 +19,7 @@ These were roadmap items; they are done. Kept here so the forward phases don't r
 | **App auth** | bcrypt passwords; signed HttpOnly session cookie (`itsdangerous`); login / logout / me | `auth.py`, `routes/auth.py`, `web/app/login/` |
 | **Demo mode** | Unauthenticated visitors → `t_demo` read-only; mutating routes → 403 | `demo.py`, `forbid_demo_trainer` |
 | **Trainer admin CLI** | Create / list / rotate passwords (interim until self-serve sign-up) | `scripts/trainer.py` |
-| **Hosted deploy** | Multi-stage Docker; Fly.io + persistent DuckDB volume | `Dockerfile`, `fly.toml`, `docs/deploy.md` |
+| **Self-hosting path** | Multi-stage Docker; optional Fly.io + persistent DuckDB volume | `Dockerfile`, `fly.toml`, `docs/deploy.md` |
 | **Client share (Stage A)** | Mint token → `/share?t=…`; 14-day TTL; rate-limited; minimal public payload | `routes/share.py`, `web/app/share/` |
 | **Client intake (Stage A)** | Trainer mints one-shot URL → client fills form at `/intake?t=…`; atomic insert-then-consume; per-IP submit rate-limit | `routes/intake.py`, `web/app/intake/`, `web/components/intake-link-modal.tsx` |
 | **Planning loop** | Weekly plan from verdict; in-place slot edit; plan-vs-execution matcher | `planning.py`, `routes/planning.py` |
@@ -28,10 +28,11 @@ These were roadmap items; they are done. Kept here so the forward phases don't r
 | **Engine depth** | Trend detectors, recovery gauge, citation-backed signal chips, calibration + adherence telemetry, per-client thresholds | `reasoning.py`, calibration UI |
 | **Engine v2 — dual-window trend** | Acute 7d OLS + chronic 28d EWMA combiner, level-dominates-trend safety rule (recovery ≥90 demotes trend signals), per-trend `7d` / `28d` / `7d + 28d` chip badges, popover surfaces both slope numbers | `reasoning.py` (combine_acute_chronic, compute_trend_diagnostics), `recommendation-card.tsx` |
 
-**Still valid deployment paths (pick one or run both):**
+**Supported operating paths:**
 
-- **Fly.io** — primary hosted instance (`fit-ontology.fly.dev`)
-- **Local + Cloudflare Tunnel** — `app.mobility.rest` behind Cloudflare Access (optional perimeter; app auth is independent)
+- **Local** — recommended evaluation and single-trainer path.
+- **Operator-managed Fly.io** — reference deployment only; the project makes no uptime claim.
+- **Local + private tunnel** — optional remote access; app auth remains independent of the perimeter.
 
 ---
 
@@ -40,11 +41,10 @@ These were roadmap items; they are done. Kept here so the forward phases don't r
 Short horizon before chasing new surface area:
 
 1. **Friend test** — one real trainer, end-to-end (see Phase 1)
-2. **Password reset** — forgot-password flow; today rotation is CLI-only
-3. **First-run onboarding** — zero-client empty states → add client → upload / sync
-4. **CI frontend build** — `npm run build --prefix web` on every PR (backend-only CI today)
-5. **Volume backups** — Fly volume snapshots or Litestream → object storage
-6. **Error monitoring** — Sentry (or equivalent) on the Fly deploy
+2. **First-run onboarding** — zero-client state → add client → upload → first useful brief
+3. **Import reliability** — test real Apple Health/Strava exports and make failures actionable
+4. **Password reset** — only before inviting trainers who cannot use the admin CLI
+5. **Operational durability** — backups and monitoring only when a maintained host exists
 
 ---
 
@@ -56,7 +56,7 @@ Short horizon before chasing new surface area:
 
 ```bash
 python scripts/trainer.py create --email friend@example.com --name "Their Name" --prompt-password
-# → they sign in at /login on the hosted app or locally
+# → they sign in at /login on the local or operator-managed app
 ```
 
 **Ships:**
@@ -133,7 +133,7 @@ python scripts/trainer.py create --email friend@example.com --name "Their Name" 
 
 **Operational glue (partially done / still open):**
 
-- [x] Fly deploy + health check + secrets via `fly secrets`
+- [x] Fly deployment configuration + health check + secret runbook
 - [ ] GitHub Actions → `fly deploy` on tag or main
 - [ ] Staging Fly app (separate volume, demo mode off)
 - [ ] Litestream or scheduled volume snapshots

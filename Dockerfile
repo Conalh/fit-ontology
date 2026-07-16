@@ -9,10 +9,10 @@
 # pandas/anthropic deps are the bulk. The node stage is throwaway.
 
 # ─── Stage 1: Build the Next.js static export ────────────────────────
-# Node 20 to match the CI web-build job (.github/workflows/tests.yml) and
-# @types/node ^20 in web/package.json — the image then ships the exact
+# Node 24 to match the CI web-build job (.github/workflows/tests.yml) and
+# @types/node ^24 in web/package.json — the image then ships the exact
 # Node line CI validated against, closing the build-reproducibility gap.
-FROM node:20-bookworm-slim AS node-builder
+FROM node:24-bookworm-slim AS node-builder
 
 WORKDIR /web
 

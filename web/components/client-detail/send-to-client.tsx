@@ -73,7 +73,7 @@ export function SendToClient({
     try {
       const { token, expires_at } = await api.createShare(clientId, coachMessage.trim() || null);
       // window.location.origin is the host the trainer is using right
-      // now (same-origin prod = app.mobility.rest; dev = localhost:3000).
+      // now (same-origin production; dev = localhost:3000).
       // The static-export setup means /share is a real route, so a
       // bare path with the token as ?t= is all we need.
       const url = `${window.location.origin}/share?t=${encodeURIComponent(token)}`;

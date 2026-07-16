@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { defaultAccentForClient, getStoredAccent, initialsFor, withAlpha } from "@/lib/accent";
 import { api, type RosterRow } from "@/lib/api";
 import { useAuth, useInvalidateAuth } from "@/lib/use-auth";
+import packageInfo from "../../package.json";
 import { VerdictDot, labelToVerdict } from "./verdict";
 
 type IconName = "grid" | "user" | "check" | "chat" | "inbox" | "cal";
@@ -46,7 +47,7 @@ export function Sidebar({
     <aside
       className="fit-sidebar"
       style={{
-        width: 240,
+        width: 248,
         flexShrink: 0,
         borderRight: "1px solid var(--border)",
         background: "var(--surface-2)",
@@ -61,7 +62,7 @@ export function Sidebar({
       {/* Logo */}
       <div
         style={{
-          padding: "18px 18px 14px",
+          padding: "19px 18px 16px",
           display: "flex",
           alignItems: "center",
           gap: 10,
@@ -70,15 +71,15 @@ export function Sidebar({
       >
         <div
           style={{
-            width: 22,
-            height: 22,
-            borderRadius: 6,
-            background: "var(--text)",
+            width: 28,
+            height: 28,
+            borderRadius: 8,
+            background: "var(--accent)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: "var(--surface)",
-            fontSize: 11,
+            color: "#07130d",
+            fontSize: 12,
             fontWeight: 700,
             fontFamily: "var(--font-mono)",
             letterSpacing: "-0.04em",
@@ -88,7 +89,9 @@ export function Sidebar({
         </div>
         <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15 }}>
           <span style={{ fontWeight: 600, color: "var(--text)", letterSpacing: "-0.01em" }}>FitOntology</span>
-          <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>v0.4 · {roster.length} clients</span>
+          <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
+            Coach intelligence · v{packageInfo.version}
+          </span>
         </div>
       </div>
 

@@ -23,7 +23,7 @@ minted `/intake?t=<token>`), waits for content + a render frame,
 and writes:
 
 - `roster.png` — Monday-morning triage view
-- `client-detail.png` — Ben's recovery + plan + override drawer
+- `client-detail.png` — Marcus's recovery + plan + override drawer
 - `calibration.png` — system-vs-trainer agreement + adherence
 - `intake.png` — public intake form (Phase 3b)
 
@@ -37,6 +37,9 @@ override via `FITONTOLOGY_SCREENSHOT_API_URL` if running against a
 non-standard deploy layout. If login or mint refuses (demo-mode
 deploy, missing credentials), the script logs a skipped-line and
 leaves the previous `intake.png` in place rather than erroring.
+
+To reuse an installed Chromium-family browser instead of Playwright's
+download, set `FITONTOLOGY_SCREENSHOT_BROWSER_PATH` to its executable.
 
 If a screenshot doesn't refresh: confirm the dev server is
 serving the synthetic demo data (`FIT_ONTOLOGY_DEMO_MODE=1` in the

@@ -17,7 +17,7 @@ Eight contracts pinned:
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -97,7 +97,7 @@ def test_create_then_lookup_roundtrip(tmp_path: Path):
     with connect(db_path, read_only=False) as con:
         token, expires_at = create_share_token(con, trainer_id, client_id, "be in bed by 10pm")
         assert isinstance(token, str) and len(token) >= 32
-        assert expires_at > datetime.utcnow()
+        assert expires_at > datetime.now(UTC).replace(tzinfo=None)
 
     with connect(db_path, read_only=True) as con:
         record = share_lookup(con, token)
@@ -121,7 +121,7 @@ def test_expired_token_is_flagged_not_hidden(tmp_path: Path):
         # Hand-roll a past expiry to simulate token aging.
         con.execute(
             "UPDATE client_share_tokens SET expires_at = ? WHERE token = ?",
-            [datetime.utcnow() - timedelta(days=1), hash_token(token)],
+            [datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1), hash_token(token)],
         )
 
     with connect(db_path, read_only=True) as con:
@@ -362,7 +362,7 @@ def test_get_share_returns_410_for_expired_token(share_app, tmp_path: Path, monk
     with connect(db_path, read_only=False) as con:
         con.execute(
             "UPDATE client_share_tokens SET expires_at = ? WHERE token = ?",
-            [datetime.utcnow() - timedelta(days=1), hash_token(token)],
+            [datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1), hash_token(token)],
         )
 
     r = share_app.get(f"/api/share/{token}")

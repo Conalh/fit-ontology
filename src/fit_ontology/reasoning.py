@@ -91,7 +91,7 @@ dual-window combiner rather than a single 7-day OLS slope:
   - Level-dominates-trend safety rule: when composite recovery score is
     ≥ 90, every trend signal is demoted one more band before counting.
     The "recovery markers across the board are great but two trends
-    are technically firing" UX contradiction (the original Bennet
+    are technically firing" UX contradiction (the clean-recovery
     screen-test) collapses cleanly with this in place.
 
 The acute thresholds (SLOPE_*_SD_PER_DAY) and chronic thresholds
@@ -193,8 +193,8 @@ SLOPE_SEVERE_SD_PER_DAY = 0.20
 # in half, so chronic thresholds sit at about half the acute values.
 # Calibrated empirically (E3) against the five-client lit roster —
 # the goal was to keep chronic firing on the clients designed to need
-# it (Macbeth, Quixote: chronic HRV ~0.03-0.05 SD/day) while staying
-# silent on the noise-only case (Holmes: chronic HRV 0.001).
+# it (stressed demo profiles: chronic HRV ~0.03-0.05 SD/day) while
+# staying silent on the noise-only clean-recovery case (0.001).
 CHRONIC_SLOPE_MILD_SD_PER_DAY = 0.02
 CHRONIC_SLOPE_MODERATE_SD_PER_DAY = 0.04
 CHRONIC_SLOPE_SEVERE_SD_PER_DAY = 0.08
@@ -209,10 +209,10 @@ CHRONIC_SLOPE_SEVERE_SD_PER_DAY = 0.08
 # AND a level signal is firing, that signal is the truth, not the
 # trend reading.
 #
-# 90 was picked from the original screen-test: Bennet at composite 97
+# 90 was picked from the original screen-test: the clean profile at 97
 # with two trend signals that the recovery-score narrative
 # ("strong recovery markers across the board") visibly contradicted.
-# Holmes at composite 86 is intentionally below the threshold — his
+# The stressed profile at composite 86 is intentionally below the threshold — its
 # acute HRV drop IS real, just chronic-unconfirmed, and that's
 # already handled by E3's combiner. The rule's job is the
 # tail-of-the-distribution case where recovery is genuinely

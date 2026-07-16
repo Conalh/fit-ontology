@@ -32,7 +32,7 @@ Contracts pinned here:
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -65,7 +65,7 @@ def test_create_then_lookup_roundtrip(tmp_path: Path):
             con, trainer_id, trainer_message="welcome aboard"
         )
         assert isinstance(token, str) and len(token) >= 32
-        assert expires_at > datetime.utcnow()
+        assert expires_at > datetime.now(UTC).replace(tzinfo=None)
 
     with connect(db_path, read_only=True) as con:
         record = intake_lookup(con, token)
@@ -95,7 +95,7 @@ def test_expired_token_is_flagged_not_hidden(tmp_path: Path):
         token, _ = create_intake_token(con, trainer_id)
         con.execute(
             "UPDATE client_intake_tokens SET expires_at = ? WHERE token = ?",
-            [datetime.utcnow() - timedelta(days=1), hash_token(token)],
+            [datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1), hash_token(token)],
         )
 
     with connect(db_path, read_only=True) as con:
@@ -153,7 +153,7 @@ def test_consume_refuses_expired_token(tmp_path: Path):
         token, _ = create_intake_token(con, trainer_id)
         con.execute(
             "UPDATE client_intake_tokens SET expires_at = ? WHERE token = ?",
-            [datetime.utcnow() - timedelta(days=1), hash_token(token)],
+            [datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1), hash_token(token)],
         )
         claimed = consume_intake_token(con, token, client_id="c_late")
 

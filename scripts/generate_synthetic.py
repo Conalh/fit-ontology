@@ -8,67 +8,67 @@ spread of verdicts (so the demo doesn't read as a three-client toy):
 
   alice    — clean recovery, should get standard progression
   ben      — HRV dropping + low sleep, should get deload
-  carla    — rising RPE only, should get conservative progression
+  carla    — persistent sleep shortfall, should get conservative progression
   holmes   — clean recovery + higher load tolerance, standard
-  quixote  — collapsing HRV + sleep deficit (post-windmill), deload
+  quixote  — collapsing HRV + sleep deficit, deload
 
 IDs are stable from the original three-client generation — the new
 two are appended so anything that hard-codes c_alice/c_ben/c_carla
-keeps working. Display names are classic-literature characters with
-silly fitness goals; the timeseries shapes are the same as the
-original synthetic dataset, just relabelled.
+keeps working. Display names and goals are realistic but entirely
+synthetic, so the public demo reads like a credible coaching product.
 """
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import random
-import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
-
-random.seed(42)
 
 OUT = Path("data/synthetic")
 OUT.mkdir(parents=True, exist_ok=True)
 
 TODAY = date.today()
 
-# Classic-literature characters with silly fitness goals — the
-# synthetic roster doubles as a portfolio gag without changing any of
-# the underlying timeseries shapes. Each maps to the same engine
-# behaviour as the previous Alice/Ben/Carla generation (clean recovery
-# → Standard, HRV-dropping + low sleep → Deload, rising RPE →
-# Conservative); only the names, goals, and injury text changed.
+
+def _rng(label: str) -> random.Random:
+    """Independent deterministic stream so one persona cannot change another."""
+    return random.Random(f"fit-ontology-v2:{label}")
+
+# Realistic fictional coaching profiles. Each maps to the same engine
+# behavior as the original Alice/Ben/Carla generation (clean recovery
+# → Standard, HRV-dropping + low sleep → Deload, sleep shortfall →
+# Conservative); only the public-facing persona changed.
 CLIENTS = [
     dict(
-        id="c_alice", name="Elizabeth Bennet", sex="F", age=34, height_cm=168, weight_kg=62,
-        goal="Walk to Netherfield without muddied petticoats — sub-90 min twice weekly",
-        injury_history="L ankle turn on Hertfordshire walks 2024",
+        id="c_alice", name="Maya Chen", sex="F", age=34, height_cm=168, weight_kg=62,
+        goal="Return to trail running — pain-free 10K by October",
+        injury_history="Left ankle sprain in 2024; occasional lateral stiffness",
         created_at=datetime(2025, 1, 12, 10, 0).isoformat(sep=" "),
     ),
     dict(
-        id="c_ben", name="Captain Ahab", sex="M", age=41, height_cm=183, weight_kg=88,
-        goal="Single-leg harpoon throw — 50m accuracy by next sighting",
-        injury_history="R below-knee amputation (Moby Dick); R rotator cuff strain from harpoon volume",
+        id="c_ben", name="Marcus Hill", sex="M", age=41, height_cm=183, weight_kg=88,
+        goal="Rebuild half-marathon base — 30 km per week without flare-ups",
+        injury_history="Right Achilles tendinopathy history; left shoulder irritation with overhead volume",
         created_at=datetime(2025, 3, 4, 9, 30).isoformat(sep=" "),
     ),
     dict(
-        id="c_carla", name="Lady Macbeth", sex="F", age=28, height_cm=171, weight_kg=68,
-        goal="Build wrist + grip endurance for nightly handwashing routine",
-        injury_history="Lower-back strain (candle-lit pacing); R wrist tendinopathy",
+        id="c_carla", name="Priya Shah", sex="F", age=28, height_cm=171, weight_kg=68,
+        goal="First unassisted pull-up and a 1.5× bodyweight deadlift",
+        injury_history="Intermittent low-back stiffness; right wrist tendinopathy",
         created_at=datetime(2025, 6, 18, 17, 15).isoformat(sep=" "),
     ),
     dict(
-        id="c_holmes", name="Sherlock Holmes", sex="M", age=39, height_cm=188, weight_kg=78,
-        goal="VO2 max for rooftop chases; four-minute violin endurance unbroken",
-        injury_history="R shoulder strain (boxing); L wrist sprain (singlestick fencing)",
+        id="c_holmes", name="Jordan Brooks", sex="M", age=39, height_cm=188, weight_kg=78,
+        goal="Raise cycling FTP for a spring gran fondo",
+        injury_history="Right shoulder strain; resolved left wrist sprain",
         created_at=datetime(2025, 2, 20, 11, 45).isoformat(sep=" "),
     ),
     dict(
-        id="c_quixote", name="Don Quixote", sex="M", age=52, height_cm=175, weight_kg=70,
-        goal="Joust a windmill — and win",
-        injury_history="Multiple rib contusions (windmill incident); chronic lumbar fatigue from sustained tilting",
+        id="c_quixote", name="Daniel Ruiz", sex="M", age=52, height_cm=175, weight_kg=70,
+        goal="Return to recreational tennis twice weekly",
+        injury_history="Prior left knee meniscus repair; chronic lumbar fatigue after long sessions",
         created_at=datetime(2025, 4, 30, 14, 20).isoformat(sep=" "),
     ),
 ]
@@ -96,18 +96,20 @@ def _gen_sessions(client_id: str, rpe_baseline: int, rpe_drift: float = 0.0) -> 
     "rising RPE" character profiles read the same shape, just longer.
     """
     sessions = []
+    rng = _rng(f"sessions:{client_id}")
     for d_off in range(35, 0, -1):
         d = TODAY - timedelta(days=d_off)
         if d.weekday() in (1, 3, 5, 6):  # Tue/Thu/Sat/Sun
             week_age = d_off / 7.0
-            rpe = max(1, min(10, round(rpe_baseline + random.uniform(-0.5, 0.5)
+            rpe = max(1, min(10, round(rpe_baseline + rng.uniform(-0.35, 0.35)
                                        - rpe_drift * week_age)))
+            session_key = f"{client_id}|{d.isoformat()}"
             sessions.append(dict(
-                id=f"s_{uuid.uuid4().hex[:10]}",
+                id="s_" + hashlib.sha1(session_key.encode("utf-8")).hexdigest()[:10],
                 client_id=client_id,
                 date=d.isoformat(),
-                type=random.choice(["strength", "cardio", "mixed", "mobility"]),
-                duration_min=random.choice([45, 60, 75]),
+                type=rng.choice(["strength", "cardio", "mixed", "mobility"]),
+                duration_min=rng.choice([45, 60, 75]),
                 rpe=rpe,
                 notes="",
             ))
@@ -118,10 +120,10 @@ def _write_sessions() -> None:
     all_s = []
     all_s += _gen_sessions("c_alice", rpe_baseline=6)
     all_s += _gen_sessions("c_ben", rpe_baseline=7)
-    all_s += _gen_sessions("c_carla", rpe_baseline=6, rpe_drift=-1.0)  # rising RPE → past weeks lower
-    # Holmes: trains hard (higher baseline RPE) but consistent — Standard.
+    all_s += _gen_sessions("c_carla", rpe_baseline=6)
+    # Jordan: trains hard (higher baseline RPE) but consistent — Standard.
     all_s += _gen_sessions("c_holmes", rpe_baseline=7)
-    # Quixote: pushed too hard recently — Deload signal driven by the
+    # Daniel: pushed too hard recently — Deload signal driven by the
     # whoop side (HRV + sleep), with sessions at a higher baseline RPE
     # so the load picture matches.
     all_s += _gen_sessions("c_quixote", rpe_baseline=8)
@@ -131,17 +133,28 @@ def _write_sessions() -> None:
         w.writerows(all_s)
 
 
-def _gen_whoop(client_id: str, hrv_mean: float, hrv_drop_last_week: float, sleep_mean: float) -> list[dict]:
+def _gen_whoop(
+    client_id: str,
+    hrv_mean: float,
+    hrv_drop_last_week: float,
+    sleep_mean: float,
+    *,
+    stable: bool = False,
+) -> list[dict]:
     days = []
+    rng = _rng(f"whoop:{client_id}")
     for d_off in range(35, 0, -1):
         d = TODAY - timedelta(days=d_off)
         in_last_week = d_off <= 7
-        hrv = hrv_mean - (hrv_mean * hrv_drop_last_week if in_last_week else 0) + random.uniform(-3, 3)
-        sleep = sleep_mean + random.uniform(-0.6, 0.6)
+        hrv_noise = 0.0 if stable else rng.uniform(-1.8, 1.8)
+        sleep_noise = 0.0 if stable else rng.uniform(-0.25, 0.25)
+        rhr_noise = 0.0 if stable else rng.uniform(-1.5, 1.5)
+        hrv = hrv_mean - (hrv_mean * hrv_drop_last_week if in_last_week else 0) + hrv_noise
+        sleep = sleep_mean + sleep_noise
         days.append(dict(
             date=d.isoformat(),
             hrv_rmssd=round(hrv, 1),
-            resting_hr=round(58 + random.uniform(-3, 5), 0),
+            resting_hr=round(58 + rhr_noise, 0),
             sleep_hours=round(sleep, 1),
         ))
     return days
@@ -149,17 +162,15 @@ def _gen_whoop(client_id: str, hrv_mean: float, hrv_drop_last_week: float, sleep
 
 def _write_whoop() -> None:
     (OUT / "whoop_c_alice.json").write_text(json.dumps(
-        _gen_whoop("c_alice", hrv_mean=55, hrv_drop_last_week=0.02, sleep_mean=7.6), indent=2))
+        _gen_whoop("c_alice", hrv_mean=55, hrv_drop_last_week=0.0, sleep_mean=7.6, stable=True), indent=2))
     (OUT / "whoop_c_ben.json").write_text(json.dumps(
         _gen_whoop("c_ben", hrv_mean=48, hrv_drop_last_week=0.18, sleep_mean=6.3), indent=2))
     (OUT / "whoop_c_carla.json").write_text(json.dumps(
-        _gen_whoop("c_carla", hrv_mean=62, hrv_drop_last_week=0.03, sleep_mean=7.4), indent=2))
-    # Holmes: high baseline HRV, no last-week drop — the great
-    # detective's recovery is impeccable; standard progression.
+        _gen_whoop("c_carla", hrv_mean=62, hrv_drop_last_week=0.0, sleep_mean=6.8, stable=True), indent=2))
+    # Jordan: high baseline HRV, no last-week drop; standard progression.
     (OUT / "whoop_c_holmes.json").write_text(json.dumps(
-        _gen_whoop("c_holmes", hrv_mean=58, hrv_drop_last_week=0.01, sleep_mean=7.4), indent=2))
-    # Quixote: heavy last-week HRV collapse + sleep deficit. The
-    # windmill incident shows up as a textbook deload signal.
+        _gen_whoop("c_holmes", hrv_mean=58, hrv_drop_last_week=0.0, sleep_mean=7.4, stable=True), indent=2))
+    # Daniel: heavy last-week HRV collapse + sleep deficit.
     (OUT / "whoop_c_quixote.json").write_text(json.dumps(
         _gen_whoop("c_quixote", hrv_mean=44, hrv_drop_last_week=0.22, sleep_mean=5.8), indent=2))
 
@@ -167,16 +178,17 @@ def _write_whoop() -> None:
 def _write_strava() -> None:
     """One Strava-style CSV per client with avg/max HR per activity."""
     for cid in ("c_alice", "c_ben", "c_carla", "c_holmes", "c_quixote"):
+        rng = _rng(f"strava:{cid}")
         rows = []
         for d_off in range(35, 0, -1):
             d = TODAY - timedelta(days=d_off)
             if d.weekday() in (1, 3, 5):
                 rows.append(dict(**{
                     "Activity Date": d.strftime("%b %d, %Y, %I:%M:%S %p"),
-                    "Activity Type": random.choice(["Run", "Ride", "Workout"]),
-                    "Average Heart Rate": round(random.uniform(135, 158), 0),
-                    "Max Heart Rate": round(random.uniform(165, 185), 0),
-                    "Elapsed Time": random.choice([2700, 3600, 4500]),
+                    "Activity Type": rng.choice(["Run", "Ride", "Workout"]),
+                    "Average Heart Rate": round(rng.uniform(135, 158), 0),
+                    "Max Heart Rate": round(rng.uniform(165, 185), 0),
+                    "Elapsed Time": rng.choice([2700, 3600, 4500]),
                 }))
         path = OUT / f"strava_{cid}.csv"
         with path.open("w", newline="", encoding="utf-8") as f:

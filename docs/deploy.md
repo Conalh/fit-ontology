@@ -105,7 +105,7 @@ fly open                                     # opens the app URL
 curl https://<your-app>.fly.dev/api/health # → {"ok": true}
 ```
 
-The home page should show the demo trainer's roster (3 synthetic
+The home page should show the demo trainer's roster (5 synthetic
 clients). Hit `/login` to sign in with your real trainer creds.
 
 ## Subsequent deploys
@@ -131,8 +131,8 @@ once you have shell access on the running machine (`fly ssh console`).
 ## Custom domain
 
 ```bash
-fly certs create app.mobility.rest
-fly certs check app.mobility.rest
+fly certs create fit.example.com
+fly certs check fit.example.com
 ```
 
 Point your DNS A/AAAA at the addresses `fly certs check` prints. Once

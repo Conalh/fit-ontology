@@ -34,7 +34,7 @@ Contracts pinned:
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -148,7 +148,7 @@ def test_get_410_for_expired_token(intake_app):
     with connect(db_path, read_only=False) as con:
         con.execute(
             "UPDATE client_intake_tokens SET expires_at = ? WHERE token = ?",
-            [datetime.utcnow() - timedelta(days=1), hash_token(token)],
+            [datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1), hash_token(token)],
         )
     r = intake_app.get(f"/api/intake/{token}")
     assert r.status_code == 410
@@ -278,7 +278,7 @@ def test_submit_410_for_expired_token(intake_app):
     with connect(db_path, read_only=False) as con:
         con.execute(
             "UPDATE client_intake_tokens SET expires_at = ? WHERE token = ?",
-            [datetime.utcnow() - timedelta(days=1), hash_token(token)],
+            [datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1), hash_token(token)],
         )
     r = intake_app.post(f"/api/intake/{token}", json=GOOD_PAYLOAD)
     assert r.status_code == 410

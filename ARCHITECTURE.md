@@ -406,6 +406,6 @@ web/
 data/synthetic/         Seed data for build_db.py + demo mode
 
 scripts/                build_db, sync_garmin, trainer admin CLI
-tests/                  pytest, 330 tests
+tests/                  pytest, 377 tests
 docs/                   deploy runbook
 ```

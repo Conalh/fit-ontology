@@ -37,12 +37,12 @@ the capture skips and the previous intake.png is preserved).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 from pathlib import Path
 
 from playwright.async_api import async_playwright
-
 
 # Override via FITONTOLOGY_SCREENSHOT_URL — useful for capturing
 # against the deployed Fly instance when the local dev port is
@@ -60,6 +60,7 @@ API = os.environ.get(
 # Match scripts/preview_serve.py:FIT_ONTOLOGY_DEFAULT_TRAINER_PASSWORD.
 PREVIEW_EMAIL = os.environ.get("FITONTOLOGY_SCREENSHOT_EMAIL", "conal.hg@gmail.com")
 PREVIEW_PASSWORD = os.environ.get("FITONTOLOGY_SCREENSHOT_PASSWORD", "preview-pass-1234")
+BROWSER_PATH = os.environ.get("FITONTOLOGY_SCREENSHOT_BROWSER_PATH")
 HERE = Path(__file__).resolve().parent
 
 SHOTS = [
@@ -97,7 +98,8 @@ async def _mint_intake_token(page) -> str | None:
 async def main() -> int:
     HERE.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as p:
-        browser = await p.chromium.launch()
+        launch_options = {"executable_path": BROWSER_PATH} if BROWSER_PATH else {}
+        browser = await p.chromium.launch(**launch_options)
         ctx = await browser.new_context(
             viewport={"width": 1440, "height": 900},
             device_scale_factor=1,
@@ -110,12 +112,9 @@ async def main() -> int:
             # The wait_for selector is the "actual content has
             # rendered" signal — networkidle alone fires before
             # TanStack Query's first data fetch resolves.
-            try:
+            # A missing selector intentionally documents the empty state.
+            with contextlib.suppress(Exception):
                 await page.wait_for_selector(wait_for, timeout=8000)
-            except Exception:
-                # Selector not found — render anyway, the screenshot
-                # documents the empty state which is also useful.
-                pass
             # One extra frame so any draw-in animations settle.
             await page.wait_for_timeout(400)
             await page.screenshot(path=str(HERE / name), full_page=False)
@@ -128,10 +127,8 @@ async def main() -> int:
             name = "intake.png"
             print(f"capturing {url} -> {name}")
             await page.goto(url, wait_until="networkidle")
-            try:
+            with contextlib.suppress(Exception):
                 await page.wait_for_selector("form", timeout=8000)
-            except Exception:
-                pass
             await page.wait_for_timeout(400)
             await page.screenshot(path=str(HERE / name), full_page=False)
 

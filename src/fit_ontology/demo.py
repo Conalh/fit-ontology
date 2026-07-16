@@ -4,10 +4,10 @@ Module exports:
   - DEMO_TRAINER_ID, DEMO_TRAINER_EMAIL, DEMO_TRAINER_NAME
   - is_demo_enabled() — env-var check
   - is_demo_trainer(trainer_id) — id comparison
-  - seed_demo_data_if_needed(con) — idempotent first-boot seed
+  - seed_demo_data_if_needed(con) — evergreen, idempotent demo seed
 
 
-A hosted deployment of FitOntology has a chicken-and-egg problem for
+A demo deployment of FitOntology has a chicken-and-egg problem for
 a portfolio audience: the dashboard's interesting only when it has
 real clients + wearable data + history to reason over, but a reviewer
 who lands on /login with no account has no way to see any of that.
@@ -17,7 +17,7 @@ the deployment:
 
   1. On first connect() with an empty database, the synthetic dataset
      (data/synthetic/*) is loaded under a dedicated ``t_demo``
-     trainer. Three clients, ~40 days of HRV / sleep / RHR, a couple
+     trainer. Five clients, ~40 days of HRV / sleep / RHR, a couple
      dozen sessions each, a pre-computed current-week recommendation
      and weekly plan per client.
 
@@ -51,7 +51,7 @@ signal value.
 from __future__ import annotations
 
 import os
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 # The demo trainer's id is deliberately distinct from DEFAULT_TRAINER_ID
 # ("t_default") so a deployment can have both: a real trainer the
@@ -60,6 +60,7 @@ from datetime import date, datetime, timedelta
 DEMO_TRAINER_ID = "t_demo"
 DEMO_TRAINER_EMAIL = "demo@fitontology.app"
 DEMO_TRAINER_NAME = "Demo Trainer"
+DEMO_MAX_DATA_AGE_DAYS = 3
 
 
 def is_demo_enabled() -> bool:
@@ -79,15 +80,105 @@ def is_demo_trainer(trainer_id: str | None) -> bool:
     return trainer_id == DEMO_TRAINER_ID
 
 
+def _demo_dataset_is_stale(con, *, today: date | None = None) -> bool:
+    """Return True when the disposable demo has aged past usefulness.
+
+    Static fixtures are convenient to review in git, but their dates do
+    not move. Without this check a healthy public demo eventually turns
+    into five identical "No recent data" rows. A warm database is
+    refreshed only after a few days, keeping ordinary reconnects cheap.
+    """
+    latest = con.execute(
+        "SELECT MAX(date) FROM metrics WHERE trainer_id = ?",
+        [DEMO_TRAINER_ID],
+    ).fetchone()[0]
+    if latest is None:
+        return True
+    if isinstance(latest, datetime):
+        latest = latest.date()
+    return ((today or date.today()) - latest).days > DEMO_MAX_DATA_AGE_DAYS
+
+
+def _clear_demo_data(con) -> None:
+    """Delete the shared demo scope so it can be reseeded atomically.
+
+    The demo trainer is read-only and contains no user data. Leaf tables
+    come first to satisfy client foreign keys; the trainer row itself is
+    retained so auth identity stays stable across a refresh.
+    """
+    for table in (
+        "client_share_tokens",
+        "client_intake_tokens",
+        "client_thresholds",
+        "planned_sessions",
+        "recommendation_overrides",
+        "recommendations",
+        "metrics",
+        "sessions",
+        "audit_log",
+        "ask_sessions",
+        "clients",
+    ):
+        con.execute(
+            f"DELETE FROM {table} WHERE trainer_id = ?",
+            [DEMO_TRAINER_ID],
+        )
+
+
+def _align_demo_dates(sessions_df, metric_frames, *, today: date | None = None):
+    """Shift fixture timelines so the newest observation is yesterday.
+
+    Relative gaps and signal shapes stay identical. Metric IDs are
+    recomputed from the shifted natural key so the audit trail remains
+    internally consistent.
+    """
+    import pandas as pd
+
+    from .ingest import metric_id
+
+    frames = [sessions_df, *metric_frames]
+    latest_dates = [
+        pd.to_datetime(frame["date"]).max().date()
+        for frame in frames
+        if not frame.empty
+    ]
+    if not latest_dates:
+        return sessions_df, metric_frames
+
+    target = (today or date.today()) - timedelta(days=1)
+    delta = target - max(latest_dates)
+    if delta.days == 0:
+        return sessions_df, metric_frames
+
+    shifted_sessions = sessions_df.copy()
+    shifted_sessions["date"] = (
+        pd.to_datetime(shifted_sessions["date"]) + pd.to_timedelta(delta.days, unit="D")
+    ).dt.date
+
+    shifted_metrics = []
+    for frame in metric_frames:
+        shifted = frame.copy()
+        shifted["date"] = (
+            pd.to_datetime(shifted["date"]) + pd.to_timedelta(delta.days, unit="D")
+        ).dt.date
+        shifted["id"] = [
+            metric_id(row["client_id"], row["date"], row["kind"], row["source"])
+            for _, row in shifted.iterrows()
+        ]
+        shifted_metrics.append(shifted)
+
+    return shifted_sessions, shifted_metrics
+
+
 def seed_demo_data_if_needed(con) -> None:
     """Idempotently load the synthetic dataset under the demo trainer.
 
-    Runs on every connect()-with-write but short-circuits cheaply
-    when the demo trainer already has clients — so the cost on a
-    warm DB is one SELECT COUNT(*).
+    Runs on every connect()-with-write but short-circuits cheaply when
+    the demo data is current. Stale shared demo data is disposable and
+    is rebuilt against a date-aligned copy of the committed fixtures.
 
     The dataset:
-      - 3 clients (Alice, Ben, Carla) with intake details that
+      - 5 realistic fictional clients with intake details that
         exercise the contraindications system (lumbar history,
         knee injury, hypertension medication)
       - 28+ days of HRV / sleep / RHR per client from Whoop + Strava
@@ -173,6 +264,9 @@ def seed_demo_data_if_needed(con) -> None:
     # fires with accurate counts in both the fresh-seed and the
     # backfill-only paths.
     existing_clients_df = list_clients(con, DEMO_TRAINER_ID)
+    if not existing_clients_df.empty and _demo_dataset_is_stale(con):
+        _clear_demo_data(con)
+        existing_clients_df = list_clients(con, DEMO_TRAINER_ID)
     seeded_clients = existing_clients_df.empty
 
     if seeded_clients:
@@ -189,7 +283,6 @@ def seed_demo_data_if_needed(con) -> None:
             ensure_client(con, DEMO_TRAINER_ID, client_id)
 
         sessions_df = from_session_log_csv(synth / "sessions.csv")
-        insert_sessions(con, DEMO_TRAINER_ID, sessions_df)
 
         # Metrics — one Whoop + one Strava per client. Iterate the
         # client_id column rather than hardcoding so adding a fourth
@@ -202,6 +295,9 @@ def seed_demo_data_if_needed(con) -> None:
                 metric_frames.append(from_whoop_json(whoop_path, client_id))
             if strava_path.exists():
                 metric_frames.append(from_strava_export(strava_path, client_id))
+
+        sessions_df, metric_frames = _align_demo_dates(sessions_df, metric_frames)
+        insert_sessions(con, DEMO_TRAINER_ID, sessions_df)
         if metric_frames:
             all_metrics = pd.concat(metric_frames, ignore_index=True)
             insert_metrics(con, DEMO_TRAINER_ID, all_metrics)
@@ -243,7 +339,7 @@ def seed_demo_data_if_needed(con) -> None:
         f"{sessions_count} sessions + "
         f"{metrics_count} metric rows + "
         f"{history_n} historical overrides "
-        f"under {DEMO_TRAINER_ID} at {datetime.utcnow().isoformat()}Z",
+        f"under {DEMO_TRAINER_ID} at {datetime.now(UTC).isoformat()}",
         file=sys.stderr,
     )
 

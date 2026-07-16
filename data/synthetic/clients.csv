@@ -1,6 +1,6 @@
 id,name,sex,age,height_cm,weight_kg,goal,injury_history,created_at
-c_alice,Elizabeth Bennet,F,34,168,62,Walk to Netherfield without muddied petticoats — sub-90 min twice weekly,L ankle turn on Hertfordshire walks 2024,2025-01-12 10:00:00
-c_ben,Captain Ahab,M,41,183,88,Single-leg harpoon throw — 50m accuracy by next sighting,R below-knee amputation (Moby Dick); R rotator cuff strain from harpoon volume,2025-03-04 09:30:00
-c_carla,Lady Macbeth,F,28,171,68,Build wrist + grip endurance for nightly handwashing routine,Lower-back strain (candle-lit pacing); R wrist tendinopathy,2025-06-18 17:15:00
-c_holmes,Sherlock Holmes,M,39,188,78,VO2 max for rooftop chases; four-minute violin endurance unbroken,R shoulder strain (boxing); L wrist sprain (singlestick fencing),2025-02-20 11:45:00
-c_quixote,Don Quixote,M,52,175,70,Joust a windmill — and win,Multiple rib contusions (windmill incident); chronic lumbar fatigue from sustained tilting,2025-04-30 14:20:00
+c_alice,Maya Chen,F,34,168,62,Return to trail running — pain-free 10K by October,Left ankle sprain in 2024; occasional lateral stiffness,2025-01-12 10:00:00
+c_ben,Marcus Hill,M,41,183,88,Rebuild half-marathon base — 30 km per week without flare-ups,Right Achilles tendinopathy history; left shoulder irritation with overhead volume,2025-03-04 09:30:00
+c_carla,Priya Shah,F,28,171,68,First unassisted pull-up and a 1.5× bodyweight deadlift,Intermittent low-back stiffness; right wrist tendinopathy,2025-06-18 17:15:00
+c_holmes,Jordan Brooks,M,39,188,78,Raise cycling FTP for a spring gran fondo,Right shoulder strain; resolved left wrist sprain,2025-02-20 11:45:00
+c_quixote,Daniel Ruiz,M,52,175,70,Return to recreational tennis twice weekly,Prior left knee meniscus repair; chronic lumbar fatigue after long sessions,2025-04-30 14:20:00

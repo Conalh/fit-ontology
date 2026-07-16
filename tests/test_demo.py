@@ -42,6 +42,7 @@ from fit_ontology.demo import (
     is_demo_enabled,
     seed_demo_data_if_needed,
 )
+from fit_ontology.ingest import metric_id
 from fit_ontology.rate_limit import reset as rate_limit_reset
 from fit_ontology.routes import (
     auth as auth_routes,
@@ -93,13 +94,53 @@ def test_seed_demo_data_is_idempotent(tmp_path: Path, monkeypatch):
     with connect(db_path, read_only=False) as con:
         seed_demo_data_if_needed(con)
         first_clients = list_clients(con, DEMO_TRAINER_ID)
+        first_metrics = con.execute(
+            "SELECT COUNT(*), MAX(date) FROM metrics WHERE trainer_id = ?",
+            [DEMO_TRAINER_ID],
+        ).fetchone()
         seed_demo_data_if_needed(con)
         second_clients = list_clients(con, DEMO_TRAINER_ID)
+        second_metrics = con.execute(
+            "SELECT COUNT(*), MAX(date) FROM metrics WHERE trainer_id = ?",
+            [DEMO_TRAINER_ID],
+        ).fetchone()
+        sample = con.execute(
+            """
+            SELECT id, client_id, date, kind, source
+            FROM metrics WHERE trainer_id = ? LIMIT 1
+            """,
+            [DEMO_TRAINER_ID],
+        ).fetchone()
 
     assert not first_clients.empty, "first seed must produce demo clients"
     assert len(second_clients) == len(first_clients), (
         "second seed must be a no-op (idempotent)"
     )
+    assert second_metrics == first_metrics
+    assert first_metrics[1] == date.today() - timedelta(days=1)
+    assert sample[0] == metric_id(sample[1], sample[2], sample[3], sample[4])
+
+
+def test_seed_demo_data_refreshes_an_aged_database(tmp_path: Path, monkeypatch):
+    """A public demo must not decay into an all-stale roster over time."""
+    monkeypatch.setenv("FIT_ONTOLOGY_DEMO_MODE", "1")
+    db_path = tmp_path / "demo_refresh.duckdb"
+
+    with connect(db_path, read_only=False) as con:
+        seed_demo_data_if_needed(con)
+        con.execute(
+            "UPDATE metrics SET date = date - INTERVAL 30 DAY WHERE trainer_id = ?",
+            [DEMO_TRAINER_ID],
+        )
+        seed_demo_data_if_needed(con)
+        latest = con.execute(
+            "SELECT MAX(date) FROM metrics WHERE trainer_id = ?",
+            [DEMO_TRAINER_ID],
+        ).fetchone()[0]
+        clients = list_clients(con, DEMO_TRAINER_ID)
+
+    assert latest == date.today() - timedelta(days=1)
+    assert len(clients) == 5
 
 
 def test_seed_demo_data_isolates_from_default_trainer(tmp_path: Path, monkeypatch):
@@ -209,7 +250,7 @@ def test_demo_visitor_can_list_clients(demo_app):
     r = client.get("/api/clients")
     assert r.status_code == 200
     ids = [c["id"] for c in r.json()]
-    # The synthetic dataset has three clients: c_alice, c_ben, c_carla.
+    # The synthetic dataset keeps the original three stable IDs and adds two.
     assert set(ids) >= {"c_alice", "c_ben", "c_carla"}
 
 

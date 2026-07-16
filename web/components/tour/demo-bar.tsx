@@ -8,7 +8,7 @@ export function TourDemoBar() {
         Live demo
       </span>
       <p className="fit-tour-bar-copy">
-        <strong>Alice, Ben &amp; Carla</strong> · synthetic wearables + four weeks of calibration history · read-only writes
+        <strong>Five fictional clients</strong> · current synthetic wearables + four weeks of calibration history · read-only writes
       </p>
       <Link href="/" className="fit-tour-btn fit-tour-btn--ghost">
         Skip to app

@@ -24,7 +24,7 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "FitOntology",
   description:
-    "Client intelligence for personal trainers — wearables, intake, and ACSM guidelines unified.",
+    "Local-first weekly coaching briefs with cited, overrideable recommendations from wearable, session, and intake data.",
 };
 
 export default function RootLayout({

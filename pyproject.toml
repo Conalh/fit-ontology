@@ -4,16 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fit-ontology"
-version = "0.5.1"
-description = "Client intelligence layer for personal trainers — wearables, intake, and ACSM guidelines unified."
+version = "0.6.0"
+description = "Local-first weekly coaching briefs with cited, overrideable training recommendations."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "Conal" }]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
     "Topic :: Scientific/Engineering",
 ]
@@ -22,7 +22,7 @@ dependencies = [
     "pandas>=2.2.0",
     "pydantic>=2.5.0",
     "python-dateutil>=2.8.2",
-    "garminconnect>=0.2.20",
+    "garminconnect>=0.3.6",
     "python-dotenv>=1.0.0",
     "anthropic>=0.39.0",
     "reportlab>=4.0.0",
@@ -119,7 +119,7 @@ show_missing = true
 # class of "you forgot to annotate this internal helper" without
 # forcing every type to be explicit.
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 files = ["src/fit_ontology"]
 check_untyped_defs = true
 ignore_missing_imports = true

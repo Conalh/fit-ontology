@@ -22,7 +22,7 @@ Security posture for Phase 2b-α:
   - SameSite=Lax so a third-party site can't trick the browser into
     submitting an authenticated request
   - Secure flag toggled by env var so dev (http://localhost) works
-    while production (https://app.mobility.rest) requires HTTPS
+    while a production deployment requires HTTPS
   - 14-day max age, refreshed on every login (no sliding window —
     that's Phase 2b-β with the UI for "log out everywhere")
 """

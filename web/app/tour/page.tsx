@@ -15,7 +15,7 @@ export default function TourPage() {
         <h1>Monday morning, before the first session.</h1>
         <p>
           Wearables, session load, and ACSM-style rules in one roster — every verdict traces to the rows that
-          produced it. Start with <strong style={{ color: "var(--text)" }}>Ben</strong> for a deload week, or
+          produced it. Start with <strong style={{ color: "var(--text)" }}>Marcus</strong> for a deload week, or
           browse the full app.
         </p>
         <p style={{ marginTop: 14 }}>

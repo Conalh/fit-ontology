@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from . import __version__
 from .config import load_env
 
 # Load .env BEFORE importing any module that reads the environment at
@@ -157,7 +158,7 @@ def _init_sentry() -> None:
     environment = os.environ.get("FIT_ONTOLOGY_SENTRY_ENV", "production")
     # ``release`` carries the app version so Sentry can correlate
     # errors against deploys. Matches the FastAPI version string below.
-    release = os.environ.get("FIT_ONTOLOGY_RELEASE", "fit-ontology@0.5.1")
+    release = os.environ.get("FIT_ONTOLOGY_RELEASE", f"fit-ontology@{__version__}")
     sentry_sdk.init(
         dsn=dsn,
         environment=environment,
@@ -231,7 +232,7 @@ async def _lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="FitOntology API", version="0.5.1", lifespan=_lifespan)
+app = FastAPI(title="FitOntology API", version=__version__, lifespan=_lifespan)
 # NOTE: bumped in lockstep with pyproject.toml; the version string also
 # appears in the OpenAPI doc so SDK consumers can pin against it.
 

@@ -5,7 +5,9 @@ export function WeeklyTrend({ rows }: { rows: WeeklyAgreement[] }) {
   const w = 560;
   const h = 80;
   const padL = 36;
-  const padR = 12;
+  // Leave enough room for the final centered date label. A smaller
+  // gutter clipped its last character in README-sized captures.
+  const padR = 24;
   const padT = 10;
   const padB = 22;
   const innerW = w - padL - padR;

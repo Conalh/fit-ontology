@@ -450,8 +450,8 @@ export function LoadBars({
   // Regular bars deliberately use the neutral muted token rather than
   // the per-client --accent. The chart's legend says "Red = high-stress
   // session" and ``var(--danger)`` is the red being referred to — but
-  // if regular bars inherit a red-ish per-client accent (Ben Okafor's
-  // BO chip is exactly such an accent), the two reds collide and the
+  // if regular bars inherit a red-ish per-client accent, the two reds
+  // collide and the
   // legend stops being readable. Decoupling means the red high-stress
   // bars always contrast against the neutral baseline regardless of
   // who's on screen. The ``accent`` prop was removed entirely — no

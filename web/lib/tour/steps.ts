@@ -26,7 +26,7 @@ export const SPOTLIGHT_STEPS: SpotlightStep[] = [
     id: "ben",
     href: "/",
     target: '[data-tour="roster-ben"]',
-    title: "Ben is flagged Deload",
+    title: "Marcus is flagged Deload",
     body: "The red stripe matches the verdict badge — HRV, sleep, and load signals fired. Hit Next to open his week.",
   },
   {

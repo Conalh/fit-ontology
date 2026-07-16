@@ -141,7 +141,7 @@ def delete_client(
     NULL'd to preserve the mint-event trail).
 
     Returns ``{"ok": True, "name": "..."}`` so the front-end can show
-    a "Deleted Captain Ahab" toast without having to remember which
+    a "Deleted Marcus Hill" toast without having to remember which
     client just disappeared. 404 if the client doesn't belong to the
     calling trainer — same shape as a missing client, so we don't
     leak the difference between "doesn't exist" and "isn't yours."

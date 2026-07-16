@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install and audit Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" pip-audit
+          pip-audit .
+
+      - name: Verify release contract
+        run: python scripts/release_check.py
+
+      - name: Verify Python package
+        run: |
+          ruff check src scripts tests
+          mypy --python-version 3.13
+          pytest
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Verify web package
+        working-directory: web
+        run: |
+          npm ci
+          npm run lint
+          npx tsc --noEmit
+          npm run test:run
+          npm run build
+          npm run audit:ci
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create experimental GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}"
+          --repo "${GITHUB_REPOSITORY}"
+          --title "FitOntology ${GITHUB_REF_NAME} (experimental)"
+          --generate-notes
+          --prerelease

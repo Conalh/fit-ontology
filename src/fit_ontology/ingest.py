@@ -94,7 +94,10 @@ def from_strava_export(path: Path, client_id: str) -> pd.DataFrame:
         "Average Heart Rate": "hr_avg",
         "Max Heart Rate": "hr_max",
     })
-    raw["date"] = pd.to_datetime(raw["date"]).dt.date
+    # Strava exports use a human-readable month/day timestamp. Explicit
+    # mixed parsing avoids pandas' per-row fallback warning while still
+    # accepting localized exports and the synthetic fixture format.
+    raw["date"] = pd.to_datetime(raw["date"], format="mixed").dt.date
 
     rows = []
     for _, r in raw.iterrows():

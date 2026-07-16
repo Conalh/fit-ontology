@@ -32,7 +32,7 @@ Contracts pinned here:
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -98,7 +98,7 @@ def test_authed_mint_returns_token_and_expiry(intake_app):
     data = r.json()
     assert isinstance(data["token"], str) and len(data["token"]) >= 32
     expires_at = datetime.fromisoformat(data["expires_at"])
-    assert expires_at > datetime.utcnow()
+    assert expires_at > datetime.now(UTC).replace(tzinfo=None)
 
 
 def test_trainer_message_roundtrips(intake_app):

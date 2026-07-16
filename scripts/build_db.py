@@ -31,10 +31,15 @@ def main() -> None:
     print(f"Loaded {len(sessions)} sessions.")
 
     all_metrics = []
-    for cid in ("c_alice", "c_ben", "c_carla"):
-        whoop = from_whoop_json(SYNTH / f"whoop_{cid}.json", cid)
-        strava = from_strava_export(SYNTH / f"strava_{cid}.csv", cid)
-        all_metrics.extend([whoop, strava])
+    for cid in clients["id"].astype(str):
+        whoop_path = SYNTH / f"whoop_{cid}.json"
+        strava_path = SYNTH / f"strava_{cid}.csv"
+        if whoop_path.exists():
+            all_metrics.append(from_whoop_json(whoop_path, cid))
+        if strava_path.exists():
+            all_metrics.append(from_strava_export(strava_path, cid))
+    if not all_metrics:
+        raise RuntimeError(f"No synthetic metric exports found in {SYNTH}")
     metrics_df = pd.concat(all_metrics, ignore_index=True)
     insert_metrics(con, trainer_id, metrics_df)
     print(f"Loaded {len(metrics_df)} metric rows.")

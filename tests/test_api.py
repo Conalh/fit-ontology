@@ -365,6 +365,8 @@ def test_action_queue_surfaces_unreviewed_deload_and_missing_plan(app_with_db):
     assert items[0]["priority"] == "high"
     assert items[0]["client_id"] == "c_test"
     assert "Deload" in items[0]["title"]
+    assert "HRV below baseline" in items[0]["detail"]
+    assert "hrv_below_baseline" not in items[0]["detail"]
     assert any(item["kind"] == "build_plan" and item["client_id"] == "c_test" for item in items)
 
 

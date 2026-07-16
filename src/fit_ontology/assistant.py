@@ -3,7 +3,7 @@
 ontology, the metrics, and the reasoning engine.
 
 The trainer asks a question in natural language (e.g. "what should I do
-with Ben this week?"). We hand it to Claude with five tools that read
+with Marcus this week?"). We hand it to Claude with five tools that read
 the same ontology the dashboard uses. Claude picks tools, we execute
 them against DuckDB, we feed the results back, Claude eventually
 answers in plain language with the specific numbers it pulled.

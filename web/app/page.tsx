@@ -27,8 +27,9 @@ export default function RosterPage() {
   });
   const [intakeOpen, setIntakeOpen] = useState(false);
 
-  // Page-level accent is the neutral indigo when no client is in focus.
-  const accentHex = "#4F46E5";
+  // The roster uses the product's calm signal green. Client pages still
+  // receive their own accent so an individual remains visually distinct.
+  const accentHex = "#48C78E";
   const accentVars = {
     "--accent": accentHex,
     "--accent-bg": withAlpha(accentHex, 0.10),
@@ -36,6 +37,7 @@ export default function RosterPage() {
 
   return (
     <div
+      className="fit-app-shell"
       style={{
         ...accentVars,
         display: "flex",
@@ -65,22 +67,21 @@ export default function RosterPage() {
           </Link>
         </TopBar>
 
-        <div style={{ padding: "28px 28px 36px" }}>
-          <header style={{ marginBottom: 18 }}>
-            <h1
-              style={{
-                fontSize: 22,
-                fontWeight: 600,
-                letterSpacing: "-0.02em",
-                margin: 0,
-                color: "var(--text)",
-              }}
-            >
-              Roster
-            </h1>
-            <p style={{ margin: "4px 0 0", fontSize: 12.5, color: "var(--text-muted)" }}>
-              {data ? `${data.length} clients` : "Loading…"} · ranked by recommendation urgency
-            </p>
+        <main className="fit-roster-page">
+          <header className="fit-roster-hero">
+            <div>
+              <p className="fit-eyebrow">Weekly coaching brief</p>
+              <h1>Know who needs you first.</h1>
+              <p>
+                Review readiness, stale inputs, and plan drift before the week gets busy.
+                Every recommendation stays traceable—and yours to override.
+              </p>
+            </div>
+            <div className="fit-cycle-chip" aria-label="Current review cycle">
+              <span>Review cycle</span>
+              <strong>Current week</strong>
+              <small>{data ? `${data.length} active clients` : "Loading roster"}</small>
+            </div>
           </header>
 
           {isLoading && <RosterSkeleton />}
@@ -96,19 +97,104 @@ export default function RosterPage() {
 
           {data && data.length > 0 && (
             <>
-              <ActionQueuePanel
-                items={queueQ.data ?? []}
-                loading={queueQ.isLoading}
-                error={Boolean(queueQ.error)}
-              />
+              <WeeklyBrief rows={data} items={queueQ.data ?? []} />
+              <div className="fit-dashboard-grid">
+                <ActionQueuePanel
+                  items={queueQ.data ?? []}
+                  loading={queueQ.isLoading}
+                  error={Boolean(queueQ.error)}
+                />
+                <EvidenceBoundary />
+              </div>
+              <div className="fit-section-heading">
+                <div>
+                  <p className="fit-eyebrow">Full roster</p>
+                  <h2>Client readiness</h2>
+                </div>
+                <span>Ranked by urgency · sortable by every decision field</span>
+              </div>
               <RosterTable rows={data} />
             </>
           )}
-        </div>
+        </main>
       </div>
 
       {intakeOpen && <IntakeLinkModal onClose={() => setIntakeOpen(false)} />}
     </div>
+  );
+}
+
+function WeeklyBrief({ rows, items }: { rows: RosterRow[]; items: ActionQueueItem[] }) {
+  const needsDecision = rows.filter(
+    (row) => row.label === "Deload" || row.label === "Conservative",
+  ).length;
+  const ready = rows.filter((row) => row.label !== "No recent data").length;
+  const current = rows.filter(
+    (row) => row.last_data_days != null && row.last_data_days <= 3,
+  ).length;
+  const highPriority = items.filter((item) => item.priority === "high").length;
+
+  const stats = [
+    {
+      label: "Needs a call",
+      value: needsDecision,
+      detail: "Deload or conservative",
+      tone: needsDecision > 0 ? "attention" : "steady",
+    },
+    {
+      label: "Ready to review",
+      value: ready,
+      detail: `of ${rows.length} clients have signal`,
+      tone: ready === rows.length ? "steady" : "neutral",
+    },
+    {
+      label: "Data current",
+      value: current,
+      detail: "Updated within 3 days",
+      tone: current === rows.length ? "steady" : "neutral",
+    },
+    {
+      label: "Priority actions",
+      value: highPriority,
+      detail: `${items.length} total in the queue`,
+      tone: highPriority > 0 ? "attention" : "steady",
+    },
+  ];
+
+  return (
+    <section className="fit-brief-stats" aria-label="Weekly roster summary">
+      {stats.map((stat) => (
+        <article className={`fit-stat-card fit-stat-card--${stat.tone}`} key={stat.label}>
+          <div className="fit-stat-topline">
+            <span>{stat.label}</span>
+            <i aria-hidden />
+          </div>
+          <strong>{stat.value}</strong>
+          <small>{stat.detail}</small>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function EvidenceBoundary() {
+  return (
+    <aside className="fit-evidence-card">
+      <p className="fit-eyebrow">Decision support, not autopilot</p>
+      <h2>The system shows its work. The coach makes the call.</h2>
+      <p>
+        Wearable trends, session load, and intake constraints stay separate until a
+        cited rule fires. Overrides are first-class evidence—not an error state.
+      </p>
+      <ul>
+        <li><span aria-hidden>01</span> Exact source rows behind every signal</li>
+        <li><span aria-hidden>02</span> Conservative, inspectable rule thresholds</li>
+        <li><span aria-hidden>03</span> Agreement history for ongoing calibration</li>
+      </ul>
+      <Link href="/calibration" className="fit-text-link">
+        Open calibration <span aria-hidden>→</span>
+      </Link>
+    </aside>
   );
 }
 
@@ -129,12 +215,12 @@ function ActionQueuePanel({
 }) {
   return (
     <section
+      className="fit-queue-panel"
       data-tour="action-queue"
       style={{
         border: "1px solid var(--border)",
-        borderRadius: 10,
+        borderRadius: 14,
         background: "var(--surface)",
-        marginBottom: 18,
         overflow: "hidden",
       }}
     >
@@ -151,10 +237,12 @@ function ActionQueuePanel({
       >
         <div>
           <h2 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
-            Today&apos;s coaching queue
+            Review queue
           </h2>
           <p style={{ margin: "2px 0 0", fontSize: 11.5, color: "var(--text-muted)" }}>
-            {loading ? "Loading actions" : `${items.length} open action${items.length === 1 ? "" : "s"}`}
+            {loading
+              ? "Loading actions"
+              : `${items.length} open action${items.length === 1 ? "" : "s"} · ordered by urgency`}
           </p>
         </div>
         {items.length > 0 && (
@@ -191,7 +279,7 @@ function ActionQueuePanel({
 
       {!loading && !error && items.length > 0 && (
         <div style={{ display: "grid" }}>
-          {items.slice(0, 5).map((item, index) => {
+          {items.slice(0, 4).map((item, index) => {
             const accent = PRIORITY_ACCENT[item.priority] ?? "var(--accent)";
             return (
               <div
@@ -201,7 +289,7 @@ function ActionQueuePanel({
                   gridTemplateColumns: "minmax(0, 1fr) auto",
                   gap: 14,
                   alignItems: "center",
-                  padding: "14px 16px",
+                  padding: "12px 16px",
                   borderTop: index === 0 ? "none" : "1px solid var(--border)",
                   boxShadow: `inset 3px 0 0 ${accent}`,
                 }}
@@ -251,6 +339,11 @@ function ActionQueuePanel({
               </div>
             );
           })}
+          {items.length > 4 && (
+            <p className="fit-queue-more">
+              + {items.length - 4} more action{items.length - 4 === 1 ? "" : "s"} represented in the roster below
+            </p>
+          )}
         </div>
       )}
     </section>
@@ -262,9 +355,10 @@ function RosterSkeleton() {
     <section
       style={{
         border: "1px solid var(--border)",
-        borderRadius: 10,
+        borderRadius: 14,
         background: "var(--surface)",
         overflow: "hidden",
+        boxShadow: "0 18px 44px var(--shadow-sm)",
       }}
     >
       {[0, 1, 2, 3].map((i) => (
@@ -441,9 +535,10 @@ function RosterTable({ rows }: { rows: RosterRow[] }) {
       data-tour="roster-table"
       style={{
         border: "1px solid var(--border)",
-        borderRadius: 10,
+        borderRadius: 14,
         background: "var(--surface)",
         overflow: "hidden",
+        boxShadow: "0 18px 44px var(--shadow-sm)",
       }}
     >
       <div

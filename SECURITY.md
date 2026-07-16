@@ -28,8 +28,9 @@ is the *adversarial what-if*.
   X-Content-Type-Options, Referrer-Policy, HSTS, CSP).
 - **Public read-only demo mode** that returns 403 on every mutation,
   not 200-silent-no-op.
-- **No DOS, supply-chain, or host-compromise defenses** — explicit
-  out-of-scope, see below.
+- **No comprehensive DOS or host-compromise defenses** — explicit
+  out-of-scope, see below. Automated dependency audits and update
+  proposals reduce, but do not eliminate, supply-chain risk.
 
 **To report a vulnerability:** see [Reporting](#reporting) at the
 bottom.
@@ -43,7 +44,7 @@ bottom.
 | Actor | Capabilities | Goal |
 | --- | --- | --- |
 | **Honest trainer** | Has a valid session cookie. | Read + mutate their own data. |
-| **Honest visitor** | No cookie, visiting the hosted demo. | Read the demo trainer's pre-seeded data. |
+| **Honest visitor** | No cookie, running or visiting a demo deployment. | Read the demo trainer's pre-seeded data. |
 | **Curious trainer** | Has a valid session cookie. Tries to read or mutate another trainer's data by guessing IDs or replaying URLs. | Read another trainer's data. |
 | **Web attacker** | Can serve arbitrary HTML/JS at an external origin. Can craft links + forms. Cannot intercept TLS. | Steal a trainer's session via XSS / CSRF / clickjacking. |
 | **Network attacker (off-path)** | Can observe TLS-encrypted traffic but not decrypt. | Replay attacks, traffic analysis. |
@@ -55,7 +56,7 @@ bottom.
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ untrusted                                                   │
-│  ├─ public internet (TLS terminated at Fly's edge)          │
+│  ├─ public internet (TLS at operator reverse proxy)          │
 │  ├─ uploaded files (multipart bodies)                       │
 │  └─ session cookies in flight                               │
 └────────────────────┬────────────────────────────────────────┘
@@ -70,8 +71,8 @@ bottom.
 ┌────────────────────▼────────────────────────────────────────┐
 │ trusted                                                     │
 │  ├─ FastAPI process (single uvicorn, single user "app")     │
-│  ├─ DuckDB file on the Fly volume                           │
-│  └─ secrets in Fly's encrypted store (SESSION_SECRET,       │
+│  ├─ DuckDB file on an operator-managed volume               │
+│  └─ secrets provided through the host environment           │
 │     ANTHROPIC_API_KEY, DEFAULT_TRAINER_PASSWORD)            │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -158,7 +159,8 @@ The signer's embedded timestamp enforces the 14-day TTL.
 gated on `FIT_ONTOLOGY_SESSION_SECURE=1` (HSTS-paired in prod).
 `Max-Age=14d`.
 
-**Defense, transport:** TLS terminated at Fly's edge.
+**Defense, transport:** Public deployments must terminate TLS at
+the operator's reverse proxy.
 `Strict-Transport-Security: max-age=63072000` tells browsers to
 refuse downgrade attempts on subsequent visits.
 
@@ -444,10 +446,10 @@ a real SaaS.
 
 | Class | Why out of scope |
 | --- | --- |
-| **Denial of service** | Single-machine deployment; saturating it is trivially possible. Fly's edge has connection-rate limits; that's the floor. A real SaaS would add Cloudflare + autoscaling. |
-| **Supply chain compromise** | `pyproject.toml` pins major versions, doesn't hash-lock. A future hardening pass could add `pip-tools` or `uv`'s lockfile + `dependency-review-action` in CI. The npm side has `package-lock.json`. |
-| **Host / volume compromise** | An attacker with shell access to the Fly machine reads the DuckDB file directly. Encryption-at-rest beyond Fly's volume defaults is left for when the data warrants it (HIPAA-adjacent posture, multi-trainer SaaS). |
-| **Side-channel attacks** | Timing channels are bounded by the bcrypt dummy-verify on auth, but data-dependent timing in query paths (e.g., "did this client exist?" via response timing) isn't normalized. Low real-world exploitability on a shared-cpu-1x with network jitter. |
+| **Denial of service** | A single-machine deployment can still be saturated. The operator is responsible for edge rate limits, capacity, and recovery. |
+| **Supply chain compromise** | CI audits Python and npm dependencies and Dependabot proposes updates, but Python dependencies are not hash-locked and a trusted package release could still be compromised. |
+| **Host / volume compromise** | An attacker with shell access to the host can read the DuckDB file directly. Encryption at rest beyond the host provider's defaults is left to the operator. |
+| **Side-channel attacks** | Timing channels are bounded by the bcrypt dummy-verify on auth, but data-dependent query timing is not normalized. Network jitter makes it low risk for the intended friend-test deployment. |
 | **Cryptographic agility / key rotation** | Single `FIT_ONTOLOGY_SESSION_SECRET`. No JWK rotation. Rotating invalidates every live session. Acceptable for solo deployment; SaaS would need overlapping secrets. |
 | **Account recovery / 2FA** | No email-based reset flow. No TOTP. Admin CLI is the only recovery path (`scripts/trainer.py set-password`). |
 | **GDPR data export + delete endpoints** | Not implemented. Phase 5c in [ROADMAP.md](ROADMAP.md). |
@@ -458,8 +460,7 @@ a real SaaS.
 ## Reporting
 
 If you find something, please **don't** open a public GitHub issue.
-Email the maintainer at the address in the repo's
-`pyproject.toml` (the `authors` field) with:
+Use GitHub's private vulnerability reporting for this repository with:
 
 1. A description of the vulnerability
 2. The steps to reproduce

@@ -1,4 +1,8 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { NextConfig } from "next";
+
+const webRoot = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
   // Static export — Next.js builds plain HTML/CSS/JS into web/out/,
@@ -11,6 +15,11 @@ const nextConfig: NextConfig = {
   // optimization. We don't use <Image> with raster sources, so this
   // is fine.
   images: { unoptimized: true },
+  // Keep Turbopack anchored to this package. Some Windows developer
+  // machines have an unrelated lockfile higher in the directory tree;
+  // auto-detection otherwise selects that folder and emits a misleading
+  // production-build warning.
+  turbopack: { root: webRoot },
   // Next 16 blocks cross-origin dev-resource fetches by default for
   // safety. When the browser visits the dev server via 127.0.0.1
   // (anything other than localhost) the HMR/RSC fetches get blocked

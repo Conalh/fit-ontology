@@ -9,7 +9,7 @@ import secrets
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import bcrypt
@@ -29,6 +29,11 @@ _PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB_PATH = Path(
     os.environ.get("FIT_ONTOLOGY_DB", str(_PACKAGE_ROOT / "data" / "fit_ontology.duckdb"))
 )
+
+
+def _utcnow() -> datetime:
+    """Return naive UTC for the existing DuckDB timestamp columns."""
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 # ─── Phase 2a default trainer ────────────────────────────────────────
@@ -135,7 +140,7 @@ def _run_migrations(con: duckdb.DuckDBPyConnection) -> None:
             INSERT INTO trainers (id, email, name, hashed_password, created_at)
             VALUES (?, ?, ?, NULL, ?)
             """,
-            [DEFAULT_TRAINER_ID, DEFAULT_TRAINER_EMAIL, DEFAULT_TRAINER_NAME, datetime.utcnow()],
+            [DEFAULT_TRAINER_ID, DEFAULT_TRAINER_EMAIL, DEFAULT_TRAINER_NAME, _utcnow()],
         )
 
     # Step 1b (Phase 2b-α): seed the default trainer's password from
@@ -291,7 +296,7 @@ def insert_trainer(con, trainer_id: str, email: str, name: str,
         INSERT INTO trainers (id, email, name, hashed_password, created_at)
         VALUES (?, ?, ?, ?, ?)
         """,
-        [trainer_id, email, name, hashed_password, datetime.utcnow()],
+        [trainer_id, email, name, hashed_password, _utcnow()],
     )
 
 
@@ -1082,7 +1087,7 @@ def record_audit(
             target_id,
             json.dumps(details) if details else None,
             ip,
-            datetime.utcnow(),
+            _utcnow(),
         ],
     )
 
@@ -1178,7 +1183,7 @@ def create_share_token(
         raise ValueError(f"No client with id {client_id}")
 
     token = secrets.token_urlsafe(32)
-    now = datetime.utcnow()
+    now = _utcnow()
     expires_at = now + timedelta(days=ttl_days)
     con.execute(
         """
@@ -1228,7 +1233,7 @@ def share_lookup(con, token: str):
         "client_id": client_id,
         "trainer_message": msg,
         "expires_at": expires_at,
-        "expired": expires_at < datetime.utcnow(),
+        "expired": expires_at < _utcnow(),
     }
 
 
@@ -1308,7 +1313,7 @@ def create_intake_token(
         raise ValueError(f"No trainer with id {trainer_id}")
 
     token = secrets.token_urlsafe(32)
-    now = datetime.utcnow()
+    now = _utcnow()
     expires_at = now + timedelta(days=ttl_days)
     con.execute(
         """
@@ -1355,7 +1360,7 @@ def intake_lookup(con, token: str):
         "trainer_id": trainer_id,
         "trainer_message": msg,
         "expires_at": expires_at,
-        "expired": expires_at < datetime.utcnow(),
+        "expired": expires_at < _utcnow(),
         "consumed": consumed_at is not None,
         "consumed_at": consumed_at,
     }
@@ -1378,7 +1383,7 @@ def consume_intake_token(con, token: str, client_id: str) -> bool:
     versions (same reason ``revoke_share_token`` uses
     SELECT-then-DELETE).
     """
-    now = datetime.utcnow()
+    now = _utcnow()
     result = con.execute(
         """
         UPDATE client_intake_tokens
@@ -1410,7 +1415,7 @@ def create_ask_session(con, trainer_id: str, messages: list[dict] | None = None)
     on read is the real authorization gate, this just avoids minting a
     predictable handle."""
     session_id = f"ask_{uuid.uuid4().hex[:16]}"
-    now = datetime.utcnow()
+    now = _utcnow()
     con.execute(
         """
         INSERT INTO ask_sessions (id, trainer_id, messages, created_at, updated_at)
@@ -1446,5 +1451,5 @@ def update_ask_session(con, trainer_id: str, session_id: str, messages: list[dic
     gate were ever bypassed."""
     con.execute(
         "UPDATE ask_sessions SET messages = ?, updated_at = ? WHERE id = ? AND trainer_id = ?",
-        [json.dumps(messages), datetime.utcnow(), session_id, trainer_id],
+        [json.dumps(messages), _utcnow(), session_id, trainer_id],
     )

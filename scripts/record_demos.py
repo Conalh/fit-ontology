@@ -125,7 +125,7 @@ async def record_intake_flow(browser, raw_dir: Path) -> Path | None:
     await trainer.wait_for_timeout(800)
 
     # Type a welcome note slowly so the viewer can read it as it lands
-    msg = "Fill this in before our first session — Conal"
+    msg = "Fill this in before our first session — Coach"
     await trainer.locator("[role=dialog] textarea").press_sequentially(msg, delay=22)
     await trainer.wait_for_timeout(700)
 
@@ -228,7 +228,7 @@ async def record_roster_overview(browser, raw_dir: Path) -> Path | None:
     await page.wait_for_selector(".fit-roster-row", timeout=10000)
     await page.wait_for_timeout(1800)
 
-    # Hover the top-urgency row (Captain Ahab — Deload) so its
+    # Hover the top-urgency row (Marcus Hill — Deload) so its
     # row-hover affordance fires for the camera.
     first_row = page.locator(".fit-roster-row").first
     await first_row.hover()
@@ -252,7 +252,7 @@ async def record_roster_overview(browser, raw_dir: Path) -> Path | None:
 # ─── Flow: client detail with citation popover ───────────────────────
 
 async def record_client_detail(browser, raw_dir: Path) -> Path | None:
-    """Open Captain Ahab's detail page — the Deload client. Pause on
+    """Open Marcus Hill's detail page — the Deload client. Pause on
     the recommendation card, then hover one of the literature
     citation chips to show the popover with the source + DOI link.
     THE differentiator: every verdict traces back to peer-reviewed
@@ -402,7 +402,7 @@ async def record_full_tour(browser, raw_dir: Path) -> Path | None:
     await page.evaluate("window.scrollTo({top: 0, behavior: 'smooth'})")
     await page.wait_for_timeout(1100)
 
-    # ── 3. Open a rich existing client (Captain Ahab — Deload) ──
+    # ── 3. Open a rich existing client (Marcus Hill — Deload) ──
     await page.goto(f"{WEB}/clients/?id=c_ben", wait_until="domcontentloaded")
     await page.wait_for_selector(".fit-rec-card", timeout=15000)
     await page.wait_for_timeout(2200)

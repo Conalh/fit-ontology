@@ -133,7 +133,7 @@ export default function AskPage() {
                   onSubmit(e);
                 }
               }}
-              placeholder="e.g. what should I do with Ben this week?"
+              placeholder="e.g. what should I do with Marcus this week?"
               rows={1}
               style={{
                 flex: 1,
@@ -206,10 +206,10 @@ function AskError({ error }: { error: Error }) {
 
 function EmptyState({ onPickPrompt }: { onPickPrompt: (p: string) => void }) {
   const examples = [
-    "what should I do with Ben this week?",
+    "what should I do with Marcus this week?",
     "who needs a deload?",
-    "show me Carla's HRV trend",
-    "did I agree with the system on Alice last week?",
+    "show me Priya's HRV trend",
+    "did I agree with the system on Maya last week?",
   ];
   return (
     <div
